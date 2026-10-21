@@ -13,25 +13,31 @@ import { ZONE_DISPLAY } from '@/features/templates/zone-templates/constants';
 
 /**
  * DP-4 parity (2026-10-21) · Zone-type → badge-style map, mirroring the
- * Planning tab's `zoneColors` palette (planning-modal.tsx L3816-3825) so
+ * Planning tab's `zoneColors` palette (planning-modal.tsx L3850-3858) so
  * the two surfaces read as the same object: amber for buildings, teal for
  * levels, purple for areas, etc. Values map directly to Tailwind utility
- * classes (bg + text) that compose the pill. Falls back to the slate
- * neutral when a type is missing, so a backfill that introduces a new
- * ZoneType enum value never crashes the badge.
+ * classes (bg + text) that compose the pill — dark-mode variants follow
+ * the planwise-design status-pill spec
+ * (`dark:bg-<color>-900/30 dark:text-<color>-300`), tuned down from the
+ * initial 950/40 pass so the pill stays visible in dark mode without
+ * drifting into "near-black" territory.
+ *
+ * Keys cover every value of the Prisma `ZoneType` enum. A zone whose
+ * type lives outside this map (future enum values, missing data) renders
+ * NO badge at all — the group header falls back to just the zone name
+ * instead of a mystery "Zone" fallback pill that gets mistaken for the
+ * amber one.
  */
 const ZONE_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
-  site:    { bg: 'bg-indigo-50 dark:bg-indigo-950/40', text: 'text-indigo-700 dark:text-indigo-300' },
-  building:{ bg: 'bg-amber-50 dark:bg-amber-950/40',   text: 'text-amber-700 dark:text-amber-300' },
-  level:   { bg: 'bg-teal-50 dark:bg-teal-950/40',     text: 'text-teal-700 dark:text-teal-300' },
-  zone:    { bg: 'bg-amber-50 dark:bg-amber-950/40',   text: 'text-amber-600 dark:text-amber-300' },
-  area:    { bg: 'bg-purple-50 dark:bg-purple-950/40', text: 'text-purple-700 dark:text-purple-300' },
-  floor:   { bg: 'bg-blue-50 dark:bg-blue-950/40',     text: 'text-blue-700 dark:text-blue-300' },
-  section: { bg: 'bg-teal-50 dark:bg-teal-950/40',     text: 'text-teal-700 dark:text-teal-300' },
-  wing:    { bg: 'bg-pink-50 dark:bg-pink-950/40',     text: 'text-pink-700 dark:text-pink-300' },
+  site:    { bg: 'bg-indigo-50 dark:bg-indigo-900/30', text: 'text-indigo-700 dark:text-indigo-300' },
+  building:{ bg: 'bg-amber-50 dark:bg-amber-900/30',   text: 'text-amber-700 dark:text-amber-300' },
+  level:   { bg: 'bg-teal-50 dark:bg-teal-900/30',     text: 'text-teal-700 dark:text-teal-300' },
+  zone:    { bg: 'bg-amber-50 dark:bg-amber-900/30',   text: 'text-amber-600 dark:text-amber-300' },
+  area:    { bg: 'bg-purple-50 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300' },
+  floor:   { bg: 'bg-blue-50 dark:bg-blue-900/30',     text: 'text-blue-700 dark:text-blue-300' },
+  section: { bg: 'bg-teal-50 dark:bg-teal-900/30',     text: 'text-teal-700 dark:text-teal-300' },
+  wing:    { bg: 'bg-pink-50 dark:bg-pink-900/30',     text: 'text-pink-700 dark:text-pink-300' },
 };
-const zoneTypeBadgeStyle = (type?: string | null) =>
-  (type && ZONE_TYPE_BADGE[type]) || { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500 dark:text-slate-400' };
 
 /**
  * UI-14 · Resolve a row's value under a given group dimension. Returns
@@ -1696,22 +1702,41 @@ function TableView({
                         ? <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
                         : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                     </button>
-                    <span className="truncate">{g.label}</span>
+                    <span className="truncate shrink min-w-0">{g.label}</span>
                     {/* DP-4 parity (2026-10-21) · amber "Building" (or
                         matching zone-type) badge next to the top-level
                         zone name — mirrors Planning tab's `ZoneTypePicker`
-                        (planning-modal.tsx L3382-3398). Only renders when
-                        the outer group dim is Zone AND the group isn't
-                        the synthetic "zone:root" bucket (orphan tasks
-                        have no zoneType). */}
-                    {outerDim === 'zone' && g.key !== 'zone:root' && (() => {
+                        closed pill (planning-modal.tsx L3414-3432). Only
+                        renders when:
+                          · outer group dim is Zone (sub-row badges live
+                            under the row's own zone-type pill below, so
+                            doubling here on inner dims is noise);
+                          · the group isn't the synthetic `zone:root`
+                            bucket (orphan tasks have no zone, so no
+                            type);
+                          · the top-level zone has a known `zoneType` in
+                            `ZONE_TYPE_BADGE` — unknown types render
+                            NOTHING, not a mystery slate pill. (Yulian's
+                            screenshot showed no badge; the earlier pass
+                            rendered a slate "Zone" fallback that drifted
+                            visually from Planning's amber pill, so a PM
+                            looking for the amber pill read it as
+                            "missing".) */}
+                    {(() => {
+                      if (outerDim !== 'zone' || g.key === 'zone:root') return null;
                       const topId = g.zones[0]?.topLevelZoneId as number | null | undefined;
-                      const zt = topId != null ? topLevelZoneTypeMap.get(topId) : undefined;
-                      const label = (zt && ZONE_DISPLAY[zt]?.label) || ZONE_DISPLAY.zone.label;
-                      const style = zoneTypeBadgeStyle(zt);
+                      if (topId == null) return null;
+                      const zt = topLevelZoneTypeMap.get(topId);
+                      const style = zt ? ZONE_TYPE_BADGE[zt] : undefined;
+                      if (!zt || !style) return null;
+                      const label = ZONE_DISPLAY[zt]?.label ?? zt;
                       return (
                         <span
-                          className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide whitespace-nowrap', style.bg, style.text)}
+                          className={cn(
+                            'rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-[0.05em] whitespace-nowrap shrink-0',
+                            style.bg,
+                            style.text,
+                          )}
                           title={`Zone type: ${label}`}
                         >
                           {label}
@@ -2897,20 +2922,30 @@ function GanttView({
                       ? <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
                       : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                   </button>
-                  <span className="font-bold text-slate-800 dark:text-slate-100 truncate">{slot.label}</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-100 truncate shrink min-w-0">{slot.label}</span>
                   {/* DP-4 parity (2026-10-21) · amber "Building" (or
                       matching zone-type) badge — mirrors Planning tab's
-                      ZoneTypePicker closed-state pill (planning-modal.tsx
-                      L3382-3398). Only renders when grouping by Zone and
-                      the group isn't the synthetic "zone:root" bucket. */}
-                  {outerDim === 'zone' && slot.key !== 'zone:root' && (() => {
+                      ZoneTypePicker closed pill (planning-modal.tsx
+                      L3414-3432). Same guard as TableView's zone-group
+                      header: only when outer dim is Zone, not the
+                      synthetic `zone:root` bucket, and the top-level
+                      zoneType is known. See the TableView badge comment
+                      above for the "no mystery slate pill" rationale. */}
+                  {(() => {
+                    if (outerDim !== 'zone' || slot.key === 'zone:root') return null;
                     const topId = slot.zones[0]?.topLevelZoneId as number | null | undefined;
-                    const zt = topId != null ? topLevelZoneTypeMap.get(topId) : undefined;
-                    const label = (zt && ZONE_DISPLAY[zt]?.label) || ZONE_DISPLAY.zone.label;
-                    const style = zoneTypeBadgeStyle(zt);
+                    if (topId == null) return null;
+                    const zt = topLevelZoneTypeMap.get(topId);
+                    const style = zt ? ZONE_TYPE_BADGE[zt] : undefined;
+                    if (!zt || !style) return null;
+                    const label = ZONE_DISPLAY[zt]?.label ?? zt;
                     return (
                       <span
-                        className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide whitespace-nowrap shrink-0', style.bg, style.text)}
+                        className={cn(
+                          'rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-[0.05em] whitespace-nowrap shrink-0',
+                          style.bg,
+                          style.text,
+                        )}
                         title={`Zone type: ${label}`}
                       >
                         {label}
