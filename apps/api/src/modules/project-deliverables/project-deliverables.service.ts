@@ -300,6 +300,61 @@ export class ProjectDeliverablesService {
           create: { zoneId, projectDeliverableId: it.id, targetDate, targetMonths: it.months ?? null, ...durPatch },
           update: { targetDate, targetMonths: it.months ?? null, ...durPatch },
         });
+
+        // DP Bug B — #3-aftermath cleanup (Option X · 2026-10-21).
+        //
+        // #3 ("fix(dp #3)", c21a344) switched DP to iterate TOP-LEVEL
+        // zones only: rows are keyed by `${deliverableId}:topzone-${topZoneId}`,
+        // every save writes against the top-zone id, and reads AGGREGATE
+        // every ZDT in the top-zone's subtree with MIN(targetDate). Pre-
+        // existing per-sub-zone ZDTs were left in place on purpose ("no
+        // cleanup, no deletes" — see the comment on `emit` in deliverable-
+        // planning-tab.tsx around line 450).
+        //
+        // DPG-3's rollup drag persistence (48a2a16) hit the regression:
+        // when the user drags a top-zone bar FORWARD and clicks Save all,
+        // we upsert ZDT(topZone, deliverable) with the new (later) date,
+        // but legacy sub-zone ZDTs for the same deliverable still carry
+        // the OLD earlier date. The FE's MIN aggregation picks the legacy
+        // date on next read, so the bar visually reverts.
+        //
+        // Option X: when an EXPLICIT targetDate is provided (the drag
+        // path — client sends `it.targetDate = <ISO>`, never on a plain
+        // months-only save), clobber ZDTs for every strict descendant of
+        // the top-zone on the same deliverable. Scoping to `it.targetDate`
+        // keeps a no-change Save-all from silently nuking legacy per-sub-
+        // zone data, while matching the user's mental model for an
+        // explicit drag: "move the whole thing".
+        //
+        // Descendant lookup uses the materialized `Zone.path` ("id/id/.../id"
+        // from root → self; see zones.service.ts around line 275). The
+        // top-zone's own path is the prefix; descendants have path
+        // startsWith(`${topZone.path}/`). Non-top-level `zoneId` is also
+        // handled correctly by using the zone's own path (the FE post-#3
+        // only sends top-level ids, but we don't rely on that).
+        if (it.targetDate) {
+          const topZone = await this.prisma.zone.findUnique({
+            where: { id: zoneId },
+            select: { path: true },
+          });
+          if (topZone?.path) {
+            const descendants = await this.prisma.zone.findMany({
+              where: {
+                deletedAt: null,
+                path: { startsWith: `${topZone.path}/` },
+              },
+              select: { id: true },
+            });
+            if (descendants.length > 0) {
+              await this.prisma.zoneDeliverableTarget.deleteMany({
+                where: {
+                  projectDeliverableId: it.id,
+                  zoneId: { in: descendants.map((z) => z.id) },
+                },
+              });
+            }
+          }
+        }
       } else {
         await this.prisma.projectDeliverable.update({
           where: { id: it.id },
