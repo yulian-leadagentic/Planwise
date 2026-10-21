@@ -461,10 +461,24 @@ export class TemplatesService {
   //   • cycle detection — DFS over the proposed graph; if adding any
   //     of the new edges would make `taskId` reachable from itself,
   //     reject with the offending path for debugging.
+  //
+  // bm2 2026-10-21 — AUTO-REORDER: after the dep write, if the task's
+  // current `sortOrder` is <= max(predecessor.sortOrder), bump it to
+  // max + 1 and shift the siblings whose sortOrder sat in the vacated
+  // range DOWN by 1 so the sequence stays contiguous. A predecessor
+  // must schedule BEFORE its dependent, so this is the only way to
+  // keep the invariant without blocking the user's save. The whole
+  // thing (delete + create + reorder) runs inside one interactive
+  // transaction so a partial failure can't leave the template split.
+  //
+  // Response shape (breaking from the previous flat array; the FE
+  // discards the body and re-fetches, so moving to the richer shape
+  // is safe):
+  //   { predecessors: TemplateTaskDependency[], autoReorder?: {oldOrder, newOrder} }
   async setTaskPredecessors(taskId: number, predecessorIds: number[]) {
     const task = await this.prisma.templateTask.findUnique({
       where: { id: taskId },
-      select: { id: true, templateId: true },
+      select: { id: true, templateId: true, sortOrder: true },
     });
     if (!task) throw new NotFoundException('Template task not found');
 
@@ -473,15 +487,16 @@ export class TemplatesService {
     if (proposed.includes(taskId)) {
       throw new BadRequestException('A task cannot depend on itself');
     }
+    let predecessorRows: Array<{ id: number; templateId: number; sortOrder: number }> = [];
     if (proposed.length > 0) {
-      const siblings = await this.prisma.templateTask.findMany({
+      predecessorRows = await this.prisma.templateTask.findMany({
         where: { id: { in: proposed } },
-        select: { id: true, templateId: true },
+        select: { id: true, templateId: true, sortOrder: true },
       });
-      if (siblings.length !== proposed.length) {
+      if (predecessorRows.length !== proposed.length) {
         throw new BadRequestException('One or more predecessor tasks do not exist');
       }
-      for (const s of siblings) {
+      for (const s of predecessorRows) {
         if (s.templateId !== task.templateId) {
           throw new BadRequestException(
             `Predecessor task ${s.id} belongs to a different template`,
@@ -538,24 +553,61 @@ export class TemplatesService {
       throw new BadRequestException(`Dependency cycle detected: ${cycle.join(' → ')}`);
     }
 
-    // Replace the set in one tx: delete the old rows for THIS task,
-    // then write the new ones. Dedupe + self-ref already filtered.
-    await this.prisma.$transaction([
-      this.prisma.templateTaskDependency.deleteMany({
+    // bm2 2026-10-21 — compute the sortOrder bump BEFORE the tx so the
+    // numbers we shift are from the pre-write snapshot (predecessorRows
+    // was selected above with the same sortOrder values we're about to
+    // compare against). Interactive $transaction so the cycle guard +
+    // dep write + reorder are atomic end-to-end.
+    const maxPredOrder = predecessorRows.length
+      ? Math.max(...predecessorRows.map((p) => p.sortOrder))
+      : -1;
+    let autoReorder: { oldOrder: number; newOrder: number } | null = null;
+
+    await this.prisma.$transaction(async (tx) => {
+      // Replace the dependency set.
+      await tx.templateTaskDependency.deleteMany({
         where: { templateTaskId: taskId },
-      }),
-      ...(proposed.length > 0
-        ? [
-            this.prisma.templateTaskDependency.createMany({
-              data: proposed.map((p) => ({
-                templateTaskId: taskId,
-                dependsOnTemplateTaskId: p,
-              })),
-            }),
-          ]
-        : []),
-    ]);
-    return this.getTaskPredecessors(taskId);
+      });
+      if (proposed.length > 0) {
+        await tx.templateTaskDependency.createMany({
+          data: proposed.map((p) => ({
+            templateTaskId: taskId,
+            dependsOnTemplateTaskId: p,
+          })),
+        });
+      }
+
+      // Auto-reorder: if the current task's sortOrder is at or below
+      // ANY predecessor's, bump it past the max. Shift the siblings in
+      // (oldOrder, newOrder] DOWN by 1 to fill the vacated slot without
+      // colliding on the UNIQUE check that `reorderTasks` relies on.
+      if (maxPredOrder >= 0 && task.sortOrder <= maxPredOrder) {
+        const oldOrder = task.sortOrder;
+        const newOrder = maxPredOrder + 1;
+        await tx.templateTask.updateMany({
+          where: {
+            templateId: task.templateId,
+            id: { not: taskId },
+            sortOrder: { gt: oldOrder, lte: newOrder },
+          },
+          data: { sortOrder: { decrement: 1 } },
+        });
+        await tx.templateTask.update({
+          where: { id: taskId },
+          data: { sortOrder: newOrder },
+        });
+        autoReorder = { oldOrder, newOrder };
+      }
+    });
+
+    const predecessors = await this.prisma.templateTaskDependency.findMany({
+      where: { templateTaskId: taskId },
+      include: {
+        dependsOnTemplateTask: { select: { id: true, name: true, code: true } },
+      },
+      orderBy: { id: 'asc' },
+    });
+    return { predecessors, autoReorder };
   }
 
   async addZone(templateId: number, body: any) {

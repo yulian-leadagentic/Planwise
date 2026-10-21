@@ -596,14 +596,28 @@ function EditorView({
   // T1-2 — replace a task's predecessor set in one call. Errors
   // (self-dep + cycle) are surfaced inline by the row component, so
   // this mutation re-throws instead of using notify.apiError.
+  //
+  // bm2 2026-10-21 — the BE now auto-reorders the task past its max
+  // predecessor's sortOrder (returning `autoReorder: {oldOrder,newOrder}`
+  // in the response envelope) so the invariant `pred.order < task.order`
+  // holds without the user having to type a new number. Surface the
+  // bump with an info toast — the invalidate below pulls the fresh
+  // ordered task list so the row reflects the new slot immediately.
   const setPredecessorsMutation = useMutation({
     mutationFn: ({ taskId, predecessorIds }: { taskId: number; predecessorIds: number[] }) =>
       client
         .post(`/templates/tasks/${taskId}/predecessors`, { predecessorIds })
-        .then((r) => r.data),
-    onSuccess: () => {
+        .then((r) => r.data?.data ?? r.data),
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      notify.success('Predecessors updated', { code: 'TEMPLATE-PRED-200' });
+      const ar = data?.autoReorder;
+      if (ar && Number.isFinite(ar.newOrder)) {
+        notify.info(`סדר המשימה עודכן ל-${ar.newOrder} כדי להתאים למשימה המקדימה`, {
+          code: 'TEMPLATE-PRED-REORDER-200',
+        });
+      } else {
+        notify.success('Predecessors updated', { code: 'TEMPLATE-PRED-200' });
+      }
     },
   });
 
@@ -648,17 +662,48 @@ function EditorView({
     const byId = new Map<number, any>(tasks.map((t: any) => [t.id, t]));
     const map = new Map<number, { invalid: boolean; maxPredOrder: number; maxPredName: string }>();
     for (const t of tasks) {
+      // bm2 2026-10-21 — accept the predecessor shape from either path
+      // the server surfaces:
+      //   • `t.predecessors` — rows from TemplateTaskDependency with
+      //     the FK `dependsOnTemplateTaskId` and (when the include is
+      //     wired) the nested `dependsOnTemplateTask` carrying id/name.
+      //   • fallback to the nested object's id so an older include
+      //     shape still resolves.
+      // Reading EITHER keeps the warning firing when the FK column is
+      // present-but-null on a legacy row that still has the join
+      // relation.
       const preds: any[] = t.predecessors ?? [];
       let maxPredOrder = -1;
       let maxPredName = '';
       for (const p of preds) {
-        const pt = byId.get(p.dependsOnTemplateTaskId);
+        const predId = p.dependsOnTemplateTaskId ?? p.dependsOnTemplateTask?.id;
+        if (predId == null) continue;
+        const pt = byId.get(predId);
         if (!pt) continue;
         const o = Number(pt.sortOrder ?? 0);
         if (o > maxPredOrder) {
           maxPredOrder = o;
           maxPredName = pt.name ?? pt.code ?? `#${pt.id}`;
         }
+      }
+      // Dev-only safety log: if a row has predecessors but we couldn't
+      // resolve ANY to a sibling task, the shape has drifted from what
+      // `findOne.templateTasks.predecessors.include` emits. Logging it
+      // keeps the previous silent-no-badge regression from recurring.
+      if (
+        import.meta.env?.DEV &&
+        preds.length > 0 &&
+        maxPredOrder === -1
+      ) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[deliverable-templates/validation] task',
+          t.id,
+          'has',
+          preds.length,
+          'predecessor row(s) but none resolved to a sibling task; got shape:',
+          preds[0],
+        );
       }
       const myOrder = Number(t.sortOrder ?? 0);
       const invalid = preds.length > 0 && maxPredOrder >= 0 && myOrder <= maxPredOrder;
