@@ -9,6 +9,29 @@ import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { EmptyState } from '@/components/shared/empty-state';
 import { resolveTaskDeliverableDetailed } from '@/features/planning/resolve-task-deliverable';
 import { GroupControl, dpGroupDimLabel, type DPGroupDim } from '@/features/planning/group-control';
+import { ZONE_DISPLAY } from '@/features/templates/zone-templates/constants';
+
+/**
+ * DP-4 parity (2026-10-21) · Zone-type → badge-style map, mirroring the
+ * Planning tab's `zoneColors` palette (planning-modal.tsx L3816-3825) so
+ * the two surfaces read as the same object: amber for buildings, teal for
+ * levels, purple for areas, etc. Values map directly to Tailwind utility
+ * classes (bg + text) that compose the pill. Falls back to the slate
+ * neutral when a type is missing, so a backfill that introduces a new
+ * ZoneType enum value never crashes the badge.
+ */
+const ZONE_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
+  site:    { bg: 'bg-indigo-50 dark:bg-indigo-950/40', text: 'text-indigo-700 dark:text-indigo-300' },
+  building:{ bg: 'bg-amber-50 dark:bg-amber-950/40',   text: 'text-amber-700 dark:text-amber-300' },
+  level:   { bg: 'bg-teal-50 dark:bg-teal-950/40',     text: 'text-teal-700 dark:text-teal-300' },
+  zone:    { bg: 'bg-amber-50 dark:bg-amber-950/40',   text: 'text-amber-600 dark:text-amber-300' },
+  area:    { bg: 'bg-purple-50 dark:bg-purple-950/40', text: 'text-purple-700 dark:text-purple-300' },
+  floor:   { bg: 'bg-blue-50 dark:bg-blue-950/40',     text: 'text-blue-700 dark:text-blue-300' },
+  section: { bg: 'bg-teal-50 dark:bg-teal-950/40',     text: 'text-teal-700 dark:text-teal-300' },
+  wing:    { bg: 'bg-pink-50 dark:bg-pink-950/40',     text: 'text-pink-700 dark:text-pink-300' },
+};
+const zoneTypeBadgeStyle = (type?: string | null) =>
+  (type && ZONE_TYPE_BADGE[type]) || { bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-500 dark:text-slate-400' };
 
 /**
  * UI-14 · Resolve a row's value under a given group dimension. Returns
@@ -221,9 +244,20 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // has each root id → its own name. Walked from the SAME zone-tree
   // `zonesFlat` reads, so there's no risk of a mismatch between the
   // flattened list and the ancestry decision.
+  //
+  // DP-4 parity (2026-10-21) — also carry `typeMap` (top-level id →
+  // `zoneType`) and `sortOrderMap` (top-level id → sortOrder). The two
+  // extra maps feed the Zone-grouping group header: typeMap drives the
+  // amber "Building" badge next to the top-level zone name (matching
+  // Planning), sortOrderMap drives the group sort order so DP and
+  // Planning render top-level zones in the same sequence
+  // (Planning uses the API's `[sortOrder: asc, createdAt: asc]` orderBy;
+  // we mirror the primary key here and tiebreak on name).
   const topLevelZoneInfo = useMemo(() => {
-    const idMap = new Map<number, number>();   // zoneId → top-level ancestor id
-    const nameMap = new Map<number, string>(); // top-level id → top-level name
+    const idMap = new Map<number, number>();           // zoneId → top-level ancestor id
+    const nameMap = new Map<number, string>();         // top-level id → top-level name
+    const typeMap = new Map<number, string | undefined>(); // top-level id → zoneType
+    const sortOrderMap = new Map<number, number>();    // top-level id → sortOrder (NaN-safe)
     const roots: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
     const walk = (z: ZoneNode, topId: number) => {
       idMap.set(z.id, topId);
@@ -233,9 +267,11 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     };
     for (const r of roots) {
       nameMap.set(r.id, r.name);
+      typeMap.set(r.id, r.zoneType);
+      sortOrderMap.set(r.id, Number(r.sortOrder ?? 0));
       walk(r, r.id);
     }
-    return { idMap, nameMap };
+    return { idMap, nameMap, typeMap, sortOrderMap };
   }, [planningData?.zones]);
 
   // Build (zone × deliverable) rows from the CROSS PRODUCT of the
@@ -1119,6 +1155,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           onToggleCollapse={toggleCollapse}
           outerDim={outerDim}
           innerDim={innerDim}
+          topLevelZoneTypeMap={topLevelZoneInfo.typeMap}
+          topLevelZoneSortOrderMap={topLevelZoneInfo.sortOrderMap}
         />
       ) : (
         <GanttView
@@ -1136,6 +1174,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           onToggleCollapse={toggleCollapse}
           outerDim={outerDim}
           innerDim={innerDim}
+          topLevelZoneTypeMap={topLevelZoneInfo.typeMap}
+          topLevelZoneSortOrderMap={topLevelZoneInfo.sortOrderMap}
         />
       )}
 
@@ -1165,6 +1205,8 @@ function TableView({
   onToggleCollapse,
   outerDim,
   innerDim,
+  topLevelZoneTypeMap,
+  topLevelZoneSortOrderMap,
 }: {
   rows: any[];
   drafts: Record<string, string>;
@@ -1186,6 +1228,12 @@ function TableView({
   // two columns dynamically. Default stays Deliverable · Zone.
   outerDim: DPGroupDim;
   innerDim: DPGroupDim | null;
+  // DP-4 parity (2026-10-21) — top-level zone type (for the Building badge)
+  // and sort order (for Planning-tab parity) keyed by top-level zone id.
+  // Threaded in from the parent's `topLevelZoneInfo` so TableView doesn't
+  // have to re-walk the zone tree.
+  topLevelZoneTypeMap: Map<number, string | undefined>;
+  topLevelZoneSortOrderMap: Map<number, number>;
 }) {
   // Per-column filters — arrays of selected values (empty = no filter).
   // A row passes a column filter if its value is IN the selected array.
@@ -1345,7 +1393,23 @@ function TableView({
     // Sort the groups
     const sign = sort.dir === 'asc' ? 1 : -1;
     const cmp = (a: string | number, b: string | number) => (a > b ? 1 : a < b ? -1 : 0) * sign;
-    if (sort.col === 'deliverable') groups.sort((a, b) => cmp(a.label.toLowerCase(), b.label.toLowerCase()));
+    // DP-4 parity (2026-10-21) — when grouping by Zone, the default
+    // "deliverable" sort (which falls back to label alphabetical) differs
+    // from Planning's canonical `sortOrder ASC, name ASC` order. For
+    // zone grouping on the default sort, follow Planning: use the top-
+    // level zone's `sortOrder` with a name tiebreak. Picking a column
+    // explicitly (clicking a header) still overrides this.
+    if (outerDim === 'zone' && sort.col === 'deliverable') {
+      groups.sort((a, b) => {
+        const aTopId = a.zones[0]?.topLevelZoneId as number | null | undefined;
+        const bTopId = b.zones[0]?.topLevelZoneId as number | null | undefined;
+        const aOrder = aTopId == null ? Number.POSITIVE_INFINITY : (topLevelZoneSortOrderMap.get(aTopId) ?? 0);
+        const bOrder = bTopId == null ? Number.POSITIVE_INFINITY : (topLevelZoneSortOrderMap.get(bTopId) ?? 0);
+        if (aOrder !== bOrder) return cmp(aOrder, bOrder);
+        return cmp(a.label.toLowerCase(), b.label.toLowerCase());
+      });
+    }
+    else if (sort.col === 'deliverable') groups.sort((a, b) => cmp(a.label.toLowerCase(), b.label.toLowerCase()));
     else if (sort.col === 'service') groups.sort((a, b) => cmp((a.serviceName ?? '').toLowerCase(), (b.serviceName ?? '').toLowerCase()));
     else if (sort.col === 'zone') groups.sort((a, b) => cmp((a.zones[0]?.zoneName ?? '').toLowerCase(), (b.zones[0]?.zoneName ?? '').toLowerCase()));
     else if (sort.col === 'months') groups.sort((a, b) => cmp(Number(effectiveMonths(a.zones[0]) || 0), Number(effectiveMonths(b.zones[0]) || 0)));
@@ -1384,7 +1448,7 @@ function TableView({
       }
     }
     return groups;
-  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts, outerDim]);
+  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts, outerDim, topLevelZoneSortOrderMap]);
 
   const toggleSort = (col: typeof sort.col) => {
     setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' }));
@@ -1511,6 +1575,27 @@ function TableView({
                         : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                     </button>
                     <span className="truncate">{g.label}</span>
+                    {/* DP-4 parity (2026-10-21) · amber "Building" (or
+                        matching zone-type) badge next to the top-level
+                        zone name — mirrors Planning tab's `ZoneTypePicker`
+                        (planning-modal.tsx L3382-3398). Only renders when
+                        the outer group dim is Zone AND the group isn't
+                        the synthetic "zone:root" bucket (orphan tasks
+                        have no zoneType). */}
+                    {outerDim === 'zone' && g.key !== 'zone:root' && (() => {
+                      const topId = g.zones[0]?.topLevelZoneId as number | null | undefined;
+                      const zt = topId != null ? topLevelZoneTypeMap.get(topId) : undefined;
+                      const label = (zt && ZONE_DISPLAY[zt]?.label) || ZONE_DISPLAY.zone.label;
+                      const style = zoneTypeBadgeStyle(zt);
+                      return (
+                        <span
+                          className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide whitespace-nowrap', style.bg, style.text)}
+                          title={`Zone type: ${label}`}
+                        >
+                          {label}
+                        </span>
+                      );
+                    })()}
                     <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap tabular-nums">
                       · {subCount} {subNoun}{subCount === 1 ? '' : 's'}
                     </span>
@@ -1842,6 +1927,8 @@ function GanttView({
   onToggleCollapse,
   outerDim,
   innerDim,
+  topLevelZoneTypeMap,
+  topLevelZoneSortOrderMap,
 }: {
   projectId: number;
   rows: any[];
@@ -1862,6 +1949,11 @@ function GanttView({
   // "<outer> · <sub>" dynamically; rows group by outerDim.
   outerDim: DPGroupDim;
   innerDim: DPGroupDim | null;
+  // DP-4 parity (2026-10-21) — top-level zone type (for the Building
+  // badge) + sort order (for Planning-tab parity). Keyed by top-level
+  // zone id; threaded in from the parent's `topLevelZoneInfo`.
+  topLevelZoneTypeMap: Map<number, string | undefined>;
+  topLevelZoneSortOrderMap: Map<number, number>;
 }) {
   // Row order — persisted per browser via localStorage. Rebuilt from
   // the incoming rows whenever the row set changes, preserving any
@@ -1989,11 +2081,33 @@ function GanttView({
       }
       groupZones.get(k)!.push({ z: r, zoneIdx: idx });
     });
+    // DP-4 parity (2026-10-21) — when grouping by Zone, follow Planning
+    // tab's canonical order: top-level zone's `sortOrder` ASC (API-side
+    // `[sortOrder: asc, createdAt: asc]`), tiebroken by name. Encounter
+    // order from `orderedRows` is non-deterministic across projects (it
+    // depends on which deliverable's first row happens to land under a
+    // given top-level zone), which drove the visible drift between the
+    // two tabs. Resorting here keeps DP in lockstep with Planning.
+    if (outerDim === 'zone') {
+      groupOrder.sort((aKey, bKey) => {
+        const aRow = groupZones.get(aKey)![0]?.z;
+        const bRow = groupZones.get(bKey)![0]?.z;
+        const aTopId = aRow?.topLevelZoneId as number | null | undefined;
+        const bTopId = bRow?.topLevelZoneId as number | null | undefined;
+        const aOrder = aTopId == null ? Number.POSITIVE_INFINITY : (topLevelZoneSortOrderMap.get(aTopId) ?? 0);
+        const bOrder = bTopId == null ? Number.POSITIVE_INFINITY : (topLevelZoneSortOrderMap.get(bTopId) ?? 0);
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        const aName = (aRow?.topLevelZoneName ?? '').toLowerCase();
+        const bName = (bRow?.topLevelZoneName ?? '').toLowerCase();
+        return aName < bName ? -1 : aName > bName ? 1 : 0;
+      });
+    }
     // DPG-1c (2026-10-20) — Pin "Project Root" group (orphan tasks with
     // `topLevelZoneId=null`) to the top of a Zone grouping, so the PM
     // sees unassigned tasks before per-zone rollups. The group only
     // exists when at least one row keyed to `zone:root`, so this never
-    // introduces an empty synthetic row.
+    // introduces an empty synthetic row. Runs AFTER the sortOrder pass
+    // above so Project Root always ends up at index 0.
     if (outerDim === 'zone') {
       const idx = groupOrder.indexOf('zone:root');
       if (idx > 0) {
@@ -2068,7 +2182,7 @@ function GanttView({
       }
     }
     return out;
-  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, outerDim]);
+  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, outerDim, topLevelZoneSortOrderMap]);
 
   // Compact scale so 3 years fit in one viewport at MONTH granularity
   // (client feedback 2026-08-02 item 5). 8 px/week × 156 weeks (3 yr)
@@ -2610,6 +2724,25 @@ function GanttView({
                       : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                   </button>
                   <span className="font-bold text-slate-800 dark:text-slate-100 truncate">{slot.label}</span>
+                  {/* DP-4 parity (2026-10-21) · amber "Building" (or
+                      matching zone-type) badge — mirrors Planning tab's
+                      ZoneTypePicker closed-state pill (planning-modal.tsx
+                      L3382-3398). Only renders when grouping by Zone and
+                      the group isn't the synthetic "zone:root" bucket. */}
+                  {outerDim === 'zone' && slot.key !== 'zone:root' && (() => {
+                    const topId = slot.zones[0]?.topLevelZoneId as number | null | undefined;
+                    const zt = topId != null ? topLevelZoneTypeMap.get(topId) : undefined;
+                    const label = (zt && ZONE_DISPLAY[zt]?.label) || ZONE_DISPLAY.zone.label;
+                    const style = zoneTypeBadgeStyle(zt);
+                    return (
+                      <span
+                        className={cn('rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide whitespace-nowrap shrink-0', style.bg, style.text)}
+                        title={`Zone type: ${label}`}
+                      >
+                        {label}
+                      </span>
+                    );
+                  })()}
                   {slot.readOnly && (
                     <span
                       className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 whitespace-nowrap"
