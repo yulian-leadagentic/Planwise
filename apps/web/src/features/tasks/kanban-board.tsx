@@ -9,6 +9,10 @@ import { useDroppable } from '@dnd-kit/core';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { TaskCardBody } from '@/components/shared/task-card-body';
+import {
+  hasPredecessorConflict,
+  getPredecessorConflictMessage,
+} from '@/features/projects/predecessor-conflict';
 import client from '@/api/client';
 import { tasksApi } from '@/api/tasks.api';
 import { TaskDrawer } from './task-drawer';
@@ -103,6 +107,16 @@ function KanbanCard({ task, onOpen }: { task: any; onOpen: (id: number) => void 
           {STATUS_LABEL[task.status] ?? task.status}
         </span>
         <div className="ml-auto flex items-center gap-1">
+          {/* bm2 2026-10-21 — predecessor-conflict warning. Rendered
+              alongside the existing health markers so the card header
+              stays the one place to scan for red flags. Non-blocking:
+              the icon is purely informational. */}
+          {hasPredecessorConflict(task) && (
+            <AlertTriangle
+              className="h-3.5 w-3.5 text-amber-500 dark:text-amber-400 shrink-0"
+              aria-label={getPredecessorConflictMessage(task) ?? 'Predecessor conflict'}
+            />
+          )}
           {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
           {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
         </div>

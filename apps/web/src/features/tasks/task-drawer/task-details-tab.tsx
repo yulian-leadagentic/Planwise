@@ -1,5 +1,11 @@
+import { AlertTriangle } from 'lucide-react';
 import { usePermissions } from '@/hooks/use-permissions';
 import { TaskChecklist } from '@/features/tasks/task-checklist';
+import { notify } from '@/lib/notify';
+import {
+  hasPredecessorConflict,
+  getPredecessorConflictMessage,
+} from '@/features/projects/predecessor-conflict';
 import { TaskProjectInfoBlock } from './task-project-info-block';
 import { DeliverableTargetRow } from './deliverable-target-row';
 import { AssigneeManager } from './assignee-manager';
@@ -51,7 +57,17 @@ export function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field
               const v = e.target.value;
               // Empty → null (clear the date). Otherwise pass the ISO yyyy-mm-dd
               // through unchanged; the API's @IsDateString accepts it as-is.
-              if (v !== dueDateValue) onUpdate('endDate', v || null);
+              if (v !== dueDateValue) {
+                // bm2 2026-10-21 — predecessor-conflict pre-flight.
+                // Non-blocking: warn, then save. If the new endDate is
+                // BEFORE one of the predecessors' endDate, surface the
+                // conflict as a toast before the mutation fires so the
+                // PM sees it even if the drawer closes right after.
+                const projected = { ...task, endDate: v || null };
+                const msg = getPredecessorConflictMessage(projected);
+                if (msg) notify.warning(msg);
+                onUpdate('endDate', v || null);
+              }
             }}
             className="rounded-md border border-slate-200 dark:border-slate-700 px-2 py-1 text-sm focus:border-blue-400 focus:outline-none"
           />
@@ -66,6 +82,21 @@ export function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field
           </span>
         )}
       </div>
+
+      {/* bm2 2026-10-21 — persistent inline note. When the saved endDate
+          is already earlier than a predecessor's, show the amber banner
+          under the Due Date row so the PM sees the conflict without
+          having to re-trigger the field. Mirrors the toast fired on
+          save; both read from the same helper. */}
+      {hasPredecessorConflict(task) && (
+        <div
+          role="status"
+          className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/60 text-amber-800 dark:text-amber-200 text-[13px] font-medium px-4 py-2 flex items-start gap-2"
+        >
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+          <span>{getPredecessorConflictMessage(task)}</span>
+        </div>
+      )}
 
       {/* Description — ported from task-detail-page. Click-to-edit
           textarea, autosaves on blur. Full-width so long descriptions

@@ -310,7 +310,10 @@ export class TasksService {
               user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
             },
           },
-          dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
+          // bm2 2026-10-21 — expose `endDate` on each predecessor so the
+          // FE can flag "task endDate earlier than predecessor's endDate"
+          // conflicts (see predecessor-conflict.ts).
+          dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } } },
           _count: { select: { comments: true, timeEntries: true } },
         },
       }),
@@ -531,8 +534,11 @@ export class TasksService {
           },
           orderBy: { createdAt: 'desc' },
         },
-        dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
-        dependedBy: { include: { task: { select: { id: true, code: true, name: true } } } },
+        // bm2 2026-10-21 — expose `endDate` on each predecessor so the
+        // TaskDrawer can warn when the task's endDate drifts earlier
+        // than one of its predecessors'.
+        dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } } },
+        dependedBy: { include: { task: { select: { id: true, code: true, name: true, endDate: true } } } },
         _count: { select: { timeEntries: true } },
       },
     });

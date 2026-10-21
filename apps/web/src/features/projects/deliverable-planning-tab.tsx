@@ -10,6 +10,10 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { resolveTaskDeliverableDetailed } from '@/features/planning/resolve-task-deliverable';
 import { GroupControl, dpGroupDimLabel, type DPGroupDim } from '@/features/planning/group-control';
 import { ZONE_DISPLAY } from '@/features/templates/zone-templates/constants';
+import {
+  hasPredecessorConflict,
+  getPredecessorConflictMessage,
+} from '@/features/projects/predecessor-conflict';
 
 /**
  * DP-4 parity (2026-10-21) · Zone-type → badge-style map, mirroring the
@@ -321,7 +325,17 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     taskDone: number;
     // The full task list for this row — feeds the Gantt-bar-click
     // modal (client feedback item 2/3). Kept minimal: id/code/name/end/status.
-    taskList: { id: number; code: string | null; name: string; endDate: string | null; status: string }[];
+    // bm2 2026-10-21 — also carries `dependencies` so the Gantt row
+    // label can flag predecessor conflicts (any task whose endDate is
+    // earlier than one of its predecessors'); see predecessor-conflict.ts.
+    taskList: {
+      id: number;
+      code: string | null;
+      name: string;
+      endDate: string | null;
+      status: string;
+      dependencies?: Array<{ dependsOn?: { id?: number; code?: string | null; name?: string | null; endDate?: string | null } | null }>;
+    }[];
     // DP-EMPTY-3 (2026-09-30) — true when this row's deliverable is
     // NOT backed by a real `ProjectDeliverable` row (source was a
     // `deliverableTemplate.name` or a `[SERVICE:<name>]` marker). The
@@ -513,6 +527,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         name: t.name,
         endDate: t.endDate ? String(t.endDate).slice(0, 10) : null,
         status: t.status,
+        // bm2 2026-10-21 — forward the task's dependencies so DP Gantt
+        // can flag rows whose children have "endDate < predecessor's
+        // endDate" (planning.service now exposes dependsOn.endDate).
+        dependencies: Array.isArray((t as any).dependencies) ? (t as any).dependencies : [],
       }));
       // DPG-1 · Compute the top-level zone ancestor for this row. The
       // `idMap` falls back to the zone's own id when the zone IS a root
@@ -3020,6 +3038,23 @@ function GanttView({
                 data-slot-index={i}
               >
                 <span className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 leading-none">⋮⋮</span>
+                {/* bm2 2026-10-21 — predecessor-conflict signal on the
+                    Gantt row label. The DP row represents a (zone ×
+                    deliverable) grouping; we flag it if ANY task under
+                    it has an endDate earlier than one of its own
+                    predecessors' endDate. Tooltip spells out the first
+                    offender so the PM knows which task to open. */}
+                {(() => {
+                  const offender = (r.taskList ?? []).find((t: any) => hasPredecessorConflict(t));
+                  if (!offender) return null;
+                  const msg = getPredecessorConflictMessage(offender);
+                  return (
+                    <AlertTriangle
+                      className="h-3 w-3 text-amber-500 dark:text-amber-400 shrink-0"
+                      aria-label={msg ? `${offender.name}: ${msg}` : 'Predecessor conflict'}
+                    />
+                  );
+                })()}
                 <span className="font-medium text-slate-800 dark:text-slate-100 truncate">{rowLabel}</span>
                 {/* DP-4 · zone-type badge in the Gantt label column.
                     Only renders when innerDim='zone' (otherwise the

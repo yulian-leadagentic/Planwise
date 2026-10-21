@@ -115,7 +115,11 @@ export class PlanningService {
             service: { select: { id: true, name: true, color: true } },
           },
         },
-        dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true } } } },
+        // bm2 2026-10-21 — include `endDate` on every linked predecessor
+        // so the FE can compute "my endDate < predecessor's endDate"
+        // conflicts client-side (Planning / Kanban / DP Gantt all read
+        // from this endpoint; see predecessor-conflict.ts).
+        dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } } },
         assignees: {
           where: { deletedAt: null },
           include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },

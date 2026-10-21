@@ -18,6 +18,10 @@ import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import {
+  hasPredecessorConflict,
+  getPredecessorConflictMessage,
+} from '@/features/projects/predecessor-conflict';
+import {
   DndContext,
   DragOverlay,
   closestCenter,
@@ -1140,18 +1144,36 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
             ⛓ {task.dependencies.length}
           </span>
         );
+        // bm2 2026-10-21 — predecessor-conflict icon. Renders LEFT of
+        // the task name when `task.endDate` is earlier than one of its
+        // predecessors' endDate (planning.service now exposes that on
+        // the wire). Non-blocking visual signal; the tooltip spells
+        // out which predecessor + its endDate.
+        const conflict = hasPredecessorConflict(task);
+        const conflictMsg = conflict ? getPredecessorConflictMessage(task) : null;
+        const conflictIcon = conflict && (
+          <AlertTriangle
+            className="h-3 w-3 text-amber-500 dark:text-amber-400 shrink-0 mr-1 inline-block align-text-bottom"
+            aria-label={conflictMsg ?? 'Predecessor conflict'}
+          />
+        );
         return openTaskDrawer ? (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); openTaskDrawer(task.id); }}
-            title={task.name}
+            title={conflict ? (getPredecessorConflictMessage(task) ?? task.name) : task.name}
             className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate text-left hover:text-blue-700 hover:underline focus:outline-none focus:text-blue-700 focus:underline cursor-pointer"
           >
+            {conflictIcon}
             {task.name}
             {depsBadge}
           </button>
         ) : (
-          <span className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate" title={task.name}>
+          <span
+            className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate"
+            title={conflict ? (getPredecessorConflictMessage(task) ?? task.name) : task.name}
+          >
+            {conflictIcon}
             {task.name}
             {depsBadge}
           </span>
@@ -3669,7 +3691,19 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                       <input type="checkbox" className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer" checked={isSelected} onChange={() => onToggleTask?.(task.id)} />
                     </td>
                     <td className="px-3 py-2 font-mono text-xs font-medium text-slate-500 dark:text-slate-400">{task.code || '-'}</td>
-                    <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">{task.name}</td>
+                    <td className="px-3 py-2 font-medium text-slate-900 dark:text-slate-100">
+                      {/* bm2 2026-10-21 — AlertTriangle when the task's
+                          endDate is earlier than one of its predecessors'. */}
+                      {hasPredecessorConflict(task) && (
+                        <AlertTriangle
+                          className="inline-block h-3 w-3 text-amber-500 dark:text-amber-400 shrink-0 mr-1 align-text-bottom"
+                          aria-label={getPredecessorConflictMessage(task) ?? 'Predecessor conflict'}
+                        />
+                      )}
+                      <span title={hasPredecessorConflict(task) ? (getPredecessorConflictMessage(task) ?? task.name) : task.name}>
+                        {task.name}
+                      </span>
+                    </td>
                     <td className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">{task.zone?.name || '-'}</td>
                     <td className="px-3 py-2">{svcName ? <span className="rounded-[5px] px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: `${svcColor}15`, color: svcColor }}>{svcName}</span> : <span className="text-slate-300 dark:text-slate-600">-</span>}</td>
                     <td className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">{task.phase?.name || '-'}</td>
