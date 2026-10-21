@@ -210,7 +210,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     staleTime: 30 * 1000,
   });
 
-  const { data: planningData } = useQuery<any>({
+  const { data: planningData, isLoading: planningIsLoading } = useQuery<any>({
     queryKey: ['planning', projectId],
     queryFn: () => client.get(`/projects/${projectId}/planning-data`).then((r) => r.data?.data ?? r.data),
     enabled: !!projectId,
@@ -566,10 +566,27 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     // "Project Root" row per deliverable so the grid isn't empty (bm2
     // fix #1). Orphan tasks with zoneId=null fall through the overlay
     // loop below, which also emits a Project Root row.
+    //
+    // DP Bug A (2026-10-21) — only emit the Project Root fallback when
+    // the planning query has DEFINITIVELY resolved. Previously the
+    // fallback also fired when `planningData` was still loading
+    // (undefined), which minted a Project Root row per deliverable on
+    // the first DP visit after a Planning mutation: the deliverables
+    // query is served from its 30s stale cache instantly while the
+    // planning query (invalidated by the mutation) is still refetching,
+    // so for one render `deliverables.length > 0 && !planningData` — the
+    // group header read "Project Root · N deliverables" until the user
+    // hard-reloaded. Hard reload masked it because planning data was
+    // typically back before paint. Preserving the legitimate "zero
+    // zones" fallback by gating on `planningIsLoading` only: once the
+    // query is NOT loading (either success with zones:[] or error), the
+    // fallback is correct.
     const topLevelZones: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
     for (const d of deliverables) {
       if (topLevelZones.length === 0) {
-        emit(d.id, d, null, 'Project Root');
+        if (!planningIsLoading) emit(d.id, d, null, 'Project Root');
+        // else: planning still loading — skip the fallback so the group
+        // header doesn't flash "Project Root · N" over the real zones.
       } else {
         for (const z of topLevelZones) emit(d.id, d, z.id, z.name, z.zoneType);
       }
@@ -674,7 +691,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     // (via `topLevelZoneId` / `topLevelZoneName`), so a zone-tree edit
     // (new root / re-parent) invalidates and recomputes rows the same
     // frame the planning payload lands.
-  }, [tasks, zonesFlat, deliverables, topLevelZoneInfo]);
+  }, [tasks, zonesFlat, deliverables, topLevelZoneInfo, planningIsLoading]);
 
   // Seed drafts from server values whenever rows change.
   useEffect(() => {
