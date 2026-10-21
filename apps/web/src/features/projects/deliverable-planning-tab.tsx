@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Calendar, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, Filter, Lock } from 'lucide-react';
 import client from '@/api/client';
@@ -2184,20 +2184,50 @@ function GanttView({
     return out;
   }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, outerDim, topLevelZoneSortOrderMap]);
 
-  // Compact scale so 3 years fit in one viewport at MONTH granularity
-  // (client feedback 2026-08-02 item 5). 8 px/week × 156 weeks (3 yr)
-  // ≈ 1250px, which fits a typical laptop timeline column (viewport −
-  // 260px label column ≈ 1000-1400px).
+  // DPG-6 (2026-10-21) · Viewport-aware timeline width. The horizontal
+  // scroller's `clientWidth` is measured via `ResizeObserver` and the
+  // grid stretches to fill it: a 1-year window at month granularity on
+  // a 1200px viewport goes from ~833px total (empty right-hand gap) to
+  // the full viewport. Also recomputes on window resize, sidebar
+  // collapse/expand (anything that resizes the scroller), and
+  // `visibleYears` / `granularity` changes.
   //
-  // DPG-5 (2026-10-20) · `PX_PER_DAY` now scales with the grid
-  // granularity so week and day views have readable column headers.
-  // Bars themselves still represent the same date range in every mode
-  // (snap to Sunday, week-level math) — they just render wider / per-
-  // day as the scale grows. Totals (in order of growing density):
-  //   month ≈ 1.14 px/day  (one month ≈ 34 px, current behavior)
-  //   week  = 4    px/day  (one week  = 28 px, fits "W40")
-  //   day   = 24   px/day  (one day   = 24 px, fits "20\nT")
-  const PX_PER_DAY = granularity === 'day' ? 24 : granularity === 'week' ? 4 : 8 / 7;
+  // Density floor per granularity so bars stay readable even when the
+  // span is longer than the viewport (user scrolls instead of the labels
+  // collapsing to unreadable):
+  //   month → 8/7 (~1.14 px/day) — matches the pre-DPG-6 default; month
+  //           ticks are ~34 px wide at this scale, enough for "Oct".
+  //   week  → 4 px/day — one week = 28 px, fits "W40".
+  //   day   → 24 px/day — one day = 24 px, fits "20\nT".
+  // The stretched value is `viewportWidth / spanDays`; we take the max
+  // of that and the floor so day/week never shrink below their natural
+  // ticks, while month view can grow (when visibleYears is small enough
+  // to let it) to use the whole viewport. First paint has
+  // `viewportWidth === 0`, which falls back to the natural density.
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  const [viewportWidth, setViewportWidth] = useState<number>(0);
+  // `useLayoutEffect` seeds the initial width BEFORE the first browser
+  // paint, so the first visible frame uses the stretched pxPerDay —
+  // no cheap "natural density → stretched" flash on mount. The
+  // ResizeObserver then catches every later resize (window, sidebar
+  // collapse, viewport zoom, etc.) and triggers a plain re-render.
+  useLayoutEffect(() => {
+    const el = bodyScrollRef.current;
+    if (!el) return;
+    setViewportWidth(el.clientWidth);
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = (entry.contentRect?.width ?? (entry.target as HTMLElement).clientWidth) || 0;
+        // Guard against sub-pixel noise ping-ponging state updates.
+        setViewportWidth((prev) => (Math.abs(prev - w) < 0.5 ? prev : w));
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const MIN_PX_PER_DAY = granularity === 'day' ? 24 : granularity === 'week' ? 4 : 8 / 7;
+
   // DPG-4 (2026-10-20) · `visibleYears` is now component state (1/2/3)
   // persisted to localStorage — see the hook at the top of the component.
 
@@ -2224,6 +2254,14 @@ function GanttView({
   const threeYearMs = baseDateMs + visibleYears * 365 * 86_400_000;
   const endMs = Math.max(latestTargetMs + 90 * 86_400_000, threeYearMs);
   const spanDays = Math.max(30, Math.round((endMs - startMs) / 86_400_000));
+  // DPG-6 — stretched pxPerDay = viewportWidth / spanDays, floored at
+  // the granularity's natural minimum. `viewportWidth === 0` on first
+  // paint (and when the scroller isn't mounted yet, e.g. empty-state
+  // branch) → stretched is 0 → the floor wins → natural density.
+  const stretchedPxPerDay = viewportWidth > 0 && spanDays > 0
+    ? viewportWidth / spanDays
+    : 0;
+  const PX_PER_DAY = Math.max(MIN_PX_PER_DAY, stretchedPxPerDay);
   const totalTimelineWidth = spanDays * PX_PER_DAY;
   // NB: don't early-return here — hooks below (useRef, useState,
   // useEffect) must run on EVERY render, otherwise React errors with
@@ -2336,7 +2374,10 @@ function GanttView({
   // there is exactly one horizontal scrollbar. This replaces the
   // two-scroller onScroll-mirror trick, which sometimes let the top
   // and bottom drift apart when the top wasn't the active scroller.
-  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  //
+  // DPG-6 (2026-10-21) — the ref itself is now hoisted above (next to
+  // the ResizeObserver that drives viewport-aware pxPerDay). Only state
+  // specific to scroll position + scroll helpers live here.
   const [scrollLeftPx, setScrollLeftPx] = useState(0);
   const scrollByDays = (days: number) => {
     const el = bodyScrollRef.current;
