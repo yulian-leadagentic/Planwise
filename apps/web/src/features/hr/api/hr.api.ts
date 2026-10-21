@@ -598,6 +598,37 @@ export const hrApi = {
       .delete(`/hr/employees/${userId}/attachments/${attachmentId}`)
       .then((r) => unwrap<{ ok: true; id: number }>(r.data)),
 
+  /**
+   * Open an HR attachment in a new tab (2026-10-21).
+   *
+   * The stored `fileUrl` on an attachment is a relative path inside the
+   * API's upload root (e.g. `/hr/<uuid>.txt`) — the app has no static
+   * mount for it, so handing that path to a plain `<a href>` 404s on
+   * the SPA router. Instead we fetch the file through the authenticated
+   * axios client (so JWT + refresh handling comes along for free), wrap
+   * the bytes in a Blob with the server's Content-Type, and open the
+   * resulting object URL in a new tab. The browser then renders inline
+   * for pdf/txt/images and offers a save dialog otherwise.
+   */
+  openAttachment: async (attachmentId: number): Promise<void> => {
+    const res = await client.get(`/hr/attachments/${attachmentId}/download`, {
+      responseType: 'blob',
+    });
+    const contentType =
+      (res.headers['content-type'] as string | undefined) ||
+      'application/octet-stream';
+    const blob = new Blob([res.data], { type: contentType });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!win) {
+      // Pop-up blocker ate the new tab — fall back to same-tab nav so
+      // the click never silently no-ops.
+      window.location.href = url;
+    }
+    // Revoke after the new tab has had time to pull the bytes.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  },
+
   // ─── Monthly attendance (Phase C) ──────────────────────────────────
   recomputeMonthly: (payload: { year: number; month: number; userIds?: number[] }) =>
     client.post('/hr/monthly/recompute', payload).then((r) => unwrap<RecomputeResponse>(r.data)),

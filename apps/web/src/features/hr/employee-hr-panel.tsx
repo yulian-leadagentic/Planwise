@@ -731,16 +731,23 @@ function AbsenceRow({
             {row.absenceType.unit === 'DAY' ? 'days' : 'hours'}
           </span>
           {row.document && (
-            <a
-              href={row.document.fileUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 rounded-[5px] bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50"
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                // Fetch via the authenticated API endpoint instead of
+                // hitting the raw stored `fileUrl` (a `/hr/<uuid>.ext`
+                // path with no static mount — the old <a href> landed
+                // on the SPA 404 route).
+                void hrApi
+                  .openAttachment(row.document!.id)
+                  .catch((err) => notify.apiError(err, 'Failed to open document'));
+              }}
+              className="inline-flex cursor-pointer items-center gap-1 rounded-[5px] border-0 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/50"
               title={row.document.fileName}
-              onClick={(e) => e.stopPropagation()}
             >
               <Paperclip className="h-2.5 w-2.5" /> Doc
-            </a>
+            </button>
           )}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
@@ -1051,15 +1058,20 @@ function AbsenceModal({ employee, mode, existing, onClose, onSaved }: AbsenceMod
                 מסמך מצורף · Document {picked?.requiresDocument && <span className="text-red-500">*</span>}
               </p>
               {currentDoc ? (
-                <a
-                  href={currentDoc.fileUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 inline-flex items-center gap-1.5 text-[13px] font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                <button
+                  type="button"
+                  onClick={() => {
+                    void hrApi
+                      .openAttachment(currentDoc.id)
+                      .catch((err) =>
+                        notify.apiError(err, 'Failed to open document'),
+                      );
+                  }}
+                  className="mt-1 inline-flex cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-[13px] font-medium text-blue-600 dark:text-blue-400 hover:underline"
                 >
                   <FileText className="h-3.5 w-3.5" />
                   <span className="truncate max-w-[260px]">{currentDoc.fileName}</span>
-                </a>
+                </button>
               ) : (
                 <p className="mt-0.5 text-[12px] text-slate-500 dark:text-slate-400">
                   {picked?.requiresDocument
@@ -1188,15 +1200,20 @@ function DocumentsSection({ employee, canWrite, qc }: DocumentsSectionProps) {
           {rows.map((r) => (
             <li key={r.id} className="group flex items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0 flex-1">
-                <a
-                  href={r.fileUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400"
+                <button
+                  type="button"
+                  onClick={() => {
+                    void hrApi
+                      .openAttachment(r.id)
+                      .catch((err) =>
+                        notify.apiError(err, 'Failed to open document'),
+                      );
+                  }}
+                  className="inline-flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 text-sm font-semibold text-slate-900 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400"
                 >
                   <FileText className="h-4 w-4 text-slate-400 dark:text-slate-500" />
                   <span className="truncate max-w-[380px]">{r.fileName}</span>
-                </a>
+                </button>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-slate-500 dark:text-slate-400">
                   {r.fileSize != null && (
                     <span className="font-mono tabular-nums">

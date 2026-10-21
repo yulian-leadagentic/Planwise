@@ -6,12 +6,15 @@ import {
   ForbiddenException,
   Logger,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import * as Sentry from '@sentry/node';
+import * as path from 'path';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { FilesService } from '../files/files.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import { userHasModulePermission } from '../../common/guards/roles.guard';
 import { UpdateHrEmployeeDto } from './dto/update-employee.dto';
 import { CreateEligibilityDto } from './dto/create-eligibility.dto';
 import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
@@ -59,12 +62,20 @@ function todayDateOnly(): Date {
 @Injectable()
 export class HrService {
   private readonly log = new Logger(HrService.name);
+  // Mirror of the FilesService disk root — kept here so the attachment-
+  // download resolver below can map a stored `/hr/<uuid>.ext` fileUrl back
+  // to an absolute path on disk without exposing FilesService internals.
+  // Matches ProjectFilesService.uploadDir, same env var.
+  private readonly uploadDir: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly files: FilesService,
     private readonly activityLog: ActivityLogService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.uploadDir = this.config.get('UPLOAD_DIR', './uploads');
+  }
 
   // ═══ SpecialHourBucket catalog ══════════════════════════════════════
 
@@ -1002,6 +1013,49 @@ export class HrService {
       description: `Deleted HR document "${row.fileName}" for employee ${userId}`,
     });
     return { ok: true, id: attachmentId };
+  }
+
+  /**
+   * HR attachment download (2026-10-21) — resolve an attachment id to the
+   * absolute disk path + metadata the controller streams.
+   *
+   * Why this exists: `EmployeeAttachment.fileUrl` stores the stored path
+   * (e.g. `/hr/<uuid>.pdf`) that FilesService.uploadFile returns. The app
+   * has no static-asset mount for `/uploads/*` / `/hr/*`, so the raw url
+   * is NOT directly reachable — the frontend used to hand it to <a href>
+   * and 404 on the SPA router. We expose a controller-level stream route
+   * instead so the client can fetch the blob with its JWT and open it.
+   *
+   * Access: the owner of the attachment can always download their own
+   * document (`/hr/me/attachments` self-service path); anyone else must
+   * carry `hr:read`. HR is in `NO_ADMIN_BYPASS` so an org admin without
+   * the explicit HR grant is denied here too — same bar as the rest of
+   * the HR surface.
+   */
+  async resolveAttachmentDownload(attachmentId: number, user: any) {
+    const row = await this.prisma.employeeAttachment.findUnique({
+      where: { id: attachmentId },
+    });
+    if (!row) {
+      throw new NotFoundException(`Attachment ${attachmentId} not found`);
+    }
+
+    const isOwner = user?.id === row.userId;
+    const canReadHr = userHasModulePermission(user, 'hr', 'read');
+    if (!isOwner && !canReadHr) {
+      throw new ForbiddenException('Insufficient permissions');
+    }
+
+    // Resolve on-disk path with path-traversal guard — fileUrl is
+    // controlled by the server (uuid filename inside the `hr` folder),
+    // but defense in depth keeps a corrupted row from escaping the HR
+    // upload root. Mirrors ProjectFilesService.resolveUploadPath.
+    const root = path.resolve(this.uploadDir, 'hr');
+    const target = path.resolve(root, path.basename(row.fileUrl));
+    if (!target.startsWith(root + path.sep) && target !== root) {
+      throw new BadRequestException('Invalid attachment path');
+    }
+    return { path: target, fileName: row.fileName, mimeType: row.mimeType };
   }
 
   // ═══ Employee roster (A3, unchanged shape) ═══════════════════════════

@@ -12,8 +12,12 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Res,
+  StreamableFile,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { Response } from 'express';
+import * as fs from 'fs';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -463,6 +467,47 @@ export class HrController {
     @CurrentUser() user: any,
   ) {
     return this.hr.deleteEmployeeAttachment(userId, attachmentId, user.id);
+  }
+
+  /**
+   * HR attachment download (2026-10-21). The stored `fileUrl` on an
+   * `EmployeeAttachment` is a relative path inside `UPLOAD_DIR/hr/`;
+   * there is no static-asset mount for it, so handing that path to an
+   * `<a href>` 404s on the SPA router. This streams the file through
+   * the API instead so the browser can render it inline (txt/pdf/
+   * images) or fall through to a save dialog for other mime types.
+   *
+   * No `@RequirePermissions` here — authorization lives in the service,
+   * which allows the OWNER of the attachment to read their own doc,
+   * everybody else needs `hr:read`. That mirrors how the
+   * `/hr/me/attachments` upload works and keeps employees from being
+   * locked out of their own uploaded documents.
+   */
+  @Get('attachments/:id/download')
+  @ApiOperation({
+    summary:
+      'Stream an HR attachment (owner, or any caller with hr:read). Content-Disposition inline so .pdf/.txt/images render in the browser.',
+  })
+  async downloadAttachment(
+    @Param('id', ParseIntPipe) attachmentId: number,
+    @CurrentUser() user: any,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { path: filePath, fileName, mimeType } =
+      await this.hr.resolveAttachmentDownload(attachmentId, user);
+    // RFC 5987 — ASCII fallback + UTF-8 filename* so Hebrew/Cyrillic
+    // names survive the round-trip. `inline` so the browser attempts
+    // to render the file in the new tab (Yulian clicks a `.txt` DOC
+    // chip expecting to see the text) rather than forcing a save.
+    const asciiFallback =
+      fileName.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') ||
+      'download';
+    const utf8Encoded = encodeURIComponent(fileName);
+    res.set({
+      'Content-Type': mimeType || 'application/octet-stream',
+      'Content-Disposition': `inline; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`,
+    });
+    return new StreamableFile(fs.createReadStream(filePath));
   }
 
   // ─── Monthly Attendance (Phase C3) ──────────────────────────────────
