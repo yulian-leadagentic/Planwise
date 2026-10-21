@@ -38,6 +38,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { PeopleMultiSelect } from '@/components/shared/people-multi-select';
+import { useProjectTabState } from './use-project-tab-state';
 
 // QA5 UI-12: the FeasibilityBadge component (Progress bar + On Track /
 // At Risk / Impossible chip) was deleted from this file in Wave 1 — it
@@ -579,6 +580,39 @@ export interface ColFilters {
   status: string;
   assignee: string; // user id as string
 }
+
+// #5 · persisted Planning-tab filter block.
+//
+// Combined shape stored under
+// `planwise:project:<projectId>:planning-filters`. Keeps the main
+// "Filters" popover (status / priority / assignee / date / has-due)
+// alongside the per-column funnels (`col`) so one localStorage write
+// covers both, and the user sees exactly the view they left behind
+// after switching tabs. Field names stay plain and JSON-serialisable
+// (no Map / Set / Date) so the hook's try/catch read is bulletproof.
+export interface PlanningTabFilters {
+  status: string;
+  priority: string;
+  assigneeIds: number[];
+  startFrom: string;
+  startTo: string;
+  dueFrom: string;
+  dueTo: string;
+  hasDue: '' | 'yes' | 'no';
+  col: ColFilters;
+}
+
+const PLANNING_FILTERS_DEFAULT: PlanningTabFilters = {
+  status: '',
+  priority: '',
+  assigneeIds: [],
+  startFrom: '',
+  startTo: '',
+  dueFrom: '',
+  dueTo: '',
+  hasDue: '',
+  col: { code: '', name: '', zone: '', deliverable: '', service: '', status: '', assignee: '' },
+};
 
 interface TaskFilterCtx {
   filters: ColFilters;
@@ -4973,15 +5007,29 @@ function PlanningView({ projectId }: { projectId: number }) {
   const overrideFor = (templateId: number | null | undefined) =>
     templateId != null ? deliverableByTemplateId.get(templateId)?.name : undefined;
 
-  // Y1 — per-column filter state. One object for all column funnels;
-  // applied in the `filtered` useMemo below. Distinct option lists are
-  // derived from the loaded tasks.
-  const [colFilters, setColFilters] = useState<ColFilters>({
-    code: '', name: '', zone: '', deliverable: '', service: '', status: '', assignee: '',
-  });
+  // Per-project persisted filter block (#5 · fix/planning-persist-ui).
+  //
+  // One object groups every filter the Planning tab exposes — the main
+  // "Filters" popover (status / priority / assignee / date / has-due)
+  // AND the per-column funnels (Y1 `colFilters`). The whole block is
+  // persisted under `planwise:project:<projectId>:planning-filters` so
+  // switching to Kanban / Execution / Team and back restores the exact
+  // view the user had.
+  //
+  // The individual `setFilterXxx` setters below are thin wrappers that
+  // preserve the pre-existing API shape (every call site reads
+  // `filterStatus`, calls `setFilterStatus('')`, etc. — see the clear
+  // block + Filters popover). We destructure named locals for the same
+  // reason.
+  const [filters, setFilters] = useProjectTabState<PlanningTabFilters>(
+    projectId,
+    'planning-filters',
+    PLANNING_FILTERS_DEFAULT,
+  );
+  const colFilters = filters.col;
   const setColFilter = useCallback((key: keyof ColFilters, value: string) => {
-    setColFilters((f) => ({ ...f, [key]: value }));
-  }, []);
+    setFilters((f) => ({ ...f, col: { ...f.col, [key]: value } }));
+  }, [setFilters]);
 
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showManualZone, setShowManualZone] = useState(false);
@@ -5049,7 +5097,18 @@ function PlanningView({ projectId }: { projectId: number }) {
   // so the button label flips between "Collapse all" / "Expand all".
   // `bulkVersion` is bumped on every click so cards re-sync even when
   // the desired value is unchanged (see BulkCollapseContext contract).
-  const [bulkCollapsed, setBulkCollapsed] = useState(false);
+  //
+  // `bulkCollapsed` is persisted per-project (#5): on tab switch to
+  // Kanban / Execution / Team and back, the toolbar restores the user's
+  // last collapse state. `bulkVersion` stays in-memory — on remount
+  // the useBulkCollapseSync effect fires on first render anyway, so
+  // every zone-group card re-applies `desired` without needing a stored
+  // version.
+  const [bulkCollapsed, setBulkCollapsed] = useProjectTabState<boolean>(
+    projectId,
+    'planning-collapse',
+    false,
+  );
   const [bulkVersion, setBulkVersion] = useState(0);
   const toggleBulkCollapse = () => {
     setBulkCollapsed((v) => !v);
@@ -5059,27 +5118,57 @@ function PlanningView({ projectId }: { projectId: number }) {
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
-  // Task filters — empty = no filter. Date filters compare against task.startDate / task.endDate
-  // (stored ISO strings; we compare YYYY-MM-DD prefix).
-  const [filterStatus, setFilterStatus] = useState<string>('');
-  // V7 — Priority + Assignee filters on the planning task table.
-  // Joins the existing Status / Start / Due / Has-due / free-text
-  // filters. Assignee filter is a single user-id; switches the row to
-  // "tasks where assignee X is on the team for this task".
-  const [filterPriority, setFilterPriority] = useState<string>('');
-  // Assignee filter — set of userIds. UNION semantics (matches a task
-  // if ANY selected person is on it). Was a single-value <select>;
-  // widened to a chip-based PeopleMultiSelect for consistency with
-  // the Projects list / Kanban. (fix/people-filter.)
-  const [filterAssigneeIds, setFilterAssigneeIds] = useState<number[]>([]);
-  const [filterStartFrom, setFilterStartFrom] = useState<string>('');
-  const [filterStartTo, setFilterStartTo] = useState<string>('');
-  const [filterDueFrom, setFilterDueFrom] = useState<string>('');
-  const [filterDueTo, setFilterDueTo] = useState<string>('');
-  // Has-due-date triage filter. '' = any, 'yes' = only tasks with a due
-  // date set, 'no' = only tasks missing one (handy for catching tasks
-  // that slipped through scheduling).
-  const [filterHasDue, setFilterHasDue] = useState<'' | 'yes' | 'no'>('');
+  // Task filters — empty = no filter. Date filters compare against
+  // task.startDate / task.endDate (stored ISO strings; we compare the
+  // YYYY-MM-DD prefix).
+  //
+  // The named locals below destructure out of the single `filters`
+  // state declared above so persistence + the existing read sites
+  // (`filterStatus`, `filterPriority`, …) stay in lockstep without a
+  // call-site rewrite. The matching per-field setters are thin wrappers
+  // around `setFilters` with the same signature as the old `useState`
+  // dispatchers — call sites continue to do `setFilterStatus('')` and
+  // `onChange={setFilterAssigneeIds}` unchanged. (#5 persist)
+  const filterStatus = filters.status;
+  const filterPriority = filters.priority;
+  const filterAssigneeIds = filters.assigneeIds;
+  const filterStartFrom = filters.startFrom;
+  const filterStartTo = filters.startTo;
+  const filterDueFrom = filters.dueFrom;
+  const filterDueTo = filters.dueTo;
+  const filterHasDue = filters.hasDue;
+  const setFilterStatus = useCallback(
+    (v: string) => setFilters((f) => ({ ...f, status: v })),
+    [setFilters],
+  );
+  const setFilterPriority = useCallback(
+    (v: string) => setFilters((f) => ({ ...f, priority: v })),
+    [setFilters],
+  );
+  const setFilterAssigneeIds = useCallback(
+    (v: number[]) => setFilters((f) => ({ ...f, assigneeIds: v })),
+    [setFilters],
+  );
+  const setFilterStartFrom = useCallback(
+    (v: string) => setFilters((f) => ({ ...f, startFrom: v })),
+    [setFilters],
+  );
+  const setFilterStartTo = useCallback(
+    (v: string) => setFilters((f) => ({ ...f, startTo: v })),
+    [setFilters],
+  );
+  const setFilterDueFrom = useCallback(
+    (v: string) => setFilters((f) => ({ ...f, dueFrom: v })),
+    [setFilters],
+  );
+  const setFilterDueTo = useCallback(
+    (v: string) => setFilters((f) => ({ ...f, dueTo: v })),
+    [setFilters],
+  );
+  const setFilterHasDue = useCallback(
+    (v: '' | 'yes' | 'no') => setFilters((f) => ({ ...f, hasDue: v })),
+    [setFilters],
+  );
 
   // Column visibility (client feedback 2026-08-02 item 1). Picks
   // persist per browser via localStorage. The `columnVis.isVisible`
@@ -5801,7 +5890,10 @@ function PlanningView({ projectId }: { projectId: number }) {
     setFilterDueFrom('');
     setFilterDueTo('');
     setFilterHasDue('');
-    setColFilters({ code: '', name: '', zone: '', deliverable: '', service: '', status: '', assignee: '' });
+    setFilters((f) => ({
+      ...f,
+      col: { code: '', name: '', zone: '', deliverable: '', service: '', status: '', assignee: '' },
+    }));
   };
 
   // Sort
