@@ -1897,7 +1897,7 @@ model TemplateTaskDependency {
   templateTask          TemplateTask @relation("TemplateTaskPredecessors", fields: [templateTaskId], references: [id], onDelete: Cascade)
   dependsOnTemplateTask TemplateTask @relation("TemplateTaskSuccessors", fields: [dependsOnTemplateTaskId], references: [id], onDelete: Cascade)
 
-  @@unique([templateTaskId, dependsOnTemplateTaskId])
+  @@unique([templateTaskId, dependsOnTemplateTaskId], map: "template_task_dep_pair_unique")
   @@index([templateTaskId])
   @@index([dependsOnTemplateTaskId])
   @@map("template_task_dependencies")

@@ -21,7 +21,7 @@ CREATE TABLE `template_task_dependencies` (
   `dependsOnTemplateTaskId` INTEGER NOT NULL,
   `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
-  UNIQUE INDEX `template_task_dependencies_templateTaskId_dependsOnTemplateTaskId_key`(`templateTaskId`, `dependsOnTemplateTaskId`),
+  UNIQUE INDEX `template_task_dep_pair_unique`(`templateTaskId`, `dependsOnTemplateTaskId`),
   INDEX `template_task_dependencies_templateTaskId_idx`(`templateTaskId`),
   INDEX `template_task_dependencies_dependsOnTemplateTaskId_idx`(`dependsOnTemplateTaskId`),
   PRIMARY KEY (`id`)
