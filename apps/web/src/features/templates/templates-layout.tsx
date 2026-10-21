@@ -9,7 +9,7 @@ import { SubNavLayout, type SubNavItem } from '@/components/layout/sub-nav-layou
 const TEMPLATE_ITEMS: SubNavItem[] = [
   { label: 'Task Catalog',           href: '/templates/task-catalog', icon: BookOpen,   module: 'templates/task-catalog' },
   { label: 'Deliverable Templates',  href: '/templates/deliverables', icon: Copy,       module: 'templates/deliverables' },
-  { label: 'Zone Templates',         href: '/templates/zone',         icon: Layers,     module: 'templates/zone' },
+  { label: 'Zone Hierarchy',         href: '/templates/zone',         icon: Layers,     module: 'templates/zone' },
   { label: 'Services',               href: '/templates/services',     icon: ListChecks, module: 'templates/services' },
   { label: 'Types',                  href: '/templates/types',        icon: Tags,       module: 'templates/types' },
   { label: 'Team Templates',         href: '/templates/team',         icon: Users,      module: 'templates/team' },

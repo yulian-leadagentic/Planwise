@@ -94,7 +94,7 @@ export function ZoneTemplatesPage() {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <PageHeader
-          title="Zone Templates"
+          title="Zone Hierarchy"
           description="Reusable zone structures for projects"
           actions={
             <button onClick={() => setShowForm(!showForm)} className={btnPrimary}>

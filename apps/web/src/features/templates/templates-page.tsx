@@ -28,7 +28,7 @@ const templateCards = [
     color: 'bg-amber-100 text-amber-700',
   },
   {
-    title: 'Zone Templates',
+    title: 'Zone Hierarchy',
     description: 'Zone hierarchy with deliverables and tasks assigned',
     icon: Layers,
     href: '/templates/zone',
@@ -67,7 +67,7 @@ export function TemplatesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Templates" description="Manage task catalog, deliverable templates, zone templates, and configurations" />
+      <PageHeader title="Templates" description="Manage task catalog, deliverable templates, zone hierarchy, and configurations" />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {visible.map((card) => (

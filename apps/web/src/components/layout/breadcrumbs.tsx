@@ -64,7 +64,7 @@ const ROUTE_LABELS: Record<string, string> = {
   // Templates sub-paths
   'task-catalog': 'Task Catalog',
   deliverables: 'Deliverable Templates',
-  zone: 'Zone Templates',
+  zone: 'Zone Hierarchy',
   team: 'Team Templates',
   services: 'Services',
   types: 'Types',
