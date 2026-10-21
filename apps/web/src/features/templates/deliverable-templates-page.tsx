@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen, GripVertical } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen, GripVertical, AlertTriangle } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -22,6 +22,7 @@ import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { Modal } from '@/components/shared/modal';
 import client from '@/api/client';
+import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 
@@ -237,6 +238,9 @@ function CatalogPickerModal({
 function SortableTaskRow({
   task,
   allTasks,
+  invalidOrder,
+  maxPredecessorOrder,
+  violatedPredecessorName,
   onOrderChange,
   onDeleteTask,
   savePredecessors,
@@ -244,6 +248,12 @@ function SortableTaskRow({
 }: {
   task: any;
   allTasks: any[];
+  // Predecessor-order validation (bm2 2026-10-21). Pre-computed by the
+  // parent so the row paints a warning badge next to the Order cell and
+  // the banner above the table can count all offenders in one pass.
+  invalidOrder: boolean;
+  maxPredecessorOrder: number;
+  violatedPredecessorName: string;
   onOrderChange: (taskId: number, newSortOrder: number) => void;
   onDeleteTask: (task: any) => void;
   savePredecessors: (taskId: number, predecessorIds: number[]) => Promise<void>;
@@ -337,20 +347,51 @@ function SortableTaskRow({
           <GripVertical className="h-4 w-4" />
         </button>
       </td>
-      <td className="px-2 py-2 w-20">
-        <input
-          type="number"
-          min={0}
-          step={1}
-          value={orderDraft}
-          onChange={(e) => setOrderDraft(e.target.value)}
-          onBlur={commitOrder}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-          }}
-          className="w-14 rounded-[5px] border border-slate-200 bg-white px-2 py-1 text-right font-mono tabular-nums text-xs text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-          title="Sort order (lower = earlier)"
-        />
+      <td className="px-2 py-2 w-24">
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={orderDraft}
+            onChange={(e) => setOrderDraft(e.target.value)}
+            onBlur={commitOrder}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            }}
+            className={cn(
+              'w-14 rounded-[5px] bg-white px-2 py-1 text-right font-mono tabular-nums text-xs text-slate-700 focus:outline-none focus:ring-1 dark:bg-slate-900 dark:text-slate-200',
+              // bm2 2026-10-21 — paint the order input amber when the
+              // row's sortOrder is <= the max of its predecessors'. The
+              // badge next door carries the meaning so this is a hint,
+              // not the only signal.
+              invalidOrder
+                ? 'border border-amber-400 focus:border-amber-500 focus:ring-amber-400 dark:border-amber-500/70'
+                : 'border border-slate-200 focus:border-blue-500 focus:ring-blue-500 dark:border-slate-700',
+            )}
+            title={
+              invalidOrder
+                ? `סדר ${task.sortOrder} קטן מהסדר של המשימה המקדימה (${violatedPredecessorName} בסדר ${maxPredecessorOrder}). שינוי מומלץ: סדר ${maxPredecessorOrder + 1} ומעלה.`
+                : 'Sort order (lower = earlier)'
+            }
+          />
+          {invalidOrder && (
+            // Warning badge per planwise-design (amber-50/amber-700,
+            // rounded-[5px], 11px bold, 0.05em tracking). AlertTriangle
+            // 14px (shrunk a hair to h-3 to fit beside the number input
+            // without wrapping the Order column).
+            <span
+              tabIndex={0}
+              role="status"
+              aria-label={`סדר ${task.sortOrder} קטן מהסדר של המשימה המקדימה (${violatedPredecessorName} בסדר ${maxPredecessorOrder}). שינוי מומלץ: סדר ${maxPredecessorOrder + 1} ומעלה.`}
+              className="inline-flex items-center gap-0.5 rounded-[5px] bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 text-[10px] font-bold tracking-[0.05em] px-1.5 py-0.5 cursor-help focus:outline-none focus:ring-1 focus:ring-amber-400"
+              title={`סדר ${task.sortOrder} קטן מהסדר של המשימה המקדימה (${violatedPredecessorName} בסדר ${maxPredecessorOrder}). שינוי מומלץ: סדר ${maxPredecessorOrder + 1} ומעלה.`}
+            >
+              <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden="true" />
+              <span>סדר</span>
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-3 py-2 text-muted-foreground">{task.code || '-'}</td>
       <td className="px-3 py-2 font-medium">{task.name}</td>
@@ -583,6 +624,54 @@ function EditorView({
     [tasks],
   );
 
+  // ─────────────────────────────────────────────────────────────────────
+  // bm2 2026-10-21 — Predecessor-order validation.
+  // A template task's sortOrder must be STRICTLY greater than every
+  // predecessor's sortOrder (BIM-001 at #2 depending on BIM-004 at #3 is
+  // invalid because the predecessor is scheduled AFTER the dependent).
+  // The user keeps full save/reorder authority — this is a WARNING, not
+  // a block — but the row paints an amber badge + the table shows a
+  // banner so the PM can spot the mismatch at a glance.
+  //
+  //   const tasksWithValidation = useMemo(() => tasks.map(t => {
+  //     const preds = t.predecessors ?? [];
+  //     const maxPredOrder = preds.length
+  //       ? Math.max(...preds.map(p => byId.get(p.dependsOnTemplateTaskId)?.sortOrder ?? 0))
+  //       : -1;
+  //     return { ...t, _invalid: preds.length > 0 && t.sortOrder <= maxPredOrder };
+  //   }), [tasks]);
+  //
+  // The implementation below also pins the OFFENDING predecessor's name
+  // for the tooltip + a11y label, so the user doesn't have to open the
+  // picker to see which link broke the order.
+  const validationByTaskId = useMemo(() => {
+    const byId = new Map<number, any>(tasks.map((t: any) => [t.id, t]));
+    const map = new Map<number, { invalid: boolean; maxPredOrder: number; maxPredName: string }>();
+    for (const t of tasks) {
+      const preds: any[] = t.predecessors ?? [];
+      let maxPredOrder = -1;
+      let maxPredName = '';
+      for (const p of preds) {
+        const pt = byId.get(p.dependsOnTemplateTaskId);
+        if (!pt) continue;
+        const o = Number(pt.sortOrder ?? 0);
+        if (o > maxPredOrder) {
+          maxPredOrder = o;
+          maxPredName = pt.name ?? pt.code ?? `#${pt.id}`;
+        }
+      }
+      const myOrder = Number(t.sortOrder ?? 0);
+      const invalid = preds.length > 0 && maxPredOrder >= 0 && myOrder <= maxPredOrder;
+      map.set(t.id, { invalid, maxPredOrder, maxPredName });
+    }
+    return map;
+  }, [tasks]);
+
+  const invalidOrderCount = useMemo(
+    () => Array.from(validationByTaskId.values()).filter((v) => v.invalid).length,
+    [validationByTaskId],
+  );
+
   // T1-2 — @dnd-kit plumbing for the Order column. Tasks arrive from
   // the server already sorted by `sortOrder` ASC (findOne orders by
   // it), so `taskIds` reflects the current render order and the
@@ -724,6 +813,27 @@ function EditorView({
           </div>
         </div>
 
+        {/* bm2 2026-10-21 — predecessor-order validation banner. Shown
+            above the table when any row has a sortOrder <= one of its
+            predecessors'. Non-blocking (the user can still save /
+            reorder) but the amber band makes the state hard to miss. */}
+        {invalidOrderCount > 0 && (
+          <div
+            role="status"
+            className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/60 text-amber-800 dark:text-amber-200 text-[13px] font-medium px-4 py-2 flex items-start gap-2"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+            <span>
+              {invalidOrderCount === 1
+                ? '1 משימה עם סדר שאינו תואם למשימה המקדימה.'
+                : `${invalidOrderCount} משימות עם סדר שאינו תואם למשימה המקדימה.`}
+              <span className="ml-2 text-amber-700/80 dark:text-amber-300/80 font-normal">
+                העלה את ערך ה-Order של המשימה כך שיהיה גבוה מהסדר של המשימה המקדימה.
+              </span>
+            </span>
+          </div>
+        )}
+
         <div ref={scrollRef} className="overflow-x-auto rounded-lg border border-border">
           <DndContext
             sensors={sensors}
@@ -734,7 +844,7 @@ function EditorView({
               <thead>
                 <tr className="border-b border-border bg-muted/50">
                   <th className="px-2 py-2 w-10"></th>
-                  <th className="px-2 py-2 text-left font-medium w-20 whitespace-nowrap" title="Sort order / סדר">
+                  <th className="px-2 py-2 text-left font-medium w-24 whitespace-nowrap" title="Sort order / סדר">
                     Order
                     <span className="ml-1 text-[10px] text-muted-foreground">סדר</span>
                   </th>
@@ -754,7 +864,7 @@ function EditorView({
                 {showAddTask && (
                   <tr className="border-b border-border bg-brand-50/40 dark:bg-blue-950/30">
                     <td className="px-2 py-2 w-10" />
-                    <td className="px-2 py-2 w-20" />
+                    <td className="px-2 py-2 w-24" />
                     <td className="px-3 py-2">
                       <input value={newTask.code} onChange={(e) => setNewTask((p) => ({ ...p, code: e.target.value }))} placeholder="Code" className={inputClass} />
                     </td>
@@ -797,30 +907,36 @@ function EditorView({
                 )}
 
                 <SortableContext items={taskIds} strategy={verticalListSortingStrategy}>
-                  {tasks.map((task: any) => (
-                    <SortableTaskRow
-                      key={task.id}
-                      task={task}
-                      allTasks={tasks}
-                      onOrderChange={(taskId, sortOrder) =>
-                        updateTaskOrderMutation.mutate({ taskId, sortOrder })
-                      }
-                      onDeleteTask={async (t) => {
-                        if (await confirm(`Delete task "${t.name}"?`)) deleteTaskMutation.mutate(t.id);
-                      }}
-                      savePredecessors={async (taskId, predecessorIds) => {
-                        await setPredecessorsMutation.mutateAsync({ taskId, predecessorIds });
-                      }}
-                      isSavingPreds={setPredecessorsMutation.isPending}
-                    />
-                  ))}
+                  {tasks.map((task: any) => {
+                    const v = validationByTaskId.get(task.id);
+                    return (
+                      <SortableTaskRow
+                        key={task.id}
+                        task={task}
+                        allTasks={tasks}
+                        invalidOrder={!!v?.invalid}
+                        maxPredecessorOrder={v?.maxPredOrder ?? -1}
+                        violatedPredecessorName={v?.maxPredName ?? ''}
+                        onOrderChange={(taskId, sortOrder) =>
+                          updateTaskOrderMutation.mutate({ taskId, sortOrder })
+                        }
+                        onDeleteTask={async (t) => {
+                          if (await confirm(`Delete task "${t.name}"?`)) deleteTaskMutation.mutate(t.id);
+                        }}
+                        savePredecessors={async (taskId, predecessorIds) => {
+                          await setPredecessorsMutation.mutateAsync({ taskId, predecessorIds });
+                        }}
+                        isSavingPreds={setPredecessorsMutation.isPending}
+                      />
+                    );
+                  })}
                 </SortableContext>
 
                 {/* Totals row */}
                 {tasks.length > 0 && (
                   <tr className="border-t-2 border-border bg-muted/50 font-semibold">
                     <td className="px-2 py-2 w-10" />
-                    <td className="px-2 py-2 w-20" />
+                    <td className="px-2 py-2 w-24" />
                     <td className="px-3 py-2" />
                     <td className="px-3 py-2 text-right">Totals</td>
                     <td className="px-3 py-2" />
