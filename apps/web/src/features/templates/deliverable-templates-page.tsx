@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen, GripVertical, AlertTriangle } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen, GripVertical, AlertTriangle, Lock } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -394,7 +394,27 @@ function SortableTaskRow({
         </div>
       </td>
       <td className="px-3 py-2 text-muted-foreground">{task.code || '-'}</td>
-      <td className="px-3 py-2 font-medium">{task.name}</td>
+      <td className="px-3 py-2 font-medium">
+        {/* DN-ext (2026-10-22) — a row linked to the Task Catalog
+            renders its name as plain, read-only text with a small
+            lock badge; name/hours live on the catalog page now.
+            The badge is small so it rides inline with Hebrew labels
+            and doesn't wrap the Order column. Ad-hoc rows (no
+            `catalogTask`) keep the previous display with no badge. */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-slate-900 dark:text-slate-100">{task.name}</span>
+          {task.catalogTask && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-[5px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.05em] text-slate-500 dark:text-slate-400"
+              title="ערוך ב-Task Catalog · Edit in Task Catalog"
+              aria-label="Linked to Task Catalog — name and hours edit in Task Catalog"
+            >
+              <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
+              Catalog
+            </span>
+          )}
+        </div>
+      </td>
       <td className="px-3 py-2 min-w-[220px] max-w-[320px]">
         {editingPreds ? (
           <div className="space-y-1.5">

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { X } from 'lucide-react';
+import { X, Lock } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -46,7 +46,27 @@ export function ZoneTasksTable({
           {tasks.map((task: any) => (
             <tr key={task.id} className="border-b border-border last:border-0 hover:bg-muted/30">
               <td className="px-2 py-1 font-mono text-muted-foreground">{task.code || '-'}</td>
-              <td className="px-2 py-1 font-medium">{task.name}</td>
+              <td className="px-2 py-1 font-medium">
+                {/* DN-ext (2026-10-22) — the row's name is already
+                    read-only here (no inline edit in the Zone Template
+                    editor); add a small Catalog badge so the user can
+                    tell at a glance which rows are catalog-linked and
+                    which are ad-hoc. Compact variant to fit the
+                    1-line zone-tasks row (text-[10px]). */}
+                <div className="flex items-center gap-1">
+                  <span>{task.name}</span>
+                  {task.catalogTask && (
+                    <span
+                      className="inline-flex items-center gap-0.5 rounded-[5px] bg-slate-100 dark:bg-slate-800 px-1 py-0.5 text-[9px] font-bold tracking-[0.05em] text-slate-500 dark:text-slate-400"
+                      title="ערוך ב-Task Catalog · Edit in Task Catalog"
+                      aria-label="Linked to Task Catalog"
+                    >
+                      <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+                      Catalog
+                    </span>
+                  )}
+                </div>
+              </td>
               <td className="px-2 py-1 text-right tabular-nums">
                 {task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours).toFixed(0)}h` : '-'}
               </td>
