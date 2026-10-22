@@ -94,6 +94,12 @@ export function ZoneCatalogPickerModal({
           name: ct.name,
           defaultBudgetHours: ct.defaultBudgetHours,
           defaultBudgetAmount: ct.defaultBudgetAmount,
+          // DN-ext (2026-10-22) — same catalog-link write as the
+          // Deliverable Template picker: store the source catalog
+          // TemplateTask id on the new TemplateZoneTask so the Zone
+          // Template editor resolves name/hours LIVE from the
+          // catalog on subsequent reads.
+          catalogTaskId: ct.id,
           // phaseId is set at the deliverable template level, not per-task
         });
       }

@@ -116,6 +116,12 @@ function CatalogPickerModal({
           name: ct.name,
           defaultBudgetHours: ct.defaultBudgetHours,
           defaultBudgetAmount: ct.defaultBudgetAmount,
+          // DN-ext (2026-10-22) — store the source catalog TemplateTask
+          // id so the editor can resolve name + hours LIVE from the
+          // catalog on subsequent reads. Local scalars above still
+          // land as a snapshot fallback (used if the catalog row is
+          // ever deleted and the FK goes NULL via SetNull).
+          catalogTaskId: ct.id,
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
@@ -759,24 +765,33 @@ function EditorView({
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTask.name.trim()) return;
-    const payload = {
+    const basePayload = {
       code: newTask.code.trim() || undefined,
       name: newTask.name.trim(),
       defaultBudgetHours: newTask.defaultBudgetHours ? Number(newTask.defaultBudgetHours) : undefined,
       defaultBudgetAmount: newTask.defaultBudgetAmount ? Number(newTask.defaultBudgetAmount) : undefined,
     };
-    // Also add to catalog if checkbox is checked
+    // DN-ext (2026-10-22) — when "Also add to catalog" is on, create
+    // the catalog TemplateTask FIRST so we can read its id back and
+    // link the deliverable's TemplateTask to it via `catalogTaskId`.
+    // Without this link the two rows drift the moment either is
+    // renamed later (the exact bug Phase 2 ships to prevent). Catalog
+    // failures stay non-fatal — the deliverable task still gets
+    // created as a standalone ad-hoc row.
+    let catalogTaskId: number | undefined;
     if (addToCatalog) {
       try {
         const allTpls = await client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data);
         const catalog = (Array.isArray(allTpls) ? allTpls : []).find((t: any) => t.code === '__TASK_CATALOG__');
         if (catalog) {
-          await client.post(`/templates/${catalog.id}/tasks`, payload);
+          const resp = await client.post(`/templates/${catalog.id}/tasks`, basePayload);
+          const created = resp.data?.data ?? resp.data;
+          if (created && typeof created.id === 'number') catalogTaskId = created.id;
           queryClient.invalidateQueries({ queryKey: ['templates', catalog.id] });
         }
-      } catch { /* ignore catalog errors */ }
+      } catch { /* ignore catalog errors — deliverable task still lands below */ }
     }
-    addTaskMutation.mutate(payload);
+    addTaskMutation.mutate({ ...basePayload, catalogTaskId });
   };
 
   const handleSaveHeader = (e: React.FormEvent) => {

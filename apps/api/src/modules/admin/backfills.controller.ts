@@ -2194,4 +2194,248 @@ export class BackfillsController {
       errors,
     };
   }
+
+  /**
+   * DN-ext (2026-10-22) — Backfill the `catalogTaskId` FK on
+   * `TemplateTask` + `TemplateZoneTask` from the source catalog
+   * TemplateTask (lives under the Task Catalog template, `code =
+   * '__TASK_CATALOG__'`). Phase 2 of the template name/hours sync
+   * fix; see docs/bm2/template-name-sync-investigation.md.
+   *
+   * Match rule (per Yulian 2026-10-22): exact `code` match against
+   * the catalog's own TemplateTask rows. One catalog hit → link.
+   * Zero → skippedNoMatch. Two or more → skippedMultipleMatches
+   * (the schema allows a duplicate `code` in the catalog; we never
+   * guess). Rows with no `code` are skipped outright — a code-based
+   * backfill can't match a row that lacks the join key.
+   *
+   * Scope:
+   *   • TemplateTask rows whose `templateId` is NOT the catalog's
+   *     own id (so catalog rows don't link to themselves) AND
+   *     `catalogTaskId IS NULL` (idempotent — re-run matches 0).
+   *   • TemplateZoneTask rows where `catalogTaskId IS NULL` (zone
+   *     tasks never live under the catalog template, so no self-
+   *     scope guard needed).
+   *
+   * Per-row transaction so one failure doesn't tank the batch.
+   * `?dryRun=true` → plan only (default `false`, matches the
+   * admin-backfill house convention of a plain POST executing).
+   * Yulian always invokes dryRun first per the Phase 2 work order
+   * — CC never executes this.
+   *
+   * Response shape: separate counters per table so a mixed batch
+   * can be audited precisely. `errors` holds per-row failures
+   * that didn't fit a skip bucket.
+   */
+  @Post('backfill/template-catalog-task-fk')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'DN-ext · Backfill TemplateTask / TemplateZoneTask.catalogTaskId by code match against Task Catalog (idempotent; ?dryRun=true for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runBackfillTemplateCatalogTaskFk(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // 1. Locate the Task Catalog template. If it doesn't exist
+    //    nothing is linkable — the backfill is a no-op.
+    const catalog = await this.prisma.template.findFirst({
+      where: { code: '__TASK_CATALOG__', deletedAt: null },
+      select: { id: true, name: true },
+    });
+    if (!catalog) {
+      return {
+        dryRun,
+        catalogFound: false,
+        totals: {
+          templateTask: {
+            scanned: 0,
+            linked: 0,
+            skippedNoMatch: 0,
+            skippedMultipleMatches: 0,
+            skippedNoCode: 0,
+          },
+          templateZoneTask: {
+            scanned: 0,
+            linked: 0,
+            skippedNoMatch: 0,
+            skippedMultipleMatches: 0,
+            skippedNoCode: 0,
+          },
+        },
+        errors: [],
+      };
+    }
+
+    // 2. Build an index of catalog TemplateTask rows keyed by
+    //    `code`. One trip to Prisma; the catalog is small (a few
+    //    hundred rows at most on staging). Rows without a code are
+    //    excluded — they can't anchor a match.
+    const catalogTasks = await this.prisma.templateTask.findMany({
+      where: { templateId: catalog.id, code: { not: '' } },
+      select: { id: true, code: true, name: true },
+    });
+    const byCode = new Map<string, Array<{ id: number; name: string }>>();
+    for (const t of catalogTasks) {
+      if (!t.code) continue;
+      const arr = byCode.get(t.code) ?? [];
+      arr.push({ id: t.id, name: t.name });
+      byCode.set(t.code, arr);
+    }
+
+    // 3. Candidate TemplateTask rows: NOT in the catalog, FK null.
+    const candidateTemplateTasks = await this.prisma.templateTask.findMany({
+      where: {
+        catalogTaskId: null,
+        templateId: { not: catalog.id },
+      },
+      select: { id: true, code: true, templateId: true, name: true },
+    });
+
+    // 4. Candidate TemplateZoneTask rows: FK null (zone tasks never
+    //    live under the catalog so no self-scope guard).
+    const candidateZoneTasks = await this.prisma.templateZoneTask.findMany({
+      where: { catalogTaskId: null },
+      select: { id: true, code: true, templateZoneId: true, name: true },
+    });
+
+    const errors: Array<{
+      kind: 'TemplateTask' | 'TemplateZoneTask';
+      id: number;
+      error: string;
+    }> = [];
+
+    // Classifier used for both tables — returns the catalog id to
+    // link, or a skip reason bucket, or an error (for truly broken
+    // rows: empty code, etc.).
+    const classify = (
+      code: string | null | undefined,
+    ): { bucket: 'link'; catalogId: number }
+      | { bucket: 'skippedNoCode' }
+      | { bucket: 'skippedNoMatch' }
+      | { bucket: 'skippedMultipleMatches'; candidates: Array<{ id: number; name: string }> } => {
+      if (!code || !code.trim()) return { bucket: 'skippedNoCode' };
+      const hits = byCode.get(code) ?? [];
+      if (hits.length === 0) return { bucket: 'skippedNoMatch' };
+      if (hits.length === 1) return { bucket: 'link', catalogId: hits[0].id };
+      return { bucket: 'skippedMultipleMatches', candidates: hits };
+    };
+
+    // 5. Plan + execute. Each successful link runs in its own
+    //    `$transaction` so a Prisma error on one row doesn't poison
+    //    the siblings. Dry-run shares the planner path and skips
+    //    the write.
+    const ttLinks: Array<{ id: number; catalogId: number }> = [];
+    const ttSkippedNoMatch: number[] = [];
+    const ttSkippedMultiple: Array<{ id: number; code: string; candidates: Array<{ id: number; name: string }> }> = [];
+    let ttSkippedNoCode = 0;
+
+    for (const row of candidateTemplateTasks) {
+      const c = classify(row.code);
+      if (c.bucket === 'link') ttLinks.push({ id: row.id, catalogId: c.catalogId });
+      else if (c.bucket === 'skippedNoMatch') ttSkippedNoMatch.push(row.id);
+      else if (c.bucket === 'skippedMultipleMatches') {
+        ttSkippedMultiple.push({ id: row.id, code: row.code ?? '', candidates: c.candidates });
+      } else {
+        ttSkippedNoCode++;
+      }
+    }
+
+    const ztLinks: Array<{ id: number; catalogId: number }> = [];
+    const ztSkippedNoMatch: number[] = [];
+    const ztSkippedMultiple: Array<{ id: number; code: string; candidates: Array<{ id: number; name: string }> }> = [];
+    let ztSkippedNoCode = 0;
+
+    for (const row of candidateZoneTasks) {
+      const c = classify(row.code);
+      if (c.bucket === 'link') ztLinks.push({ id: row.id, catalogId: c.catalogId });
+      else if (c.bucket === 'skippedNoMatch') ztSkippedNoMatch.push(row.id);
+      else if (c.bucket === 'skippedMultipleMatches') {
+        ztSkippedMultiple.push({ id: row.id, code: row.code ?? '', candidates: c.candidates });
+      } else {
+        ztSkippedNoCode++;
+      }
+    }
+
+    // Execute writes (unless dry-run). Per-row transactions so one
+    // bad id (e.g. a race-deleted catalog row that no longer exists
+    // between planning and executing) only drops that single link.
+    let ttLinked = 0;
+    let ztLinked = 0;
+    if (!dryRun) {
+      for (const link of ttLinks) {
+        try {
+          await this.prisma.$transaction(async (tx) => {
+            // Guard the WHERE with `catalogTaskId: null` so re-run
+            // after a prior partial pass picks up only what still
+            // needs linking.
+            const res = await tx.templateTask.updateMany({
+              where: { id: link.id, catalogTaskId: null },
+              data: { catalogTaskId: link.catalogId },
+            });
+            if (res.count > 0) ttLinked += res.count;
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          errors.push({ kind: 'TemplateTask', id: link.id, error: message });
+        }
+      }
+      for (const link of ztLinks) {
+        try {
+          await this.prisma.$transaction(async (tx) => {
+            const res = await tx.templateZoneTask.updateMany({
+              where: { id: link.id, catalogTaskId: null },
+              data: { catalogTaskId: link.catalogId },
+            });
+            if (res.count > 0) ztLinked += res.count;
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          errors.push({ kind: 'TemplateZoneTask', id: link.id, error: message });
+        }
+      }
+    } else {
+      // Dry-run mirrors execute's counter — every planned link
+      // counts as 1.
+      ttLinked = ttLinks.length;
+      ztLinked = ztLinks.length;
+    }
+
+    return {
+      dryRun,
+      catalogFound: true,
+      catalog: { id: catalog.id, name: catalog.name },
+      plan: {
+        templateTask: {
+          toLink: ttLinks,
+          skippedNoMatch: ttSkippedNoMatch,
+          skippedMultipleMatches: ttSkippedMultiple,
+        },
+        templateZoneTask: {
+          toLink: ztLinks,
+          skippedNoMatch: ztSkippedNoMatch,
+          skippedMultipleMatches: ztSkippedMultiple,
+        },
+      },
+      totals: {
+        templateTask: {
+          scanned: candidateTemplateTasks.length,
+          linked: ttLinked,
+          skippedNoMatch: ttSkippedNoMatch.length,
+          skippedMultipleMatches: ttSkippedMultiple.length,
+          skippedNoCode: ttSkippedNoCode,
+        },
+        templateZoneTask: {
+          scanned: candidateZoneTasks.length,
+          linked: ztLinked,
+          skippedNoMatch: ztSkippedNoMatch.length,
+          skippedMultipleMatches: ztSkippedMultiple.length,
+          skippedNoCode: ztSkippedNoCode,
+        },
+      },
+      errors,
+    };
+  }
 }
