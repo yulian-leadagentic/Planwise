@@ -2,6 +2,56 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { extractServiceMarker } from '../planning/marker-phase-resolver';
 
+// DN-ext (2026-10-22) — Fields that must NEVER be edited through the
+// Deliverable Template / Zone Template editors on a row that is
+// linked to a catalog TemplateTask. Those live under Task Catalog
+// (the catalog's own tasks have `catalogTaskId = null`, so the
+// Catalog page keeps the full edit surface). Expressed as a readonly
+// array so the guard can report which specific fields were touched.
+const CATALOG_LINKED_READONLY_FIELDS = [
+  'name',
+  'defaultBudgetHours',
+  'defaultBudgetAmount',
+] as const;
+
+// DN-ext — reusable live-override: when a template task row has a
+// `catalogTask` relation populated by the `findOne` include, prefer
+// the catalog's current name / hours / amount over the row's own
+// (snapshot) scalars. The scalars stay as a safety fallback for
+// ad-hoc rows (catalogTaskId null) and for rows whose catalog row
+// was deleted (`onDelete: SetNull` nulled this FK). Pure function —
+// mutates only a shallow copy of the row and recurses into zone
+// trees so every TemplateTask / TemplateZoneTask in the response
+// gets the same treatment.
+export function resolveCatalogLiveFields<T>(input: T): T {
+  if (input == null) return input;
+  if (Array.isArray(input)) {
+    return (input as unknown[]).map(resolveCatalogLiveFields) as unknown as T;
+  }
+  if (typeof input !== 'object') return input;
+  const row: Record<string, unknown> = { ...(input as Record<string, unknown>) };
+  const ct = row.catalogTask as
+    | { name?: string | null; defaultBudgetHours?: unknown; defaultBudgetAmount?: unknown }
+    | null
+    | undefined;
+  if (ct) {
+    if (ct.name != null) row.name = ct.name;
+    if (ct.defaultBudgetHours != null) row.defaultBudgetHours = ct.defaultBudgetHours;
+    if (ct.defaultBudgetAmount != null) row.defaultBudgetAmount = ct.defaultBudgetAmount;
+  }
+  // Recurse into the nested shapes `findOne` returns so a response
+  // never ships a stale name buried under a zone > child > zone-task.
+  for (const key of [
+    'templateTasks',
+    'templateZones',
+    'templateZoneTasks',
+    'children',
+  ]) {
+    if (key in row) row[key] = resolveCatalogLiveFields(row[key]);
+  }
+  return row as T;
+}
+
 @Injectable()
 export class TemplatesService {
   constructor(private prisma: PrismaService) {}
@@ -207,11 +257,22 @@ export class TemplatesService {
         const deliverableTemplateId =
           t.deliverableTemplateId
           ?? (await this.resolveDeliverableTemplateByMarker(t.description, t.phaseId ?? null));
+        // DN-ext (2026-10-22) — same catalog FK passthrough as
+        // `addTask`. Keeps the `POST /templates { tasks: [...] }`
+        // bulk-create path consistent with the per-task picker.
+        const rawCatalogTaskId = t.catalogTaskId ?? t.sourceCatalogTaskId;
+        const catalogTaskId =
+          rawCatalogTaskId == null || rawCatalogTaskId === ''
+            ? null
+            : Number.isFinite(Number(rawCatalogTaskId))
+              ? Number(rawCatalogTaskId)
+              : null;
         await this.prisma.templateTask.create({
           data: {
             templateId: template.id,
             serviceTypeId: t.serviceTypeId || null,
             deliverableTemplateId,
+            catalogTaskId,
             code: t.code,
             name: t.name,
             description: t.description || null,
@@ -239,6 +300,18 @@ export class TemplatesService {
     // target). B1's write + apply paths already prefer the FK; this
     // completes the read side.
     const deliverableSelect = { id: true, name: true, code: true } as const;
+    // DN-ext (2026-10-22) — the catalog source TemplateTask whose
+    // name + budget values we resolve LIVE at serialization time.
+    // Carries `id` for FE "is this linked?" checks + `code` for the
+    // backfill audit trail; the override below only reads name +
+    // hours + amount. Shape intentionally kept minimal.
+    const catalogTaskSelect = {
+      id: true,
+      code: true,
+      name: true,
+      defaultBudgetHours: true,
+      defaultBudgetAmount: true,
+    } as const;
     const template = await this.prisma.template.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -249,6 +322,7 @@ export class TemplatesService {
             serviceType: true,
             phase: true,
             deliverableTemplate: { select: deliverableSelect },
+            catalogTask: { select: catalogTaskSelect },
             // T1-2 (2026-10-20) — surface the template-task predecessor
             // graph so the FE can render chips without a per-row round
             // trip. `dependsOnTemplateTask` carries just the id/name so
@@ -273,6 +347,7 @@ export class TemplatesService {
                     serviceType: true,
                     phase: true,
                     deliverableTemplate: { select: deliverableSelect },
+                    catalogTask: { select: catalogTaskSelect },
                   },
                 },
                 children: {
@@ -284,6 +359,7 @@ export class TemplatesService {
                         serviceType: true,
                         phase: true,
                         deliverableTemplate: { select: deliverableSelect },
+                        catalogTask: { select: catalogTaskSelect },
                       },
                     },
                   },
@@ -297,6 +373,7 @@ export class TemplatesService {
                 serviceType: true,
                 phase: true,
                 deliverableTemplate: { select: deliverableSelect },
+                catalogTask: { select: catalogTaskSelect },
               },
             },
           },
@@ -307,7 +384,20 @@ export class TemplatesService {
     });
 
     if (!template) throw new NotFoundException('Template not found');
-    return template;
+
+    // DN-ext (2026-10-22) — resolve name + default budget LIVE from the
+    // catalog so a rename in Task Catalog reaches every Deliverable /
+    // Zone Template that referenced the catalog row. Local `name`,
+    // `defaultBudgetHours`, `defaultBudgetAmount` columns stay in place
+    // as a snapshot fallback (used when `catalogTask` is NULL — ad-hoc
+    // row — or when the catalog row was deleted and `onDelete: SetNull`
+    // nulled this FK). We keep `catalogTask` on the payload so the FE
+    // can tell whether to render the name as read-only (linked) or
+    // editable (ad-hoc), and so audits can see which source the value
+    // came from. This handles only the output shape; the write-side
+    // guard that forbids editing name/hours when the row is linked
+    // lives on `updateTask`.
+    return resolveCatalogLiveFields(template);
   }
 
   async update(id: number, body: any) {
@@ -361,11 +451,28 @@ export class TemplatesService {
     const deliverableTemplateId =
       body.deliverableTemplateId
       ?? (await this.resolveDeliverableTemplateByMarker(body.description, body.phaseId ?? null));
+    // DN-ext (2026-10-22) — the "Pick from Catalog" + "Add Task +
+    // Also add to catalog" FE flows now pass through the catalog
+    // TemplateTask id as `catalogTaskId` (or the legacy alias
+    // `sourceCatalogTaskId`). Still copies name/hours as a snapshot
+    // (safety fallback for when the catalog row is later deleted
+    // and the FK goes NULL via `onDelete: SetNull`). We DO NOT
+    // validate the id here beyond type-coercion: the DB FK does the
+    // existence check atomically and an invalid id surfaces as a
+    // Prisma P2003 that the caller can retry.
+    const rawCatalogTaskId = body.catalogTaskId ?? body.sourceCatalogTaskId;
+    const catalogTaskId =
+      rawCatalogTaskId == null || rawCatalogTaskId === ''
+        ? null
+        : Number.isFinite(Number(rawCatalogTaskId))
+          ? Number(rawCatalogTaskId)
+          : null;
     return this.prisma.templateTask.create({
       data: {
         templateId,
         serviceTypeId: body.serviceTypeId || null,
         deliverableTemplateId,
+        catalogTaskId,
         code: body.code,
         name: body.name,
         description: body.description || null,
@@ -380,6 +487,38 @@ export class TemplatesService {
   }
 
   async updateTask(taskId: number, body: any) {
+    // DN-ext (2026-10-22) — name + default budget are READ-ONLY on
+    // template tasks that are linked to a catalog TemplateTask
+    // (`catalogTaskId != null`). Those live under the Task Catalog
+    // page; the Deliverable Template editor must only edit
+    // sortOrder, predecessors + delete. We check the fields the
+    // CALLER passed (own-prop check so an explicit `name: undefined`
+    // never trips the guard — Prisma already treats `undefined` as
+    // "skip this field"), so a sortOrder-only PATCH from an editor
+    // row that happens to be linked still saves.
+    //
+    // The guard runs ONLY when the caller actually touches one of
+    // these fields with a non-undefined value AND the row is
+    // catalog-linked. Catalog rows themselves have
+    // `catalogTaskId = null`, so edits from the Task Catalog page
+    // keep the full edit surface. Explicitly setting
+    // `catalogTaskId: null` (unlink) is allowed and clears the
+    // guard for subsequent name/hours edits in the same request.
+    const touchedReadonly = CATALOG_LINKED_READONLY_FIELDS.filter(
+      (f) => Object.prototype.hasOwnProperty.call(body, f) && body[f] !== undefined,
+    );
+    if (touchedReadonly.length > 0) {
+      const existing = await this.prisma.templateTask.findUnique({
+        where: { id: taskId },
+        select: { id: true, catalogTaskId: true },
+      });
+      if (!existing) throw new NotFoundException('Template task not found');
+      if (existing.catalogTaskId != null) {
+        throw new BadRequestException(
+          `Fields ${touchedReadonly.join(', ')} are read-only on tasks linked to a catalog entry — edit the task in the Task Catalog instead.`,
+        );
+      }
+    }
     return this.prisma.templateTask.update({
       where: { id: taskId },
       data: {
@@ -388,6 +527,12 @@ export class TemplatesService {
         // `undefined` skips the field entirely (Prisma treats it as
         // "not part of the update"), so legacy callers stay unaffected.
         deliverableTemplateId: body.deliverableTemplateId,
+        // DN-ext — allow unlinking from the catalog by sending
+        // `catalogTaskId: null` (or re-link by sending a new id).
+        // The guard above only trips on name/hours edits of an
+        // already-linked row, so a client that wants to override a
+        // name must first unlink the row with a dedicated PATCH.
+        catalogTaskId: body.catalogTaskId,
         code: body.code,
         name: body.name,
         description: body.description,
@@ -683,6 +828,17 @@ export class TemplatesService {
     const deliverableTemplateId =
       body.deliverableTemplateId
       ?? (await this.resolveDeliverableTemplateByMarker(body.description, body.phaseId ?? null));
+    // DN-ext (2026-10-22) — mirror the catalog FK passthrough on the
+    // zone-task write path. The ZoneCatalogPickerModal now sends
+    // `catalogTaskId: catalogTask.id` so a rename in the catalog
+    // reaches every zone template that referenced it.
+    const rawCatalogTaskId = body.catalogTaskId ?? body.sourceCatalogTaskId;
+    const catalogTaskId =
+      rawCatalogTaskId == null || rawCatalogTaskId === ''
+        ? null
+        : Number.isFinite(Number(rawCatalogTaskId))
+          ? Number(rawCatalogTaskId)
+          : null;
     return this.prisma.templateZoneTask.create({
       data: {
         templateZoneId,
@@ -694,6 +850,7 @@ export class TemplatesService {
         phaseId: body.phaseId || null,
         serviceTypeId: body.serviceTypeId || null,
         deliverableTemplateId,
+        catalogTaskId,
         defaultPriority: body.defaultPriority || 'medium',
         sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
       },
@@ -731,6 +888,11 @@ export class TemplatesService {
           // Template produces tasks with a stale `[SERVICE:…]` marker
           // but no FK, re-introducing the exact drift DN-1 cleaned up.
           deliverableTemplateId: (task as any).deliverableTemplateId ?? null,
+          // DN-ext (2026-10-22) — same rationale for the catalog FK:
+          // a clone of a Deliverable Template keeps its live link to
+          // the catalog so renames keep propagating through the
+          // duplicate, not just the original.
+          catalogTaskId: (task as any).catalogTaskId ?? null,
           code: task.code,
           name: task.name,
           description: task.description,

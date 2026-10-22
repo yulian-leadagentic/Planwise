@@ -551,6 +551,19 @@ export class ZonesService {
             include: {
               serviceType: true,
               predecessors: { select: { dependsOnTemplateTaskId: true } },
+              // DN-ext (2026-10-22) — resolve the task's name + budget
+              // LIVE from the catalog at pull-time so the project
+              // Task row snapshots the CURRENT catalog name, not the
+              // stale local copy. Existing project rows are never
+              // retroactively updated (Yulian's locked rule); this
+              // only shapes what gets written on fresh pulls.
+              catalogTask: {
+                select: {
+                  name: true,
+                  defaultBudgetHours: true,
+                  defaultBudgetAmount: true,
+                },
+              },
             },
             orderBy: { sortOrder: 'asc' },
           },
@@ -579,7 +592,23 @@ export class ZonesService {
             update: {},
           });
         }
-        const { budgetHours, budgetAmount } = this.resolveBudget(tt, catalog);
+        // DN-ext (2026-10-22) — effective name + budget preferring
+        // the catalog's live values over the template-task's own
+        // snapshot. For budget, this slots in BEFORE the existing
+        // code-match fallback inside `resolveBudget`, so the
+        // precedence is: catalog FK → local snapshot → catalog by
+        // code → null. For name, there is no secondary catalog
+        // resolution path yet (we never did a code-match for name),
+        // so the catalog FK is the only live source — the local
+        // snapshot is the fallback.
+        const catalogTask = (tt as any).catalogTask ?? null;
+        const ttWithCatalog = {
+          ...tt,
+          defaultBudgetHours: catalogTask?.defaultBudgetHours ?? tt.defaultBudgetHours,
+          defaultBudgetAmount: catalogTask?.defaultBudgetAmount ?? tt.defaultBudgetAmount,
+        };
+        const effectiveName = catalogTask?.name ?? tt.name;
+        const { budgetHours, budgetAmount } = this.resolveBudget(ttWithCatalog, catalog);
         const task = await tx.task.create({
           data: {
             zoneId,
@@ -595,7 +624,7 @@ export class ZonesService {
             // through even when the outer template is a zone template.
             deliverableTemplateId: (tt as any).deliverableTemplateId ?? deliverableId,
             code: tt.code,
-            name: tt.name,
+            name: effectiveName,
             description: tt.description,
             budgetHours,
             budgetAmount,
@@ -787,11 +816,30 @@ export class ZonesService {
     // dependency graph (they are per-zone-template entries, not
     // referenced by TemplateTaskDependency); they continue to apply
     // without a dependency pass.
+    // DN-ext (2026-10-22) — the pull path reads name + budget LIVE
+    // from the catalog so a project rebuild uses the CURRENT
+    // catalog values, not the stale template-side snapshot. The
+    // selector mirrors `templates.service.ts findOne`'s shape so
+    // the two code paths read the same fields.
+    const catalogTaskSelect = {
+      name: true,
+      defaultBudgetHours: true,
+      defaultBudgetAmount: true,
+    } as const;
     const templateTaskInclude = {
       include: {
         predecessors: { select: { dependsOnTemplateTaskId: true } },
+        catalogTask: { select: catalogTaskSelect },
       },
       orderBy: { sortOrder: 'asc' as const },
+    };
+    // Zone-tasks don't participate in the template-level dependency
+    // graph but DO carry the same catalog FK (DN-ext), so include it
+    // here so the pull path can snapshot the live name/hours.
+    const templateZoneTaskInclude = {
+      include: {
+        catalogTask: { select: catalogTaskSelect },
+      },
     };
 
     const template = await this.prisma.template.findUniqueOrThrow({
@@ -800,18 +848,18 @@ export class ZonesService {
         templateTasks: templateTaskInclude,
         templateZones: {
           include: {
-            templateZoneTasks: true,
+            templateZoneTasks: templateZoneTaskInclude,
             linkedTaskTemplate: {
               include: { templateTasks: templateTaskInclude },
               // linkedTaskTemplate is a service template — its phaseId is available
             },
             children: {
               include: {
-                templateZoneTasks: true,
+                templateZoneTasks: templateZoneTaskInclude,
                 linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
                 children: {
                   include: {
-                    templateZoneTasks: true,
+                    templateZoneTasks: templateZoneTaskInclude,
                     linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
                   },
                 },
@@ -826,9 +874,55 @@ export class ZonesService {
 
     const resolveBudget = this.resolveBudget.bind(this);
 
+    // DN-ext (2026-10-22) — pick the LIVE catalog values (name + hours
+    // + amount) if the template task is linked to a catalog row,
+    // falling back to the task's own local snapshot otherwise. Keeps
+    // the `resolveBudget` code-match fallback as a secondary net for
+    // ad-hoc rows that happen to share a code with the catalog. One
+    // helper used by every `tx.task.create` site below so the pull
+    // path can't drift between the four creation shapes.
+    const resolveFromCatalog = (
+      ttLike: {
+        name: string;
+        code?: string | null;
+        description?: string | null;
+        defaultBudgetHours?: any;
+        defaultBudgetAmount?: any;
+        catalogTask?: {
+          name?: string | null;
+          defaultBudgetHours?: any;
+          defaultBudgetAmount?: any;
+        } | null;
+      },
+    ): {
+      name: string;
+      description: string | null;
+      budgetHours: any;
+      budgetAmount: any;
+    } => {
+      const ct = ttLike.catalogTask ?? null;
+      const ttWithCatalogBudget = {
+        code: ttLike.code,
+        defaultBudgetHours: ct?.defaultBudgetHours ?? ttLike.defaultBudgetHours,
+        defaultBudgetAmount: ct?.defaultBudgetAmount ?? ttLike.defaultBudgetAmount,
+      };
+      const { budgetHours, budgetAmount } = resolveBudget(ttWithCatalogBudget, catalogRef.current ?? new Map());
+      return {
+        name: ct?.name ?? ttLike.name,
+        description: ttLike.description ?? null,
+        budgetHours,
+        budgetAmount,
+      };
+    };
+    // Captured so the helper above can read the per-tx catalog map
+    // without re-opening the connection. Set once the catalog is
+    // loaded inside the transaction below.
+    const catalogRef: { current: Map<string, { hours: any; amount: any }> | null } = { current: null };
+
     try {
     return await this.prisma.$transaction(async (tx) => {
       const catalog = await this.loadCatalogMap(tx);
+      catalogRef.current = catalog;
       const createdZones: any[] = [];
 
       // T1-3 (2026-10-20) — materialize TemplateTaskDependency edges
@@ -908,7 +1002,9 @@ export class ZonesService {
           // after every task in the linked template exists.
           const createdInGroup: Array<{ tt: any; projectTaskId: number }> = [];
           for (const tt of tz.linkedTaskTemplate.templateTasks) {
-            const budget = resolveBudget(tt, catalog);
+            // DN-ext — snapshot the LIVE catalog name + budget onto
+            // the project task when the template task is linked.
+            const resolved = resolveFromCatalog(tt as any);
             const createdTask = await tx.task.create({
               data: {
                 zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
@@ -917,8 +1013,8 @@ export class ZonesService {
                 // deliverable rename); fall back to the zone's linked-task
                 // template id for pre-backfill rows.
                 deliverableTemplateId: (tt as any).deliverableTemplateId ?? tz.linkedTaskTemplateId,
-                code: tt.code, name: tt.name, description: tt.description,
-                budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
+                code: tt.code, name: resolved.name, description: resolved.description,
+                budgetHours: resolved.budgetHours, budgetAmount: resolved.budgetAmount,
                 phaseId: servicePhaseId ?? tt.phaseId, priority: tt.defaultPriority, status: 'not_started', createdBy: userId,
                 // T1-3 — carry the template's explicit order into the project.
                 sortOrder: tt.sortOrder,
@@ -932,7 +1028,9 @@ export class ZonesService {
         // Create tasks from templateZoneTasks (inline tasks on the zone)
         if (tz.templateZoneTasks?.length) {
           for (const tzt of tz.templateZoneTasks) {
-            const budget = resolveBudget(tzt, catalog);
+            // DN-ext — same live-catalog resolution for the inline
+            // zone-task path.
+            const resolved = resolveFromCatalog(tzt as any);
             await tx.task.create({
               data: {
                 zoneId: zone.id, projectId, serviceTypeId: tzt.serviceTypeId,
@@ -944,8 +1042,8 @@ export class ZonesService {
                 // display back-compat; the final name-JOIN below is the
                 // last-resort fallback for un-backfilled rows.
                 deliverableTemplateId: (tzt as any).deliverableTemplateId ?? null,
-                code: tzt.code, name: tzt.name, description: tzt.description,
-                budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
+                code: tzt.code, name: resolved.name, description: resolved.description,
+                budgetHours: resolved.budgetHours, budgetAmount: resolved.budgetAmount,
                 phaseId: tzt.phaseId, priority: tzt.defaultPriority, status: 'not_started', createdBy: userId,
               },
             });
@@ -963,11 +1061,11 @@ export class ZonesService {
               templateTasks: templateTaskInclude,
               templateZones: {
                 include: {
-                  templateZoneTasks: true,
+                  templateZoneTasks: templateZoneTaskInclude,
                   linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
                   children: {
                     include: {
-                      templateZoneTasks: true,
+                      templateZoneTasks: templateZoneTaskInclude,
                       linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
                     },
                   },
@@ -988,7 +1086,9 @@ export class ZonesService {
             const refDeliverableId = refTemplate.type === 'task_list' ? tz.referencedTemplateId : null;
             const createdInRef: Array<{ tt: any; projectTaskId: number }> = [];
             for (const tt of (refTemplate.templateTasks || [])) {
-              const budget = resolveBudget(tt, catalog);
+              // DN-ext — live-catalog name + budget for the referenced
+              // template path.
+              const resolved = resolveFromCatalog(tt as any);
               const createdTask = await tx.task.create({
                 data: {
                   zoneId: zone.id, projectId, serviceTypeId: tt.serviceTypeId,
@@ -997,8 +1097,8 @@ export class ZonesService {
                   // deliverable per templateTask when the marker/FK sets
                   // it explicitly (post-fix).
                   deliverableTemplateId: (tt as any).deliverableTemplateId ?? refDeliverableId,
-                  code: tt.code, name: tt.name, description: tt.description,
-                  budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
+                  code: tt.code, name: resolved.name, description: resolved.description,
+                  budgetHours: resolved.budgetHours, budgetAmount: resolved.budgetAmount,
                   phaseId: refPhaseId ?? tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
                   // T1-3 — carry template's sortOrder into the project.
                   sortOrder: tt.sortOrder,
@@ -1039,7 +1139,9 @@ export class ZonesService {
         const rootDeliverableId = template.type === 'task_list' ? templateId : null;
         const createdInRoot: Array<{ tt: any; projectTaskId: number }> = [];
         for (const tt of template.templateTasks) {
-          const budget = resolveBudget(tt, catalog);
+          // DN-ext — live-catalog name + budget for root template
+          // tasks (the Deliverable Template editor's own tasks).
+          const resolved = resolveFromCatalog(tt as any);
           const createdTask = await tx.task.create({
             data: {
               zoneId: mainZone.id, projectId, serviceTypeId: tt.serviceTypeId,
@@ -1050,8 +1152,8 @@ export class ZonesService {
               // templateTask's FK — set by the picker or backfill — is
               // what wires the deliverable identity.
               deliverableTemplateId: (tt as any).deliverableTemplateId ?? rootDeliverableId,
-              code: tt.code, name: tt.name, description: tt.description,
-              budgetHours: budget.budgetHours, budgetAmount: budget.budgetAmount,
+              code: tt.code, name: resolved.name, description: resolved.description,
+              budgetHours: resolved.budgetHours, budgetAmount: resolved.budgetAmount,
               phaseId: tt.phaseId, priority: tt.defaultPriority || 'medium', status: 'not_started', createdBy: userId,
               // T1-3 — explicit order from the template.
               sortOrder: tt.sortOrder,
