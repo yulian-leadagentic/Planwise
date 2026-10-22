@@ -1856,6 +1856,18 @@ model TemplateTask {
   /// task delete (matches Task.deliverableTemplateId). The marker
   /// stays in `description` for display back-compat.
   deliverableTemplateId Int?       @map("deliverable_template_id")
+  /// DN-ext (2026-10-22) — self-FK to the SOURCE catalog TemplateTask
+  /// this row was picked from (`code = '__TASK_CATALOG__'`'s own
+  /// TemplateTask row). Lets the template editor resolve
+  /// name + defaultBudgetHours + defaultBudgetAmount LIVE from the
+  /// catalog so a catalog rename reaches every Deliverable Template
+  /// that referenced it; the local scalar columns stay as a snapshot
+  /// fallback (used when the FK is NULL — ad-hoc rows — or when the
+  /// catalog task was deleted and `onDelete: SetNull` nulled this
+  /// FK). Catalog TemplateTask rows themselves have
+  /// `catalogTaskId = NULL` (they ARE the catalog, nothing to
+  /// resolve against). See docs/bm2/template-name-sync-investigation.md.
+  catalogTaskId       Int?
   code                String       @db.VarChar(50)
   name                String       @db.VarChar(255)
   description         String?      @db.Text
@@ -1870,6 +1882,13 @@ model TemplateTask {
   serviceType         ServiceType? @relation(fields: [serviceTypeId], references: [id])
   phase               Phase?       @relation(fields: [phaseId], references: [id])
   deliverableTemplate Template?    @relation("TemplateTaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
+  // DN-ext — self-relation: the catalog row this template task mirrors.
+  catalogTask         TemplateTask?  @relation("CatalogTaskReferences", fields: [catalogTaskId], references: [id], onDelete: SetNull)
+  catalogReferences   TemplateTask[] @relation("CatalogTaskReferences")
+  // DN-ext — inverse for the cross-FK from TemplateZoneTask (same
+  // catalog, pointed at from the zone-task side). Lets the catalog
+  // row see every zone-task derived from it without a raw JOIN.
+  catalogZoneTaskReferences TemplateZoneTask[] @relation("CatalogZoneTaskReferences")
 
   // T1-1 (2026-10-20) — template-level dependency join. Mirrors
   // `TaskDependency` at the project level. `predecessors` are the
@@ -1879,6 +1898,7 @@ model TemplateTask {
   predecessors        TemplateTaskDependency[] @relation("TemplateTaskPredecessors")
   successors          TemplateTaskDependency[] @relation("TemplateTaskSuccessors")
 
+  @@index([catalogTaskId])
   @@map("template_tasks")
 }
 
@@ -1940,6 +1960,14 @@ model TemplateZoneTask {
   /// QA4 Round-1 · B1 (2026-09-28) — see TemplateTask.deliverableTemplateId.
   /// Same FK, same SetNull semantics, on the zone-task side.
   deliverableTemplateId Int?       @map("deliverable_template_id")
+  /// DN-ext (2026-10-22) — cross-FK to the SOURCE catalog TemplateTask
+  /// (lives in the `TemplateTask` table on the catalog
+  /// `code='__TASK_CATALOG__'` template). Same contract as the
+  /// self-FK on TemplateTask: lets the Zone Template editor resolve
+  /// name + hours LIVE from the catalog; local scalars stay as a
+  /// snapshot fallback. `onDelete: SetNull` so deleting a catalog
+  /// task doesn't cascade-delete the zone task.
+  catalogTaskId       Int?
   code                String       @db.VarChar(50)
   name                String       @db.VarChar(255)
   description         String?      @db.Text
@@ -1954,7 +1982,12 @@ model TemplateZoneTask {
   serviceType         ServiceType? @relation(fields: [serviceTypeId], references: [id])
   phase               Phase?       @relation(fields: [phaseId], references: [id])
   deliverableTemplate Template?    @relation("TemplateZoneTaskDeliverableTemplate", fields: [deliverableTemplateId], references: [id], onDelete: SetNull)
+  // DN-ext — cross-table reference to a TemplateTask row that lives
+  // under the Task Catalog template. The inverse on TemplateTask is
+  // `catalogZoneTaskReferences`.
+  catalogTask         TemplateTask? @relation("CatalogZoneTaskReferences", fields: [catalogTaskId], references: [id], onDelete: SetNull)
 
+  @@index([catalogTaskId])
   @@map("template_zone_tasks")
 }
 
