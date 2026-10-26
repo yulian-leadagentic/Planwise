@@ -600,13 +600,97 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     // query is NOT loading (either success with zones:[] or error), the
     // fallback is correct.
     const topLevelZones: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
+
+    // 2026-10-26 (DP cross-product fix, locked by Yulian) — build a
+    // per-deliverable set of ACTUAL top-level zone connections so the
+    // main emit loop no longer blankets every (deliverable × top-zone)
+    // pair with a row. A deliverable belongs under Zone Y iff:
+    //   • one of its Tasks has `zoneId` that resolves (via idMap) to Y, OR
+    //   • one of its ZoneDeliverableTarget rows has `zoneId` that
+    //     resolves to Y (direct or descendant).
+    // Null-zone entries (`null` in the Set) represent orphan tasks or
+    // ZDTs with `zoneId=null` → "Project Root" bucket.
+    //
+    // A deliverable with NO tasks AND NO ZDTs ends up with no entry /
+    // empty set; by Yulian's rule (option ב, 2026-10-26) those are
+    // hidden entirely from the grid instead of being showered across
+    // every zone column.
+    //
+    // Reuses `topLevelZoneInfo.idMap` already built above, so sub-zone
+    // ids resolve to their root ancestor and we don't double-count.
+    const connectionsByDeliverable = new Map<number, Set<number | null>>();
+    const addConnection = (dId: number, topZoneId: number | null) => {
+      let set = connectionsByDeliverable.get(dId);
+      if (!set) {
+        set = new Set<number | null>();
+        connectionsByDeliverable.set(dId, set);
+      }
+      set.add(topZoneId);
+    };
+    // Task-driven connections: project deliverable id + task's zoneId.
+    for (const t of tasks ?? []) {
+      const dId = (t as any).projectDeliverableId;
+      if (dId == null) continue;
+      const rawZoneId = (t as any).zoneId ?? null;
+      const topZoneId: number | null = rawZoneId == null
+        ? null
+        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
+      addConnection(dId, topZoneId);
+    }
+    // ZDT-driven connections: pre-task planning intent (PM saved a
+    // target for the zone before any task was created). Walk every
+    // deliverable's zoneTargets[] and roll each one up to its root.
     for (const d of deliverables) {
+      const zts: any[] = Array.isArray((d as any).zoneTargets) ? (d as any).zoneTargets : [];
+      for (const zt of zts) {
+        if (zt?.zoneId == null) {
+          addConnection(d.id, null);
+        } else {
+          const topZoneId = topLevelZoneInfo.idMap.get(zt.zoneId) ?? zt.zoneId;
+          addConnection(d.id, topZoneId);
+        }
+      }
+    }
+
+    // 2026-10-26 · Filter deliverables to zones with an actual
+    // connection (Task.zoneId or ZDT); hide deliverables with no
+    // connections at all. See `connectionsByDeliverable` above.
+    for (const d of deliverables) {
+      const connections = connectionsByDeliverable.get(d.id);
+      if (!connections || connections.size === 0) {
+        // Deliverable has no tasks AND no ZDT — hide entirely
+        // (Yulian 2026-10-26, option ב). The old cross-product behavior
+        // emitted a row under every top-zone for this deliverable;
+        // option ב collapses it to zero rows.
+        continue;
+      }
+
       if (topLevelZones.length === 0) {
+        // Project has no zones at all. Preserve the pre-fix "zero
+        // zones" fallback: emit a single Project Root row per
+        // deliverable (whose only connection is `null` by construction
+        // — tasks here can only carry zoneId=null). The planning-load
+        // gate stays so the group header doesn't flash while the
+        // planning query is still refetching after a mutation (see
+        // DP Bug A comment above).
         if (!planningIsLoading) emit(d.id, d, null, 'Project Root');
-        // else: planning still loading — skip the fallback so the group
-        // header doesn't flash "Project Root · N" over the real zones.
       } else {
-        for (const z of topLevelZones) emit(d.id, d, z.id, z.name, z.zoneType);
+        // Zoned project: emit only (deliverable × top-zone) pairs where
+        // the deliverable has a task or ZDT connecting them.
+        for (const z of topLevelZones) {
+          if (!connections.has(z.id)) continue;
+          emit(d.id, d, z.id, z.name, z.zoneType);
+        }
+        // Project Root sibling row for orphan-task deliverables: a
+        // deliverable whose tasks live partly in Zone A and partly in
+        // zoneId=null should appear under BOTH Zone A and Project
+        // Root. The overlay loop below used to be the ONLY way these
+        // orphan rows surfaced; promoting them up here lets the main
+        // loop own emission so the overlay stays reserved for
+        // deleted-deliverable / missing-zone edge cases.
+        if (connections.has(null)) {
+          emit(d.id, d, null, 'Project Root');
+        }
       }
     }
 
