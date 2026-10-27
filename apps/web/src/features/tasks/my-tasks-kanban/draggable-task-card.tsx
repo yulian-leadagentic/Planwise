@@ -5,6 +5,7 @@ import { getTaskHealth } from '@/lib/task-health';
 import { ZONE_BORDER_COLORS } from '@/lib/task-constants';
 import { TaskCardBody } from '@/components/shared/task-card-body';
 import { QuickTimeLog } from './quick-time-log';
+import { weekRangeSunFri } from '@/lib/period-filter';
 
 export function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDrawer: (id: number) => void; onStatusChange?: (taskId: number, status: string) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `task-${task.id}` });
@@ -13,6 +14,20 @@ export function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDra
   const projectName = task.project?.name || task.label?.projectName || '';
   const health = getTaskHealth(task);
   const note = typeof task.description === 'string' ? task.description.trim() : '';
+  // D5 (scheduling spec) — surface a "Start this week" chip when the
+  // task's `estimatedStartDate` (written by the T3 scheduler) falls
+  // inside the current Sun–Fri calendar week. The chip is additive to
+  // the existing Due pill in the TaskCardBody — a single task can
+  // carry BOTH chips if its start AND end both land in the same week.
+  // We stay on the kanban-specific card so other surfaces using
+  // TaskCardBody (project kanban, upcoming bucket) aren't affected.
+  const startsThisWeek = (() => {
+    if (!task.estimatedStartDate) return false;
+    const ms = new Date(task.estimatedStartDate).getTime();
+    if (!Number.isFinite(ms)) return false;
+    const { startMs, endMs } = weekRangeSunFri();
+    return ms >= startMs && ms <= endMs;
+  })();
 
   const assignees: any[] = Array.isArray(task.assignees) ? task.assignees : [];
   // QA5 UI-5: the person-icon + count chip only reads useful when there
@@ -51,6 +66,18 @@ export function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDra
         <GripVertical className="h-3.5 w-3.5 text-slate-300 dark:text-slate-600 shrink-0" />
         {projectName && (
           <span className="text-[13px] font-bold text-slate-900 dark:text-slate-100 truncate flex-1" title={projectName}>{projectName}</span>
+        )}
+        {/* D5 — Start chip. Blue palette distinguishes "scheduled to
+            start this week" from the red/amber due-highlight on the
+            Due pill below; `tracking-[0.05em]` matches planwise-design
+            table-header spacing so the chip reads as an entity marker. */}
+        {startsThisWeek && (
+          <span
+            className="shrink-0 inline-block rounded-[5px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 text-[11px] font-bold tracking-[0.05em] px-2 py-0.5"
+            title={`Scheduled to start this week · ${String(task.estimatedStartDate).slice(0, 10)}`}
+          >
+            להתחיל
+          </span>
         )}
         {showAssigneeCount && (
           <span
