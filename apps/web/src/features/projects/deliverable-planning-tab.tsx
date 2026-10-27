@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Calendar, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, Filter, Lock } from 'lucide-react';
+import { Calendar, CalendarClock, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, Filter, Lock } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
@@ -940,6 +940,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       for (const o of offenders) defaults[o.taskId] = 'update';
       setExceedChoices(defaults);
       setExceedPrompt(offenders);
+      setExceedNextAction('save');
       return;
     }
     save.mutate();
@@ -951,33 +952,49 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
    * the PM chose to update get their endDate force-applied to that
    * target. Force-apply reads the just-saved target on the server, so
    * the ordering is load-bearing.
+   *
+   * D4 · When the originating button was "Save & update due dates",
+   * we SKIP the plain save here (saveAndUpdate's own mutation runs the
+   * batch save as step 1) and chain straight into saveAndUpdate after
+   * the force-apply pass clears any PM-requested per-task overwrites.
    */
   const confirmExceed = async () => {
     if (!exceedPrompt) return;
     setExceedApplying(true);
     try {
-      await save.mutateAsync();
+      if (exceedNextAction === 'save') {
+        await save.mutateAsync();
+      }
       const updateIds = exceedPrompt
         .filter((t) => exceedChoices[t.taskId] === 'update')
         .map((t) => t.taskId);
       // Fire per-task force-apply in parallel — the endpoint is
       // idempotent and each hits a different task row so there's no
-      // ordering constraint between them.
+      // ordering constraint between them. For the Save & update path
+      // we still run this BEFORE the scheduler so the targets the
+      // scheduler reads already reflect the PM's per-task overwrites.
       const results = await Promise.allSettled(
         updateIds.map((id) => forceApply.mutateAsync(id)),
       );
       const failed = results.filter((r) => r.status === 'rejected').length;
       if (failed > 0) {
         notify.warning(`${updateIds.length - failed} of ${updateIds.length} task due dates updated`);
-      } else if (updateIds.length > 0) {
+      } else if (updateIds.length > 0 && exceedNextAction === 'save') {
+        // Only announce here when the plain-save flow owns the full
+        // user-facing success message. In the Save & update flow the
+        // scheduler's own onSuccess summarises the whole run.
         notify.success(`Updated ${updateIds.length} task due date${updateIds.length === 1 ? '' : 's'} to the new target`);
       }
-      // Refresh planning so the updated task endDates are picked up.
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      if (exceedNextAction === 'saveAndUpdate') {
+        setRescheduling(true);
+        saveAndUpdate.mutate();
+      }
     } finally {
       setExceedApplying(false);
       setExceedPrompt(null);
       setExceedChoices({});
+      setExceedNextAction('save');
     }
   };
 
@@ -991,6 +1008,145 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     },
     onError: (err: any) => notify.apiError(err, 'Failed to overwrite task due date'),
   });
+
+  // D4 · "Save & update due dates" flow (scheduling spec).
+  //
+  // Click sequence: (1) persist deliverable targets via the existing
+  // batch endpoint, (2) run the project-wide reschedule via the new
+  // scheduling endpoint, (3) show the review modal for problematic
+  // tasks (manual / overload / hours-logged), (4) on confirm, commit
+  // the PM-approved rows. The two-step BE split is intentional —
+  // Scheduling and ProjectDeliverables stay independent modules.
+  type ReviewReason = 'manual' | 'overload' | 'hours-logged';
+  interface ReviewItem {
+    taskId: number;
+    taskCode: string;
+    taskName: string;
+    deliverableId: number;
+    deliverableName: string;
+    zoneId: number | null;
+    zoneName: string | null;
+    currentEnd: string | null;
+    proposedEnd: string | null;
+    reason: ReviewReason;
+  }
+  interface SaveAndUpdateResult {
+    scannedDeliverables: number;
+    autoApplied: Array<{ taskId: number; newStart: string; newEnd: string }>;
+    requiresReview: ReviewItem[];
+  }
+  const [rescheduling, setRescheduling] = useState(false);
+  const [reviewPrompt, setReviewPrompt] = useState<ReviewItem[] | null>(null);
+  const [reviewAutoAppliedCount, setReviewAutoAppliedCount] = useState(0);
+  // Per-task PM choice. `apply` toggles whether this row gets written;
+  // `end` is the editable end-date input (pre-filled with the engine's
+  // proposed end OR current end when `proposedEnd` is null).
+  const [reviewChoices, setReviewChoices] = useState<Record<number, { apply: boolean; end: string }>>({});
+
+  const saveAndUpdate = useMutation({
+    mutationFn: async (): Promise<SaveAndUpdateResult> => {
+      // Step 1: persist deliverable target changes via the existing
+      // batch endpoint — same payload shape as the plain Save button.
+      await client.post('/project-deliverables/targets/batch', {
+        baseDate,
+        applyToTasks: false,
+        items: rows
+          .filter((r) => !r.readOnly)
+          .map((r) => ({
+            id: r.deliverableId,
+            zoneId: r.zoneId,
+            months: drafts[r.key] === '' || drafts[r.key] == null ? null : Number(drafts[r.key]),
+            durationWeeks: durationDrafts[r.key] === '' || durationDrafts[r.key] == null ? null : Number(durationDrafts[r.key]),
+            targetDate: targetDateDrafts[r.key] || undefined,
+          })),
+      });
+      // Step 2: run the project-wide reschedule.
+      const resp = await client.post(`/scheduling/projects/${projectId}/save-and-update-due-dates`);
+      return (resp.data?.data ?? resp.data) as SaveAndUpdateResult;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      setReviewAutoAppliedCount(data.autoApplied.length);
+      if (data.requiresReview.length === 0) {
+        notify.success(
+          `Saved · ${data.autoApplied.length} task date${data.autoApplied.length === 1 ? '' : 's'} updated across ${data.scannedDeliverables} deliverable${data.scannedDeliverables === 1 ? '' : 's'}`,
+        );
+        setReviewPrompt(null);
+        setReviewChoices({});
+      } else {
+        // Pre-fill per-row choices from the proposed end (default:
+        // Apply). The PM can toggle to "Keep current" or type a
+        // different date before confirming.
+        const seed: Record<number, { apply: boolean; end: string }> = {};
+        for (const r of data.requiresReview) {
+          seed[r.taskId] = { apply: true, end: r.proposedEnd ?? r.currentEnd ?? '' };
+        }
+        setReviewChoices(seed);
+        setReviewPrompt(data.requiresReview);
+      }
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to save and update due dates'),
+    onSettled: () => setRescheduling(false),
+  });
+
+  const applyReviewed = useMutation({
+    mutationFn: async (approvals: Array<{ taskId: number; acceptedEnd: string }>) => {
+      const resp = await client.post(`/scheduling/projects/${projectId}/apply-reviewed`, { approvals });
+      return (resp.data?.data ?? resp.data) as { applied: number };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
+      notify.success(
+        data.applied > 0
+          ? `Applied ${data.applied} task date${data.applied === 1 ? '' : 's'}`
+          : 'Review closed · no task dates changed',
+      );
+      setReviewPrompt(null);
+      setReviewChoices({});
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to apply reviewed task dates'),
+  });
+
+  const confirmReview = () => {
+    if (!reviewPrompt) return;
+    const approvals = reviewPrompt
+      .filter((r) => reviewChoices[r.taskId]?.apply)
+      .map((r) => ({
+        taskId: r.taskId,
+        acceptedEnd: reviewChoices[r.taskId]?.end?.slice(0, 10) ?? '',
+      }))
+      .filter((a) => !!a.acceptedEnd);
+    applyReviewed.mutate(approvals);
+  };
+
+  const attemptSaveAndUpdate = () => {
+    // Preflight — same per-task conflict check that the plain Save
+    // uses. If any task's current endDate is strictly past the new
+    // target, surface the Update/Keep prompt first; the scheduler
+    // runs afterwards (the FE calls `saveAndUpdate.mutate()` from the
+    // confirmExceed path).
+    const offenders = findExceedingTasks();
+    if (offenders) {
+      const defaults: Record<number, 'update' | 'keep'> = {};
+      for (const o of offenders) defaults[o.taskId] = 'update';
+      setExceedChoices(defaults);
+      setExceedPrompt(offenders);
+      // Mark intent so confirmExceed knows to chain into saveAndUpdate
+      // after the conflicts clear.
+      setExceedNextAction('saveAndUpdate');
+      return;
+    }
+    setRescheduling(true);
+    saveAndUpdate.mutate();
+  };
+
+  // When the per-task exceed-prompt confirms, we either stop (plain
+  // Save flow) or chain into the scheduling reschedule (Save & update
+  // flow). This small state carries the intent between the two
+  // modals.
+  const [exceedNextAction, setExceedNextAction] = useState<'save' | 'saveAndUpdate'>('save');
 
   const hasUnsavedChanges = useMemo(() => {
     for (const r of rows) {
@@ -1245,6 +1401,192 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         </div>
       )}
 
+      {/* D4 · Review modal (Save & update due dates). While the server
+          is computing we show an indeterminate pulse bar; once the
+          response arrives we switch to the table of problematic tasks
+          (manual override / overload / hours-logged) with per-row
+          Keep⟷Apply toggles and editable proposed-end inputs. Confirm
+          commits only the approved rows via `applyReviewed`. */}
+      {(rescheduling || reviewPrompt) && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm animate-fade-in">
+          <div
+            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[760px] max-w-[92vw] max-h-[85vh] flex flex-col animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                סקירת עדכון תאריכים
+              </h3>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5" dir="rtl">
+                {rescheduling && !reviewPrompt
+                  ? 'מריץ תזמון מחדש לכל המשימות בפרויקט…'
+                  : `${reviewPrompt?.length ?? 0} משימות דורשות אישור · השאר יתעדכנו אוטומטית`}
+              </p>
+              {/* Progress bar — indeterminate while rescheduling,
+                  deterministic (100%) once the review payload is in
+                  hand so the user can see the batch completed. */}
+              <div className="mt-3 w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                {rescheduling && !reviewPrompt ? (
+                  <div className="h-full w-full bg-blue-600 rounded-full animate-pulse" />
+                ) : (
+                  <div
+                    className="h-full bg-blue-600 rounded-full transition-all duration-400"
+                    style={{ width: '100%' }}
+                  />
+                )}
+              </div>
+              {reviewPrompt && reviewAutoAppliedCount > 0 && (
+                <p className="mt-2 text-[11px] text-emerald-600 dark:text-emerald-400">
+                  {reviewAutoAppliedCount} task{reviewAutoAppliedCount === 1 ? '' : 's'} already updated automatically.
+                </p>
+              )}
+            </div>
+
+            <div className="p-5 overflow-auto">
+              {rescheduling && !reviewPrompt ? (
+                <div className="py-6 text-center text-[12px] text-slate-500 dark:text-slate-400">
+                  מתזמן… <span className="font-mono tabular-nums">{reviewAutoAppliedCount}</span> deliverables processed
+                </div>
+              ) : reviewPrompt && reviewPrompt.length === 0 ? (
+                <div className="py-6 text-center text-[12px] text-slate-500 dark:text-slate-400">
+                  No tasks require review.
+                </div>
+              ) : (
+                <table className="w-full text-[13px]">
+                  <thead>
+                    <tr className="text-left text-[11px] uppercase tracking-[0.05em] text-slate-400 dark:text-slate-500">
+                      <th className="px-2 py-1.5 w-[108px]">Code</th>
+                      <th className="px-2 py-1.5">Task</th>
+                      <th className="px-2 py-1.5 w-[96px]">Reason</th>
+                      <th className="px-2 py-1.5 w-[200px]">Date</th>
+                      <th className="px-2 py-1.5 w-[180px]">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {reviewPrompt?.map((r) => {
+                      const choice = reviewChoices[r.taskId] ?? { apply: true, end: r.proposedEnd ?? r.currentEnd ?? '' };
+                      const pillClass =
+                        r.reason === 'manual'
+                          ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300'
+                          : r.reason === 'overload'
+                            ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300'
+                            : 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300';
+                      const pillLabel =
+                        r.reason === 'manual' ? 'ידני' : r.reason === 'overload' ? 'עומס' : 'שעות דווחו';
+                      return (
+                        <tr key={r.taskId} className="align-top">
+                          <td className="px-2 py-2 font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                            {r.taskCode || '—'}
+                          </td>
+                          <td className="px-2 py-2">
+                            <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate" title={r.taskName}>
+                              {r.taskName}
+                            </div>
+                            <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate">
+                              {r.deliverableName}
+                              {r.zoneName ? ` · ${r.zoneName}` : ''}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2">
+                            <span className={cn('rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5', pillClass)}>
+                              {pillLabel}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs text-slate-400 line-through tabular-nums">
+                                {r.currentEnd ?? '—'}
+                              </span>
+                              <input
+                                type="date"
+                                value={choice.end}
+                                disabled={!choice.apply || applyReviewed.isPending}
+                                onChange={(e) =>
+                                  setReviewChoices((s) => ({
+                                    ...s,
+                                    [r.taskId]: { apply: s[r.taskId]?.apply ?? true, end: e.target.value },
+                                  }))
+                                }
+                                className="px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-blue-500 focus:outline-none text-sm font-mono disabled:opacity-50"
+                              />
+                            </div>
+                          </td>
+                          <td className="px-2 py-2">
+                            <div className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
+                              <button
+                                type="button"
+                                disabled={applyReviewed.isPending}
+                                onClick={() =>
+                                  setReviewChoices((s) => ({
+                                    ...s,
+                                    [r.taskId]: { apply: false, end: s[r.taskId]?.end ?? choice.end },
+                                  }))
+                                }
+                                className={cn(
+                                  'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50',
+                                  !choice.apply
+                                    ? 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
+                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
+                                )}
+                              >
+                                Keep current
+                              </button>
+                              <button
+                                type="button"
+                                disabled={applyReviewed.isPending}
+                                onClick={() =>
+                                  setReviewChoices((s) => ({
+                                    ...s,
+                                    [r.taskId]: { apply: true, end: s[r.taskId]?.end ?? choice.end },
+                                  }))
+                                }
+                                className={cn(
+                                  'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50',
+                                  choice.apply
+                                    ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400'
+                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
+                                )}
+                              >
+                                Apply proposed
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={rescheduling && !reviewPrompt}
+                onClick={() => {
+                  setReviewPrompt(null);
+                  setReviewChoices({});
+                  setReviewAutoAppliedCount(0);
+                }}
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
+              >
+                ביטול
+              </button>
+              <button
+                type="button"
+                disabled={!reviewPrompt || applyReviewed.isPending || (rescheduling && !reviewPrompt)}
+                onClick={confirmReview}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50"
+              >
+                {applyReviewed.isPending
+                  ? 'Applying…'
+                  : `החל מאושרים (${reviewPrompt?.filter((r) => reviewChoices[r.taskId]?.apply).length ?? 0})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header controls — UI-16 · title/description on top, toolbar
           starts at the page's left gutter on its own row (same left
           edge as the grid header below). Previously the toolbar lived
@@ -1366,14 +1708,30 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               <RefreshCcw className="h-3.5 w-3.5" /> Reset
             </button>
           )}
+          {/* D4 · Two save buttons side-by-side (replacing the single
+              "Save all" primary). Secondary Save persists deliverable
+              targets without touching task dates; primary Save & update
+              due dates runs the project-wide reschedule and surfaces
+              problematic tasks for PM review. */}
           <button
             type="button"
             onClick={attemptSave}
-            disabled={!hasUnsavedChanges || save.isPending}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-[13px] font-semibold"
+            disabled={!hasUnsavedChanges || save.isPending || rescheduling}
+            className="flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
+            title="Save deliverable targets without rescheduling task dates"
           >
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
-            {save.isPending ? 'Saving...' : 'Save all'}
+            {save.isPending ? 'Saving...' : 'Save'}
+          </button>
+          <button
+            type="button"
+            onClick={attemptSaveAndUpdate}
+            disabled={save.isPending || rescheduling || saveAndUpdate.isPending}
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50"
+            title="Save deliverable targets and reschedule every task in the project (manual / overload / hours-logged tasks go to a review step)"
+          >
+            <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+            {rescheduling || saveAndUpdate.isPending ? 'Scheduling…' : 'Save & update due dates'}
           </button>
         </div>
       </div>
@@ -1428,7 +1786,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
 
       {hasUnsavedChanges && (
         <p className="text-[12px] text-blue-600 font-medium">
-          You have unsaved changes. Click <span className="font-bold">Save all</span> to persist them.
+          You have unsaved changes. Click <span className="font-bold">Save</span> to persist targets, or <span className="font-bold">Save &amp; update due dates</span> to reschedule tasks too.
         </p>
       )}
     </div>

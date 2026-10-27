@@ -148,6 +148,42 @@ export interface AllOverloadScanResult {
 }
 
 /**
+ * D4 · "Save & update due dates" — per-task review item.
+ *
+ * The scheduler never auto-commits a task that falls into one of
+ * three categories (spec §D4c):
+ *   (א) manual        — `dueDateOverridden === true` (rule 10:
+ *                       preserved); PM must confirm the overwrite.
+ *   (ב) overload      — the engine flagged `infeasible === true`
+ *                       (rule 13: never force; surface to PM).
+ *   (ג) hours-logged — a `TimeEntry` with minutes>0 and
+ *                       specialHourBucketId=NULL exists for this
+ *                       task; moving its dates could invalidate
+ *                       already-reported hours.
+ *
+ * Everything else is auto-committed in-place. The review payload lets
+ * the PM accept or override each flagged row via `applyReviewed`.
+ */
+export interface ReviewRequiredTask {
+  taskId: number;
+  taskCode: string;
+  taskName: string;
+  deliverableId: number;
+  deliverableName: string;
+  zoneId: number | null;
+  zoneName: string | null;
+  currentEnd: string | null;   // yyyy-MM-dd — the task's CURRENT stored endDate
+  proposedEnd: string | null;  // yyyy-MM-dd — what the scheduler would place endDate at
+  reason: 'manual' | 'overload' | 'hours-logged';
+}
+
+export interface SaveAndUpdateDueDatesResult {
+  scannedDeliverables: number;
+  autoApplied: Array<{ taskId: number; newStart: string; newEnd: string }>;
+  requiresReview: ReviewRequiredTask[];
+}
+
+/**
  * Convention: `endDate` holds the deadline the deliverable promised.
  * If anchor lands on a non-working day (holiday / weekly rest) the
  * TERMINAL task's stored endDate stays the anchor so the customer-
@@ -379,6 +415,325 @@ export class SchedulerService {
       scannedDeliverables,
       flaggedTasks,
     };
+  }
+
+  // ─── D4 · Save & update due dates ──────────────────────────────────
+  //
+  // Reschedules every deliverable in a project in one call. Tasks that
+  // land in one of three "problematic" buckets (spec §D4c) are NEVER
+  // auto-committed — they come back in `requiresReview` for the PM to
+  // approve or override via `applyReviewed`. Everything else is
+  // written in-place under a single transaction so the write is
+  // atomic per deliverable set.
+  //
+  // Called AFTER the FE has already persisted the deliverable targets
+  // via `POST /project-deliverables/targets/batch`; this endpoint is
+  // step 2 of the "Save & update" button. Splitting the two is
+  // intentional — the regular Save button hits step 1 only, so each
+  // endpoint has exactly one job and the modules don't need to cross-
+  // import.
+  //
+  // Hours-logged check: a `TimeEntry` with minutes>0 AND
+  // specialHourBucketId=NULL. Reported hours against a SpecialHourBucket
+  // (HR behavior A/B) don't block — the dates we move are the project
+  // task's, not the bucket's accrual.
+  //
+  // D6 (TODO) · When this endpoint lands, additional auto-reschedule
+  // trigger points should hook into this same flow via a shared method
+  // instead of re-implementing the problematic-task filter — see the
+  // `TODO(D6 · scheduling)` markers around the deliverable-target /
+  // task-assignee / task-budgetHours write paths.
+  async saveAndUpdateDueDates(
+    projectId: number,
+    actorId?: number,
+  ): Promise<SaveAndUpdateDueDatesResult> {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true },
+    });
+    if (!project) {
+      throw new NotFoundException(`Project ${projectId} not found`);
+    }
+
+    // Load every ZoneDeliverableTarget under the project — same shape
+    // as the overload scan but with projectDeliverable name/zone for
+    // the review-row metadata.
+    const targets = await this.prisma.zoneDeliverableTarget.findMany({
+      where: { projectDeliverable: { projectId, deletedAt: null } },
+      select: {
+        id: true,
+        zoneId: true,
+        projectDeliverable: { select: { id: true, name: true } },
+        zone: { select: { id: true, name: true } },
+      },
+    });
+
+    if (targets.length === 0) {
+      return { scannedDeliverables: 0, autoApplied: [], requiresReview: [] };
+    }
+
+    // Dry-run per deliverable. We keep the target meta so the review
+    // rows can carry deliverable/zone names without a second query.
+    const perDeliverable: Array<{ target: (typeof targets)[number]; scheduled: ScheduledTask[] }> = [];
+    for (const t of targets) {
+      try {
+        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id });
+        perDeliverable.push({ target: t, scheduled: result.scheduled });
+      } catch (err) {
+        this.logger.warn(
+          `saveAndUpdateDueDates: dryRun failed for deliverableId=${t.id} — ${(err as Error).message}`,
+        );
+      }
+    }
+
+    const allTaskIds = new Set<number>();
+    for (const { scheduled } of perDeliverable) {
+      for (const s of scheduled) allTaskIds.add(s.taskId);
+    }
+
+    if (allTaskIds.size === 0) {
+      return { scannedDeliverables: targets.length, autoApplied: [], requiresReview: [] };
+    }
+
+    // Bulk-load task metadata (code/name/current endDate) for the
+    // review rows.
+    const taskRows = await this.prisma.task.findMany({
+      where: { id: { in: [...allTaskIds] } },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        endDate: true,
+        dueDateOverridden: true,
+      },
+    });
+    const taskById = new Map(taskRows.map((t) => [t.id, t]));
+
+    // (ג) hours-logged: group TimeEntry by task; the Set membership
+    // acts as the blocker. `specialHourBucketId=null` excludes HR-bucket
+    // reports (behavior A/B) — those don't own the project task's
+    // scheduling dates.
+    const timeEntries = await this.prisma.timeEntry.groupBy({
+      by: ['taskId'],
+      where: {
+        taskId: { in: [...allTaskIds] },
+        minutes: { gt: 0 },
+        specialHourBucketId: null,
+        deletedAt: null,
+      },
+      _sum: { minutes: true },
+    });
+    const hasHoursLogged = new Set<number>();
+    for (const row of timeEntries) {
+      if (row.taskId != null && (row._sum.minutes ?? 0) > 0) {
+        hasHoursLogged.add(row.taskId);
+      }
+    }
+
+    // Partition: auto-commit vs. review. We iterate per-deliverable so
+    // the review row keeps its deliverable/zone context.
+    const taskToCommit = new Map<number, { newStart: Date; newEnd: Date }>();
+    const requiresReview: ReviewRequiredTask[] = [];
+    const seenReviewTaskIds = new Set<number>();
+
+    const pushReview = (
+      s: ScheduledTask,
+      target: (typeof targets)[number],
+      reason: ReviewRequiredTask['reason'],
+    ) => {
+      if (seenReviewTaskIds.has(s.taskId)) return;
+      const meta = taskById.get(s.taskId);
+      if (!meta) return;
+      seenReviewTaskIds.add(s.taskId);
+      requiresReview.push({
+        taskId: s.taskId,
+        taskCode: meta.code,
+        taskName: meta.name,
+        deliverableId: target.id,
+        deliverableName: target.projectDeliverable?.name ?? '—',
+        zoneId: target.zone?.id ?? target.zoneId ?? null,
+        zoneName: target.zone?.name ?? null,
+        currentEnd: meta.endDate ? meta.endDate.toISOString().split('T')[0] : null,
+        proposedEnd: s.endDate ? s.endDate.toISOString().split('T')[0] : null,
+        reason,
+      });
+    };
+
+    for (const { target, scheduled } of perDeliverable) {
+      for (const s of scheduled) {
+        // (א) manual override — the scheduler short-circuits on
+        // dueDateOverridden and returns the stored dates; the PM must
+        // explicitly accept the overwrite. "proposed" ends up equal
+        // to the current date (since the engine didn't recompute), so
+        // the review input is pre-filled with current; the PM edits
+        // if they want a new date or picks "Keep current" to leave it.
+        if (s.skippedByOverride) {
+          pushReview(s, target, 'manual');
+          continue;
+        }
+        // (ב) overload / infeasible — never auto-commit.
+        if (s.infeasible) {
+          pushReview(s, target, 'overload');
+          continue;
+        }
+        // (ג) hours already logged — never auto-commit.
+        if (hasHoursLogged.has(s.taskId)) {
+          pushReview(s, target, 'hours-logged');
+          continue;
+        }
+        // Safe to auto-commit.
+        taskToCommit.set(s.taskId, { newStart: s.startDate, newEnd: s.endDate });
+      }
+    }
+
+    const autoApplied: Array<{ taskId: number; newStart: string; newEnd: string }> = [];
+    if (taskToCommit.size > 0) {
+      await this.prisma.$transaction(async (tx) => {
+        for (const [taskId, { newStart, newEnd }] of taskToCommit) {
+          await tx.task.update({
+            where: { id: taskId },
+            data: {
+              estimatedStartDate: newStart,
+              endDate: newEnd,
+              // Rule 10: never flip dueDateOverridden back to false
+              // here. Auto-scheduling writes the computed date but
+              // leaves override state alone — a PM who had previously
+              // picked a manual date for this task would have landed in
+              // the review path above.
+            },
+          });
+        }
+      });
+      for (const [taskId, { newStart, newEnd }] of taskToCommit) {
+        autoApplied.push({
+          taskId,
+          newStart: newStart.toISOString().split('T')[0],
+          newEnd: newEnd.toISOString().split('T')[0],
+        });
+      }
+    }
+
+    this.logger.log(
+      `saveAndUpdateDueDates · projectId=${projectId} actor=${actorId ?? 'system'} ` +
+        `scanned=${targets.length} autoApplied=${autoApplied.length} requiresReview=${requiresReview.length}`,
+    );
+
+    return {
+      scannedDeliverables: targets.length,
+      autoApplied,
+      requiresReview,
+    };
+  }
+
+  /**
+   * D4 · Commit the PM-approved review rows.
+   *
+   * Each approval carries the ACCEPTED endDate — either the engine's
+   * proposed date or a PM-typed override. We recompute `estimatedStartDate`
+   * as `walkWorkingDaysBack(endDate, duration)` using the task's
+   * budgetHours / first-assignee's dailyStandardHours — identical to
+   * the formula the scheduler uses for duration (spec §D4d), so the
+   * forward/backward passes stay consistent on the next recompute.
+   *
+   * Only tasks that belong to the named project are committed; a
+   * stray taskId from another project is silently skipped (defensive
+   * — the FE only sends ids it got back from `saveAndUpdateDueDates`).
+   */
+  async applyReviewed(
+    projectId: number,
+    approvals: Array<{ taskId: number; acceptedEnd: string }>,
+    actorId?: number,
+  ): Promise<{ applied: number }> {
+    if (!Array.isArray(approvals) || approvals.length === 0) {
+      return { applied: 0 };
+    }
+
+    const taskRows = await this.prisma.task.findMany({
+      where: {
+        id: { in: approvals.map((a) => a.taskId) },
+        projectId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        budgetHours: true,
+        assignees: {
+          where: { deletedAt: null },
+          select: { user: { select: { dailyStandardHours: true } } },
+          take: 1,
+        },
+      },
+    });
+    if (taskRows.length === 0) return { applied: 0 };
+    const taskById = new Map(taskRows.map((t) => [t.id, t]));
+
+    // Reload calendar + rest days for the working-day walk (same
+    // helpers the scheduler uses). We could lift this into a shared
+    // helper, but the per-call cost is tiny and avoiding the extra
+    // indirection keeps this method self-contained.
+    const calendarDays = await this.prisma.calendarDay.findMany({
+      where: { appliesTo: { in: ['all', 'employees_only'] } },
+      select: { date: true, type: true, workingHours: true },
+    });
+    const holidayDates = new Set<string>();
+    for (const d of calendarDays) {
+      const wh = d.workingHours == null ? null : Number(d.workingHours);
+      if (d.type !== 'REGULAR' && (wh === null || wh === 0)) {
+        holidayDates.add(d.date.toISOString().split('T')[0]);
+      }
+    }
+    const hr = await this.prisma.hrSettings.findFirst({ select: { weeklyRestDays: true } });
+    const restDaysRaw = hr?.weeklyRestDays as unknown as number[] | null;
+    const weeklyRestDays =
+      Array.isArray(restDaysRaw) && restDaysRaw.every((n) => Number.isInteger(n))
+        ? restDaysRaw
+        : DEFAULT_WEEKLY_REST_DAYS;
+    const isWorkingDay = (d: Date): boolean => {
+      const dow = d.getUTCDay();
+      if (weeklyRestDays.includes(dow)) return false;
+      const key = d.toISOString().split('T')[0];
+      if (holidayDates.has(key)) return false;
+      return true;
+    };
+
+    let applied = 0;
+    await this.prisma.$transaction(async (tx) => {
+      for (const a of approvals) {
+        const task = taskById.get(a.taskId);
+        if (!task) continue;
+        // Parse yyyy-MM-dd as UTC midnight — matches `stripTime` so the
+        // @db.Date column never serializes to the previous day in a
+        // negative-offset timezone.
+        const [y, m, d] = String(a.acceptedEnd || '').split('-').map(Number);
+        if (!y || !m || !d) continue;
+        const endDate = new Date(Date.UTC(y, m - 1, d));
+        const dsh = Number(
+          (task.assignees?.[0] as any)?.user?.dailyStandardHours ?? DEFAULT_DAILY_STANDARD_HOURS,
+        );
+        const bh = task.budgetHours != null ? Number(task.budgetHours) : 0;
+        const duration = bh > 0 && dsh > 0 ? Math.max(1, Math.ceil(bh / dsh)) : 1;
+        const startDate = walkWorkingDaysBack(endDate, duration, isWorkingDay);
+        await tx.task.update({
+          where: { id: a.taskId },
+          data: {
+            estimatedStartDate: startDate,
+            endDate,
+            // The PM is explicitly setting this date, so flip
+            // dueDateOverridden true — a subsequent target-change should
+            // keep going through the review flow for this task (rule
+            // 10 preservation).
+            dueDateOverridden: true,
+          },
+        });
+        applied++;
+      }
+    });
+
+    this.logger.log(
+      `applyReviewed · projectId=${projectId} actor=${actorId ?? 'system'} applied=${applied}/${approvals.length}`,
+    );
+
+    return { applied };
   }
 
   private async scheduleDeliverable(
