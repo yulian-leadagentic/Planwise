@@ -123,17 +123,17 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
   //
   // Linear chain, 3 tasks each 2 working days, anchor 2026-11-10 (Tue).
   // Weekly rest [5, 6] = Fri + Sat (Israel work-week: Sun IS working).
-  // Expected walk-back behaviour:
+  // D1 (gap = 1 working day) walk-back:
   //   • Terminal 103: end=Tue 11-10, start=Mon 11-09 (inclusive 2 wd).
-  //   • Mid 102:      end=Mon 11-09 (gap=0 handoff), start=Sun 11-08
-  //                   (Sun working under [5,6]).
-  //   • First 101:    end=Sun 11-08, start=Thu 11-05 — Sat/Fri skipped
-  //                   as the walk crosses the weekend. This is the
-  //                   "Fri/Sat skipped" case from the spec.
+  //   • Mid 102:      end = prevWorkingDay(Mon 11-09) = Sun 11-08
+  //                   (Sun working under [5,6]); walkBack 2 wd inclusive
+  //                   crosses Sat/Fri → start Thu 11-05.
+  //   • First 101:    end = prevWorkingDay(Thu 11-05) = Wed 11-04;
+  //                   walkBack 2 wd inclusive → start Tue 11-03.
   //
   // Exercises: Kahn topo, backward chaining via successor.start, Fri/Sat
-  // skip, inclusive walkWorkingDaysBack semantics.
-  it('linear chain of 3 tasks (each 2 working days) walks back across the Fri/Sat weekend', async () => {
+  // skip, inclusive walkWorkingDaysBack semantics, D1 gap.
+  it('linear chain of 3 tasks (each 2 working days) walks back across the Fri/Sat weekend with 1-wd gap', async () => {
     const target = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
 
     const tasks = [
@@ -160,13 +160,15 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
     expect(iso(byId.get(103)!.endDate)).toBe('2026-11-10');
     expect(iso(byId.get(103)!.startDate)).toBe('2026-11-09');
 
-    expect(iso(byId.get(102)!.endDate)).toBe('2026-11-09');
-    expect(iso(byId.get(102)!.startDate)).toBe('2026-11-08');
+    // D1: 102 ends ONE working day before 103 starts → Sun 11-08.
+    // Walk back 2 wd inclusive from Sun 11-08 across Fri/Sat → Thu 11-05.
+    expect(iso(byId.get(102)!.endDate)).toBe('2026-11-08');
+    expect(iso(byId.get(102)!.startDate)).toBe('2026-11-05');
 
-    // First task 101 straddles the Fri/Sat weekend: end Sun 11-08,
-    // walkBack 2 wd inclusive → skip Sat 11-07 + Fri 11-06, land Thu 11-05.
-    expect(iso(byId.get(101)!.endDate)).toBe('2026-11-08');
-    expect(iso(byId.get(101)!.startDate)).toBe('2026-11-05');
+    // D1: 101 ends ONE working day before 102 starts (Thu 11-05) → Wed 11-04.
+    // Walk back 2 wd inclusive → Tue 11-03.
+    expect(iso(byId.get(101)!.endDate)).toBe('2026-11-04');
+    expect(iso(byId.get(101)!.startDate)).toBe('2026-11-03');
 
     // No overrides → no skipped rows.
     expect(out.scheduled.every((s) => !s.skippedByOverride)).toBe(true);
@@ -175,13 +177,14 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
   // ─── Test 2 ────────────────────────────────────────────────────────
   //
   // Fork: 1 → {2, 3} → 4. Each task 2 working days. Anchor Tue 11-10.
-  // Weekly rest [5, 6] (Fri + Sat). Expected:
+  // Weekly rest [5, 6] (Fri + Sat). D1 gap = 1 working day:
   //   • task 4: end Tue 11-10, start Mon 11-09.
-  //   • task 2 and 3: both end Mon 11-09 (gap=0 handoff), both start
-  //     Sun 11-08. Same dates because they're independent branches.
-  //   • task 1: end = min(2.start, 3.start) = Sun 11-08; walkBack 2 wd
-  //     inclusive crosses Sat/Fri → start Thu 11-05.
-  it('dependency fork 1 → {2, 3} → 4: both branches end before 4 starts', async () => {
+  //   • task 2 and 3: both end = prevWorkingDay(Mon 11-09) = Sun 11-08;
+  //     walkBack 2 wd across Fri/Sat → start Thu 11-05. Same dates
+  //     because they're independent branches.
+  //   • task 1: end = prevWorkingDay(min(2.start, 3.start)) =
+  //     prevWorkingDay(Thu 11-05) = Wed 11-04; walkBack 2 wd → Tue 11-03.
+  it('dependency fork 1 → {2, 3} → 4: branches hand off with 1-wd gap', async () => {
     const target = new Date(Date.UTC(2026, 10, 10));
 
     const tasks = [
@@ -209,16 +212,15 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
     expect(iso(byId.get(4)!.endDate)).toBe('2026-11-10');
     expect(iso(byId.get(4)!.startDate)).toBe('2026-11-09');
 
-    // Both branches hand off on Mon 11-09.
-    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-09');
-    expect(iso(byId.get(3)!.endDate)).toBe('2026-11-09');
-    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-08');
-    expect(iso(byId.get(3)!.startDate)).toBe('2026-11-08');
+    // D1: both branches hand off ONE working day before 4 starts → Sun 11-08.
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-08');
+    expect(iso(byId.get(3)!.endDate)).toBe('2026-11-08');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-05');
+    expect(iso(byId.get(3)!.startDate)).toBe('2026-11-05');
 
-    // Task 1 ends at min(branch starts) = Sun 11-08, walkBack 2 wd
-    // across the Fri/Sat weekend → start Thu 11-05.
-    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-08');
-    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-05');
+    // Task 1 ends at prevWorkingDay(min(branch starts)) = prev(Thu 11-05) = Wed 11-04.
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-04');
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-03');
   });
 
   // ─── Test 3 ────────────────────────────────────────────────────────
@@ -229,10 +231,12 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
   // to a non-working day) and estimatedStartDate=11-04 so we can assert
   // on exact survival. Chain: 1 → 2(override) → 3. Anchor 11-10.
   //
-  // Expectation: task 3 anchor-ends at 11-10, start Mon 11-09.
-  //              task 2 stays at its override — end=11-06, start=11-04.
-  //              task 1 ends at task-2 start (11-04); start = Tue 11-03.
-  it('dueDateOverridden preserves stored dates and the chain respects the override', async () => {
+  // Expectation (D1 gap = 1 wd):
+  //   task 3 anchor-ends at 11-10, start Mon 11-09.
+  //   task 2 stays at its override — end=11-06, start=11-04.
+  //   task 1 ends at prevWorkingDay(2.start = Wed 11-04) = Tue 11-03;
+  //          dur=1 → start = Tue 11-03.
+  it('dueDateOverridden preserves stored dates; chain respects override + 1-wd gap', async () => {
     const target = new Date(Date.UTC(2026, 10, 10));
 
     const tasks = [
@@ -269,10 +273,11 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
     expect(iso(byId.get(3)!.endDate)).toBe('2026-11-10');
     expect(iso(byId.get(3)!.startDate)).toBe('2026-11-09');
 
-    // Task 1 — ends at 2.startDate = Wed 11-04; dur=1 → start=11-04.
+    // Task 1 — D1: end = prevWorkingDay(2.start = Wed 11-04) = Tue 11-03;
+    //         dur = 1 → start = Tue 11-03.
     expect(byId.get(1)!.skippedByOverride).toBe(false);
-    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-04');
-    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-04');
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-03');
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-03');
   });
 
   // ─── Test 4 ────────────────────────────────────────────────────────
@@ -298,6 +303,55 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
     expect(out.scheduled[0].workingDaysDuration).toBe(1);
     expect(iso(out.scheduled[0].endDate)).toBe('2026-11-02');
     expect(iso(out.scheduled[0].startDate)).toBe('2026-11-02');
+  });
+
+  // ─── D1 extra ──────────────────────────────────────────────────────
+  //
+  // Two predecessors feeding a terminal successor: the forward-pass
+  // earliest start of the successor must land 1 working day AFTER the
+  // LATER predecessor's earliest finish (spec rule 3 + rule 4). We assert
+  // the backward-pass dates do the same max-and-step via the single
+  // handoff: both predecessors end at prevWorkingDay(successor.start),
+  // regardless of their individual durations.
+  //
+  // Shape:  A(16h, 2 wd)  ─┐
+  //                        ├─▶  C(8h, 1 wd)   anchor Tue 11-10
+  //         B(8h,  1 wd)  ─┘
+  it('two predecessors: successor starts the working day AFTER the later predecessor ends (D1)', async () => {
+    const target = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+
+    const tasks = [
+      makeTask({ id: 1, budgetHours: 16 }), // 2 wd
+      makeTask({ id: 2, budgetHours: 8 }),  // 1 wd
+      makeTask({ id: 3, budgetHours: 8 }),  // 1 wd — terminal
+    ];
+    const deps = [
+      { taskId: 3, dependsOnId: 1 },
+      { taskId: 3, dependsOnId: 2 },
+    ];
+
+    const { prisma } = makePrisma({
+      tasks,
+      deps,
+      deliverable: { id: 10, targetDate: target, zoneId: 1, projectDeliverableId: 10 },
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 10 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    // Task 3 terminal — ends at anchor Tue 11-10, start Tue 11-10 (1 wd).
+    expect(iso(byId.get(3)!.endDate)).toBe('2026-11-10');
+    expect(iso(byId.get(3)!.startDate)).toBe('2026-11-10');
+
+    // Both preds end ONE working day before 3's start:
+    //   prevWorkingDay(Tue 11-10) = Mon 11-09.
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-09');
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-09');
+
+    // Starts differ by their own durations: Task 1 is 2 wd → start Sun 11-08.
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-08');
+    // Task 2 is 1 wd → start Mon 11-09.
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-09');
   });
 
   // ─── Test 5 ────────────────────────────────────────────────────────

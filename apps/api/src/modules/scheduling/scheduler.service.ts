@@ -21,12 +21,13 @@ import { ExecutionPlanningService } from '../execution-planning/execution-planni
  *   3. Compute each task's working-day duration (ceil(budgetHours /
  *      dailyStandardHours), default 1).
  *   4. Backward pass (anchor = targetDate): terminal tasks end at
- *      anchor; non-terminal end at min(successor.start) clamped to
- *      anchor; startDate = walkBack(endDate, duration).
+ *      anchor; non-terminal end at `prevWorkingDay(min(successor.start))`
+ *      clamped to anchor (finish-to-start + 1 working day — spec rule 3);
+ *      startDate = walkBack(endDate, duration).
  *      `dueDateOverridden` short-circuits — the task's stored dates
  *      are preserved and the surrounding chain respects them.
  *   5. Forward pass (base = max(project.startDate, today)): topo
- *      order; earliestStart = max(predecessors.earliestFinish, base);
+ *      order; earliestStart = max(nextWorkingDay(preds.earliestFinish), base);
  *      earliestFinish = walkForward(earliestStart, duration).
  *      Status derives from `overflowDays`: 0 → feasible, 1-5 → at-risk,
  *      >5 → infeasible.
@@ -93,9 +94,9 @@ export interface ScheduleResult {
  * TERMINAL task's stored endDate stays the anchor so the customer-
  * facing "due by" number is preserved; `startDate` is still a working
  * day because the task is actually executed on working days. Non-
- * terminal tasks derive endDate from their successors' startDate
- * (gap = 0, per spec), which IS a working day, so their endDate is
- * also always a working day.
+ * terminal tasks derive endDate from `prevWorkingDay(min(successor.start))`
+ * (finish-to-start + 1 working day — spec rule 3), which IS a working
+ * day, so their endDate is also always a working day.
  */
 interface TaskRow {
   id: number;
@@ -275,7 +276,9 @@ export class SchedulerService {
       }
 
       // endDate: terminal → anchor (stored as-is per convention);
-      //          non-terminal → min(successor.startDate), clamped to anchor.
+      //          non-terminal → prevWorkingDay(min(successor.startDate))
+      //          (finish-to-start +1 working day — spec rule 3), clamped
+      //          to anchor.
       const succ = successors.get(taskId) ?? [];
       let endDate: Date;
       if (succ.length === 0) {
@@ -289,9 +292,11 @@ export class SchedulerService {
             minStart = s.startDate;
           }
         }
-        // gap = 0 per spec. If no scheduled successor (e.g. in a cycle
-        // the successor was dropped), fall back to anchor.
-        endDate = minStart ?? anchorDate;
+        // D1 (gap = 1 working day): the predecessor must finish ONE
+        // working day BEFORE the successor's start. If no scheduled
+        // successor (e.g. in a cycle the successor was dropped), fall
+        // back to anchor.
+        endDate = minStart !== null ? prevWorkingDay(minStart, isWorkingDay) : anchorDate;
         if (endDate.getTime() > anchorDate.getTime()) endDate = anchorDate;
       }
 
@@ -323,9 +328,12 @@ export class SchedulerService {
       for (const pId of preds) {
         const pf = earliestFinishByTask.get(pId);
         if (!pf) continue;
-        // gap = 0: successor can start on the same day predecessor ends
-        // (handoff convention aligned with backward pass).
-        if (pf.getTime() > earliestStart.getTime()) earliestStart = pf;
+        // D1 (gap = 1 working day): successor starts ONE working day
+        // AFTER the predecessor finishes. baseDate is NOT shifted — the
+        // +1 applies only when there's a predecessor. Multiple preds →
+        // take the max (handoff waits for the latest predecessor).
+        const earliestFromPred = nextWorkingDay(pf, isWorkingDay);
+        if (earliestFromPred.getTime() > earliestStart.getTime()) earliestStart = earliestFromPred;
       }
       earliestStart = snapToWorkingDayForward(earliestStart, isWorkingDay);
       const earliestFinish = walkWorkingDaysForward(earliestStart, dur, isWorkingDay);
@@ -525,5 +533,38 @@ export function snapToWorkingDayForward(from: Date, isWorkingDay: (d: Date) => b
   while (!isWorkingDay(cursor) && iter++ < 32) {
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
+  return cursor;
+}
+
+/**
+ * Return the first working day STRICTLY BEFORE `from`. Used by D1
+ * (gap = 1 working day) in the backward pass: predecessor's endDate =
+ * prevWorkingDay(successor.startDate). The existing
+ * `walkWorkingDaysBack(_, 1, _)` returns `from` itself (inclusive), so
+ * we need this exclusive variant.
+ */
+export function prevWorkingDay(from: Date, isWorkingDay: (d: Date) => boolean): Date {
+  const cursor = new Date(from.getTime());
+  let iter = 0;
+  do {
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+    iter++;
+  } while (!isWorkingDay(cursor) && iter < 32);
+  return cursor;
+}
+
+/**
+ * Return the first working day STRICTLY AFTER `from`. Used by D1 in
+ * the forward pass: successor's earliestStart = nextWorkingDay(
+ * predecessor.earliestFinish). Exclusive counterpart to
+ * `snapToWorkingDayForward`.
+ */
+export function nextWorkingDay(from: Date, isWorkingDay: (d: Date) => boolean): Date {
+  const cursor = new Date(from.getTime());
+  let iter = 0;
+  do {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    iter++;
+  } while (!isWorkingDay(cursor) && iter < 32);
   return cursor;
 }
