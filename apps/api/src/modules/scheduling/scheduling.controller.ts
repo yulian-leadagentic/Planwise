@@ -1,4 +1,4 @@
-import { Controller, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { SchedulerService } from './scheduler.service';
@@ -38,5 +38,30 @@ export class SchedulingController {
     @CurrentUser() user: any,
   ) {
     return this.scheduler.scheduleDeliverableAndCommit({ deliverableId: id }, user?.id);
+  }
+
+  // ─── D3 · Overload scan ────────────────────────────────────────────
+  //
+  // Dry-runs the scheduler across every deliverable of a project
+  // (and the aggregated variant across every active project), then
+  // returns only the tasks the engine flagged `infeasible: true` with
+  // the surrounding metadata the PM dashboard needs. No writes.
+  //
+  // `projects:read` is intentional — the scan surfaces a problem the
+  // PM should see; it is not itself a schedule mutation, so read is
+  // enough. The underlying `scheduleDeliverableDryRun` only reads.
+
+  @Post('scheduling/projects/:projectId/overload-scan')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'D3 · Scan every deliverable in a project for infeasible / overloaded tasks' })
+  scanProjectOverload(@Param('projectId', ParseIntPipe) projectId: number) {
+    return this.scheduler.scanProjectOverload(projectId);
+  }
+
+  @Get('scheduling/overload-scan/all')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'D3 · Scan every active, non-archived project for infeasible / overloaded tasks' })
+  scanAllOverload() {
+    return this.scheduler.scanAllActiveOverload();
   }
 }

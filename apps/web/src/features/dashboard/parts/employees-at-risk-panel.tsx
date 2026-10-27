@@ -2,6 +2,7 @@ import { ExternalLink, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { EmptyState } from '@/components/shared/empty-state';
 import { OpsAvatar } from './ops-shared';
+import { OverloadTasksPanel } from './overload-tasks-panel';
 
 /**
  * Employees at Risk panel (feat/ops-complete).
@@ -47,19 +48,32 @@ export function EmployeesAtRiskPanel({
   onOpenTask: (taskId: number) => void;
   onOpenProject: (projectId: number) => void;
 }) {
+  // D3 · Overload Tasks — scheduler-flagged infeasibilities across every
+  // active project. Rendered alongside the overloaded-AND-overdue list
+  // so a PM sees both the "lagging work" signal (overdue + capacity
+  // breach, already-happened) AND the "cannot finish on time" signal
+  // (scheduler flag, forward-looking) in one place.
+  const overloadScanPanel = (
+    <OverloadTasksPanel onOpenTask={onOpenTask} onOpenProject={onOpenProject} />
+  );
+
   if (employees.length === 0) {
     return (
-      <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
-        <EmptyState
-          icon={Users}
-          title="No employees at risk"
-          description="Nobody is currently overloaded AND carrying overdue tasks."
-        />
+      <div className="space-y-4">
+        <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+          <EmptyState
+            icon={Users}
+            title="No employees at risk"
+            description="Nobody is currently overloaded AND carrying overdue tasks."
+          />
+        </div>
+        {overloadScanPanel}
       </div>
     );
   }
 
   return (
+    <div className="space-y-4">
     <div className="rounded-[14px] border border-red-200 dark:border-red-900/60 bg-white dark:bg-slate-900 overflow-hidden">
       <div className="bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/60 px-4 py-2">
         <p className="text-[11px] uppercase tracking-wider font-semibold text-red-700 dark:text-red-300">
@@ -128,6 +142,8 @@ export function EmployeesAtRiskPanel({
           </li>
         ))}
       </ul>
+    </div>
+      {overloadScanPanel}
     </div>
   );
 }

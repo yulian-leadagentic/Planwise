@@ -102,6 +102,52 @@ export interface ScheduleResult {
 }
 
 /**
+ * D3 · Overload scan — one flagged task row.
+ *
+ * Produced by `scanProjectOverload` / `scanAllActiveOverload`.
+ * Enriches a `ScheduledTask` (where `infeasible === true`) with the
+ * surrounding task / deliverable / zone / assignee metadata the PM
+ * dashboard needs to surface the problem without a second round-trip.
+ *
+ * `overflowDays` is set when the task's start cursor spilled before
+ * baseDate (project.startDate / today) during resource leveling; it
+ * counts CALENDAR days from `estimatedStartDate` back to baseDate.
+ * Omitted when the only reason is `predecessor-conflict` (the scheduler
+ * didn't walk off the runway, it just violated the +1-wd gap rule).
+ */
+export interface OverloadFlaggedTask {
+  taskId: number;
+  taskCode: string;
+  taskName: string;
+  deliverableId: number; // ZoneDeliverableTarget id
+  deliverableName: string;
+  zoneId: number | null;
+  zoneName: string | null;
+  assigneeId: number | null;
+  assigneeName: string | null;
+  budgetHours: number | null;
+  estimatedStartDate: string | null; // yyyy-MM-dd
+  endDate: string | null; // yyyy-MM-dd
+  infeasibleReason: 'overload' | 'predecessor-conflict';
+  overflowDays?: number;
+  projectId: number;
+  projectName: string;
+}
+
+export interface ProjectOverloadScanResult {
+  projectId: number;
+  projectName: string;
+  scannedDeliverables: number;
+  flaggedTasks: OverloadFlaggedTask[];
+}
+
+export interface AllOverloadScanResult {
+  scannedProjects: number;
+  scannedDeliverables: number;
+  flaggedTasks: OverloadFlaggedTask[];
+}
+
+/**
  * Convention: `endDate` holds the deadline the deliverable promised.
  * If anchor lands on a non-working day (holiday / weekly rest) the
  * TERMINAL task's stored endDate stays the anchor so the customer-
@@ -143,6 +189,196 @@ export class SchedulerService {
     actorId?: number,
   ): Promise<ScheduleResult> {
     return this.scheduleDeliverable(inputs, { writeBack: true, actorId });
+  }
+
+  // ─── D3 · Overload scan ────────────────────────────────────────────
+  //
+  // Runs `scheduleDeliverableDryRun` for every deliverable under a
+  // project (or every deliverable under every active project in the
+  // `-all` variant), filters to `infeasible === true` tasks, then
+  // enriches with the surrounding task / deliverable / zone / assignee
+  // metadata so the PM dashboard can render a single row per flagged
+  // task without a second round-trip.
+  //
+  // The scan is read-only — nothing in Prisma is updated. The
+  // scheduler is invoked per deliverable sequentially; the per-call
+  // cost dominates (one query per deliverable), so a short-circuit on
+  // no-tasks / no-anchor paths comes for free.
+  async scanProjectOverload(projectId: number): Promise<ProjectOverloadScanResult> {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, name: true },
+    });
+    if (!project) {
+      throw new NotFoundException(`Project ${projectId} not found`);
+    }
+
+    // Load every ZoneDeliverableTarget under the project. The scheduler
+    // iterates these one by one — a project with hundreds of
+    // deliverables will issue hundreds of per-deliverable queries, but
+    // this is read-only / cache-safe and keeps the engine's single
+    // entry point intact.
+    const targets = await this.prisma.zoneDeliverableTarget.findMany({
+      where: {
+        projectDeliverable: { projectId, deletedAt: null },
+      },
+      select: {
+        id: true,
+        zoneId: true,
+        projectDeliverable: { select: { id: true, name: true } },
+        zone: { select: { id: true, name: true, code: true } },
+      },
+    });
+
+    const flaggedTasks: OverloadFlaggedTask[] = [];
+    const taskIdsFlagged = new Set<number>();
+    for (const t of targets) {
+      let result: ScheduleResult;
+      try {
+        result = await this.scheduleDeliverableDryRun({ deliverableId: t.id });
+      } catch (err) {
+        this.logger.warn(
+          `scanProjectOverload: dryRun failed for deliverableId=${t.id} — ${(err as Error).message}`,
+        );
+        continue;
+      }
+      for (const s of result.scheduled) {
+        if (!s.infeasible || !s.infeasibleReason) continue;
+        taskIdsFlagged.add(s.taskId);
+      }
+    }
+
+    if (taskIdsFlagged.size === 0) {
+      return {
+        projectId: project.id,
+        projectName: project.name,
+        scannedDeliverables: targets.length,
+        flaggedTasks: [],
+      };
+    }
+
+    // Re-walk the per-deliverable results once we know the universe of
+    // flagged task ids, so a single bulk Task.findMany can enrich
+    // them. Using the same `targets` loop twice (once for discovery,
+    // once for enrichment) is cheaper than issuing a Task.findMany
+    // per deliverable.
+    const taskMetadata = await this.prisma.task.findMany({
+      where: { id: { in: [...taskIdsFlagged] } },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        budgetHours: true,
+        assignees: {
+          where: { deletedAt: null },
+          select: { user: { select: { id: true, firstName: true, lastName: true } } },
+          take: 1,
+        },
+      },
+    });
+    const taskById = new Map(taskMetadata.map((t) => [t.id, t]));
+
+    const baseDate = this.stripTime(new Date());
+
+    for (const t of targets) {
+      let result: ScheduleResult;
+      try {
+        result = await this.scheduleDeliverableDryRun({ deliverableId: t.id });
+      } catch {
+        continue;
+      }
+      for (const s of result.scheduled) {
+        if (!s.infeasible || !s.infeasibleReason) continue;
+        const meta = taskById.get(s.taskId);
+        if (!meta) continue;
+        const assignee = meta.assignees?.[0]?.user ?? null;
+        const assigneeName = assignee
+          ? [assignee.firstName, assignee.lastName].filter(Boolean).join(' ').trim() || null
+          : null;
+
+        // overflowDays only for `overload`. We count calendar-day gap
+        // from the computed start back to baseDate when start < base.
+        let overflowDays: number | undefined;
+        if (s.infeasibleReason === 'overload' && s.startDate < baseDate) {
+          const diff = Math.ceil(
+            (baseDate.getTime() - this.stripTime(s.startDate).getTime()) / DAY_MS,
+          );
+          if (diff > 0) overflowDays = diff;
+        }
+
+        flaggedTasks.push({
+          taskId: s.taskId,
+          taskCode: meta.code,
+          taskName: meta.name,
+          deliverableId: t.id,
+          deliverableName: t.projectDeliverable?.name ?? '—',
+          zoneId: t.zone?.id ?? t.zoneId ?? null,
+          zoneName: t.zone?.name ?? null,
+          assigneeId: assignee?.id ?? null,
+          assigneeName,
+          budgetHours: meta.budgetHours != null ? Number(meta.budgetHours) : null,
+          estimatedStartDate: s.startDate ? s.startDate.toISOString().split('T')[0] : null,
+          endDate: s.endDate ? s.endDate.toISOString().split('T')[0] : null,
+          infeasibleReason: s.infeasibleReason,
+          overflowDays,
+          projectId: project.id,
+          projectName: project.name,
+        });
+      }
+    }
+
+    // De-dup — a single Task could appear once per deliverable scan
+    // if it lives under multiple targets. In practice Task → one
+    // (projectDeliverable, zone), so this is defensive.
+    const seen = new Set<number>();
+    const deduped: OverloadFlaggedTask[] = [];
+    for (const row of flaggedTasks) {
+      if (seen.has(row.taskId)) continue;
+      seen.add(row.taskId);
+      deduped.push(row);
+    }
+
+    return {
+      projectId: project.id,
+      projectName: project.name,
+      scannedDeliverables: targets.length,
+      flaggedTasks: deduped,
+    };
+  }
+
+  /**
+   * Aggregated variant — iterate every active, non-archived project
+   * and run `scanProjectOverload` on each. The result's rows carry
+   * `projectId`/`projectName` already (populated by the per-project
+   * call), so the dashboard can group by project without a second
+   * lookup.
+   */
+  async scanAllActiveOverload(): Promise<AllOverloadScanResult> {
+    const projects = await this.prisma.project.findMany({
+      where: { status: 'active', isArchived: false },
+      select: { id: true },
+      orderBy: { id: 'asc' },
+    });
+
+    let scannedDeliverables = 0;
+    const flaggedTasks: OverloadFlaggedTask[] = [];
+    for (const p of projects) {
+      try {
+        const res = await this.scanProjectOverload(p.id);
+        scannedDeliverables += res.scannedDeliverables;
+        flaggedTasks.push(...res.flaggedTasks);
+      } catch (err) {
+        this.logger.warn(
+          `scanAllActiveOverload: skipped projectId=${p.id} — ${(err as Error).message}`,
+        );
+      }
+    }
+
+    return {
+      scannedProjects: projects.length,
+      scannedDeliverables,
+      flaggedTasks,
+    };
   }
 
   private async scheduleDeliverable(

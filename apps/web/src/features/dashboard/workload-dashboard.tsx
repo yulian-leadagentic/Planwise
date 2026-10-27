@@ -6,6 +6,9 @@ import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
+import { useNavigateWithReturn } from '@/components/nav/return-route';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
+import { OverloadTasksPanel } from './parts/overload-tasks-panel';
 
 function getUtilColor(pct: number): string {
   if (pct === 0) return 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500';
@@ -41,6 +44,8 @@ export function WorkloadDashboardPage() {
 export function WorkloadPanel() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [viewMode, setViewMode] = useState<'utilization' | 'hours'>('utilization');
+  const navWithReturn = useNavigateWithReturn();
+  const { openDrawer: setDrawerTaskId } = useDrawerRoute('task');
 
   const weekStart = useMemo(() => {
     const today = new Date();
@@ -131,6 +136,14 @@ export function WorkloadPanel() {
           <button onClick={() => setViewMode('hours')} className={cn('px-3 py-1 rounded-md text-[12px] font-semibold', viewMode === 'hours' ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400')}>Hours</button>
         </div>
       </div>
+
+      {/* D3 · Overload Tasks — scheduler-flagged infeasibilities across
+          every active project. Sits above the utilization table so a PM
+          sees "who is stuck right now" before scanning the week grid. */}
+      <OverloadTasksPanel
+        onOpenTask={(taskId) => setDrawerTaskId(taskId)}
+        onOpenProject={(projectId) => navWithReturn(`/projects/${projectId}`, 'Workload')}
+      />
 
       {/* Utilization Table */}
       <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">

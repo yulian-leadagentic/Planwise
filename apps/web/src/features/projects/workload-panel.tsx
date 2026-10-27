@@ -4,9 +4,12 @@ import { Users, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import client from '@/api/client';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
+import { useDrawerRoute } from '@/components/nav/use-drawer-route';
+import { OverloadTasksPanel } from '@/features/dashboard/parts/overload-tasks-panel';
 
 export function WorkloadPanel({ projectId }: { projectId: number }) {
   const [weekOffset, setWeekOffset] = useState(0);
+  const { openDrawer: setDrawerTaskId } = useDrawerRoute('task');
 
   const weekStart = useMemo(() => {
     const today = new Date();
@@ -39,6 +42,14 @@ export function WorkloadPanel({ projectId }: { projectId: number }) {
           <button onClick={() => setWeekOffset((o) => o + 1)} className="rounded-md p-1 hover:bg-slate-100 dark:hover:bg-slate-800"><ChevronRight className="h-4 w-4" /></button>
         </div>
       </div>
+
+      {/* D3 · Overload Tasks — scheduler-flagged infeasibilities inside
+          THIS project. Keep above the utilization table so an at-risk
+          task is visible even when the week heat-map looks calm. */}
+      <OverloadTasksPanel
+        projectId={projectId}
+        onOpenTask={(taskId) => setDrawerTaskId(taskId)}
+      />
 
       {isLoading ? (
         <div className="py-6 text-center text-sm text-slate-400 dark:text-slate-500">Loading workload...</div>
