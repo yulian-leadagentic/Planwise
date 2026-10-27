@@ -2140,6 +2140,14 @@ export class ProjectsService {
   }
 
   async addDependency(taskId: number, dependsOnId: number) {
+    // TODO(D6 · scheduling auto-reschedule) — adding/removing a
+    // TaskDependency re-shapes the DAG the scheduler walks. For v1
+    // the PM re-runs "Save & update due dates" manually (spec §D6
+    // defers auto-wiring until the manual flow validates); when a
+    // trigger is approved, call SchedulerService.saveAndUpdateDueDates
+    // for the parent project after the write commits — mirror in
+    // `removeDependency` below.
+
     // Prevent self-dependency
     if (taskId === dependsOnId) throw new BadRequestException('Task cannot depend on itself');
     // Prevent circular (A→B→A)
@@ -2155,6 +2163,8 @@ export class ProjectsService {
   }
 
   async removeDependency(taskId: number, dependsOnId: number) {
+    // TODO(D6 · scheduling auto-reschedule) — see note on
+    // `addDependency` above.
     await this.prisma.taskDependency.delete({
       where: { taskId_dependsOnId: { taskId, dependsOnId } },
     });

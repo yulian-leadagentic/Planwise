@@ -214,6 +214,14 @@ export class ProjectDeliverablesService {
    *  pair. `durationWeeks` is CALENDAR days used by the Gantt to draw the
    *  bar from target − N days → target. Pass undefined to leave the
    *  existing duration untouched, `null` to clear it. */
+  // TODO(D6 · scheduling auto-reschedule) — a deliverable targetDate
+  // change is the PRIMARY event that invalidates the downstream task
+  // schedule (the T3 scheduler's backward pass anchors to this date).
+  // For v1 the PM re-runs "Save & update due dates" manually; a future
+  // auto-trigger should call SchedulerService.saveAndUpdateDueDates
+  // (or a scoped-to-this-deliverable variant) after this write commits
+  // — same hook point in `batchSetTargets` below. Scope approval: see
+  // `planwise-scheduling-engine-SPEC.md §D6` (manual-only for now).
   async setTarget(
     id: number,
     months: number | null,
@@ -246,6 +254,16 @@ export class ProjectDeliverablesService {
    *  date onto every task in that (zone, deliverable) that hasn't
    *  been manually overridden. Returns the list of tasks that WERE
    *  overridden so the UI can prompt the PM. */
+  // TODO(D6 · scheduling auto-reschedule) — same note as `setTarget`:
+  // batching N target changes still invalidates N downstream task
+  // schedules. The Deliverable Planning tab's "Save & update due
+  // dates" button already pairs this write with a call to
+  // `SchedulerService.saveAndUpdateDueDates(projectId)` from the FE;
+  // the "plain Save" button intentionally does NOT. A future auto-
+  // trigger would move that chaining server-side here so writes from
+  // other surfaces (API clients, imports, scripts) get the same
+  // behavior without each caller having to remember to call the
+  // scheduler. Pending scope approval (see spec §D6).
   async batchSetTargets(
     items: {
       id: number;

@@ -564,6 +564,27 @@ export class TasksService {
   async update(id: number, dto: UpdateTaskDto, userId?: number) {
     const existing = await this.findOne(id);
 
+    // TODO(D6 · scheduling auto-reschedule) — the spec identifies four
+    // events that should trigger a project-wide reschedule once Yulian
+    // approves the automatic-trigger scope:
+    //   1. ProjectDeliverable / ZoneDeliverableTarget `targetDate` change
+    //      (see project-deliverables.service.ts `setTarget` + `batchSetTargets`).
+    //   2. TaskDependency add/remove or Task.sortOrder change (T1 path).
+    //   3. TaskAssignee add/remove (see `addAssignee`/`removeAssignee` below).
+    //   4. Task `budgetHours` change (duration derives from budgetHours /
+    //      dailyStandardHours — this method accepts dto.budgetHours).
+    //
+    // Current status: for v1 the only path is MANUAL — the PM clicks
+    // "Save & update due dates" on the Deliverable Planning tab, which
+    // calls `SchedulerService.saveAndUpdateDueDates`. The three bullets
+    // above are IDENTIFIED hook points only; wiring an event emitter →
+    // scheduler listener is deferred until the manual flow has run in
+    // production (D6 note in the spec: "אוטומטי — לאשר היקף מול Yulian").
+    // When wiring lands, call the scheduler via its service here
+    // AFTER the write transaction commits (NestJS lifecycle hook on
+    // updated: or an INestEvent subscriber), filtering on
+    // `dto.budgetHours !== undefined`.
+
     // Core-task guardrail (relaxed 2026-08-31, QA3 · task-add). The
     // only invariant left is that a non-personal task resolves to a
     // project — via `zoneId` or (project-root) `projectId`. Everything
@@ -789,6 +810,16 @@ export class TasksService {
   async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }, actorId?: number) {
     await this.findOne(taskId);
 
+    // TODO(D6 · scheduling auto-reschedule) — assignee changes shift
+    // the task's effective daily capacity (resolveWorkingDaysDuration
+    // reads the FIRST assignee's dailyStandardHours), and resource
+    // leveling groups by assigneeId. Either change may invalidate the
+    // existing estimatedStartDate/endDate. For v1 the PM re-runs
+    // "Save & update due dates" manually; a future auto-trigger
+    // should call SchedulerService.saveAndUpdateDueDates(projectId) —
+    // or a scoped per-deliverable variant — after this write commits.
+    // Mirror in `removeAssignee` below.
+
     // Defensive: never assign to an inactive (deactivated) user. The UI
     // already filters them out of the picker (since 2026-06-21), but a
     // stale page, a scripted call, or an out-of-band request could still
@@ -876,6 +907,12 @@ export class TasksService {
   }
 
   async removeAssignee(taskId: number, userId: number, actorId?: number) {
+    // TODO(D6 · scheduling auto-reschedule) — mirror of addAssignee
+    // above: unassigning the first assignee flips the task's duration
+    // model to the org-default dailyStandardHours and removes it from
+    // the per-assignee leveling bucket. Defer auto-trigger until the
+    // manual Save-&-update flow is validated.
+
     // Capture context BEFORE delete so the activity log entry has the
     // assignee's name and the parent task's project.
     const [taskRow, assignee] = await Promise.all([
