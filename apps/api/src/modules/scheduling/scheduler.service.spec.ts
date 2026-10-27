@@ -69,6 +69,17 @@ function makePrisma(fixture: {
   };
   holidays?: Array<{ date: Date; type: string; workingHours: number | null }>;
   weeklyRestDays?: number[] | null;
+  /**
+   * Per-user WorkSchedule rows used by D2 resource leveling. The
+   * fixture lookup matches on `userId` + `isActive=true`; if no row
+   * exists the service falls back to the task's dailyStandardHours.
+   */
+  workSchedules?: Array<{
+    userId: number;
+    shiftStart: string;
+    shiftEnd: string;
+    breakMinutes: number;
+  }>;
 }) {
   const updates: Array<{ id: number; data: any }> = [];
   const prisma: any = {
@@ -103,6 +114,13 @@ function makePrisma(fixture: {
     hrSettings: {
       findFirst: jest.fn().mockResolvedValue({
         weeklyRestDays: fixture.weeklyRestDays ?? [5, 6],
+      }),
+    },
+    workSchedule: {
+      findFirst: jest.fn().mockImplementation(({ where }: any) => {
+        const rows = fixture.workSchedules ?? [];
+        const row = rows.find((r) => r.userId === where?.userId);
+        return Promise.resolve(row ?? null);
       }),
     },
     $transaction: jest.fn().mockImplementation(async (fn: any) => fn(prisma)),
@@ -177,11 +195,13 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
   // ─── Test 2 ────────────────────────────────────────────────────────
   //
   // Fork: 1 → {2, 3} → 4. Each task 2 working days. Anchor Tue 11-10.
-  // Weekly rest [5, 6] (Fri + Sat). D1 gap = 1 working day:
+  // Weekly rest [5, 6] (Fri + Sat). D1 gap = 1 working day.
+  // Branch tasks 2 and 3 use DIFFERENT assignees (10, 20) so D2
+  // resource leveling does NOT push them apart — we're isolating the
+  // dependency-gap rule here.
   //   • task 4: end Tue 11-10, start Mon 11-09.
   //   • task 2 and 3: both end = prevWorkingDay(Mon 11-09) = Sun 11-08;
-  //     walkBack 2 wd across Fri/Sat → start Thu 11-05. Same dates
-  //     because they're independent branches.
+  //     walkBack 2 wd across Fri/Sat → start Thu 11-05.
   //   • task 1: end = prevWorkingDay(min(2.start, 3.start)) =
   //     prevWorkingDay(Thu 11-05) = Wed 11-04; walkBack 2 wd → Tue 11-03.
   it('dependency fork 1 → {2, 3} → 4: branches hand off with 1-wd gap', async () => {
@@ -189,8 +209,16 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
 
     const tasks = [
       makeTask({ id: 1, budgetHours: 16 }),
-      makeTask({ id: 2, budgetHours: 16 }),
-      makeTask({ id: 3, budgetHours: 16 }),
+      makeTask({
+        id: 2,
+        budgetHours: 16,
+        assignees: [{ user: { id: 10, dailyStandardHours: 8 } }],
+      }),
+      makeTask({
+        id: 3,
+        budgetHours: 16,
+        assignees: [{ user: { id: 20, dailyStandardHours: 8 } }],
+      }),
       makeTask({ id: 4, budgetHours: 16 }),
     ];
     const deps = [
@@ -314,6 +342,9 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
   // handoff: both predecessors end at prevWorkingDay(successor.start),
   // regardless of their individual durations.
   //
+  // Branches 1 and 2 use DIFFERENT assignees (10, 20) so D2 leveling
+  // doesn't push the shorter branch earlier — this test isolates D1.
+  //
   // Shape:  A(16h, 2 wd)  ─┐
   //                        ├─▶  C(8h, 1 wd)   anchor Tue 11-10
   //         B(8h,  1 wd)  ─┘
@@ -321,9 +352,17 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
     const target = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
 
     const tasks = [
-      makeTask({ id: 1, budgetHours: 16 }), // 2 wd
-      makeTask({ id: 2, budgetHours: 8 }),  // 1 wd
-      makeTask({ id: 3, budgetHours: 8 }),  // 1 wd — terminal
+      makeTask({
+        id: 1,
+        budgetHours: 16, // 2 wd
+        assignees: [{ user: { id: 10, dailyStandardHours: 8 } }],
+      }),
+      makeTask({
+        id: 2,
+        budgetHours: 8, // 1 wd
+        assignees: [{ user: { id: 20, dailyStandardHours: 8 } }],
+      }),
+      makeTask({ id: 3, budgetHours: 8 }), // 1 wd — terminal, assignee 1
     ];
     const deps = [
       { taskId: 3, dependsOnId: 1 },
@@ -399,5 +438,175 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
     expect(out.feasibility.earliestForwardFinish).not.toBeNull();
     expect(out.feasibility.overflowDays).toBeGreaterThan(5);
     expect(out.feasibility.status).toBe('infeasible');
+  });
+
+  // ─── D2 · Test 1 ───────────────────────────────────────────────────
+  //
+  // Resource leveling: two 4-hour tasks for the SAME assignee share the
+  // same anchor day → both fit inside 8h capacity → both keep their
+  // backward-pass startDate (anchor). No WorkSchedule fixture → the
+  // service falls back to dailyStandardHours×60 = 480 min.
+  it('D2 · two 4h tasks for same assignee on same anchor day fit in one 8h day', async () => {
+    const target = new Date(Date.UTC(2026, 10, 2)); // Mon 2026-11-02
+
+    const tasks = [
+      makeTask({ id: 1, budgetHours: 4 }),
+      makeTask({ id: 2, budgetHours: 4 }),
+    ];
+    const { prisma } = makePrisma({
+      tasks,
+      deps: [],
+      deliverable: { id: 11, targetDate: target, zoneId: 1, projectDeliverableId: 11 },
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 11 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-02');
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-02');
+    // 4 + 4 ≤ 8 → both start on the anchor day.
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-02');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-02');
+    expect(byId.get(1)!.infeasible).toBeFalsy();
+    expect(byId.get(2)!.infeasible).toBeFalsy();
+  });
+
+  // ─── D2 · Test 2 ───────────────────────────────────────────────────
+  //
+  // Two 6-hour tasks for the SAME assignee ending on anchor → total 12h
+  // > 8h capacity → the SECOND task (sorted by id asc at the tie) spills
+  // 240 min back to the previous working day (Mon 11-09, since Sun 11-08
+  // is a Sunday — rest day under [5,6]? No! [5,6]=Fri+Sat so Sun IS a
+  // working day). Prev working day of Tue 11-10 under [5,6] is Mon 11-09.
+  it('D2 · two 6h tasks for same assignee spill the second to the previous working day', async () => {
+    const target = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+
+    const tasks = [
+      makeTask({ id: 1, budgetHours: 6 }),
+      makeTask({ id: 2, budgetHours: 6 }),
+    ];
+    const { prisma } = makePrisma({
+      tasks,
+      deps: [],
+      deliverable: { id: 12, targetDate: target, zoneId: 1, projectDeliverableId: 12 },
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 12 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-10');
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-10');
+
+    // Sort tie: id=1 first → fills 360 min on 11-10 (remaining 120).
+    // id=2 next: places 120 on 11-10 (used=480), spills 240 to 11-09.
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-10');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-09');
+    expect(byId.get(1)!.infeasible).toBeFalsy();
+    expect(byId.get(2)!.infeasible).toBeFalsy();
+  });
+
+  // ─── D2 · Test 3 ───────────────────────────────────────────────────
+  //
+  // Three 4h tasks on the same anchor day for the same assignee → the
+  // first two fit (8h), the third (id=3) spills back one working day.
+  it('D2 · three 4h tasks spill the third task to the previous working day', async () => {
+    const target = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+
+    const tasks = [
+      makeTask({ id: 1, budgetHours: 4 }),
+      makeTask({ id: 2, budgetHours: 4 }),
+      makeTask({ id: 3, budgetHours: 4 }),
+    ];
+    const { prisma } = makePrisma({
+      tasks,
+      deps: [],
+      deliverable: { id: 13, targetDate: target, zoneId: 1, projectDeliverableId: 13 },
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 13 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-10');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-10');
+    expect(iso(byId.get(3)!.startDate)).toBe('2026-11-09'); // spilled
+    expect(byId.get(3)!.infeasible).toBeFalsy();
+  });
+
+  // ─── D2 · Test 4 ───────────────────────────────────────────────────
+  //
+  // Overload beyond baseDate flags `infeasible: 'overload'`.
+  // projectStart = anchor = Mon 11-02 → baseDate = projectStart =
+  // 2026-11-02 (projectStart is after today 2026-10-27). Two full-day
+  // tasks (8h each) end on anchor → task 2 overflow walks to Sun 11-01
+  // which is BELOW baseDate → infeasible flag.
+  it('D2 · overload beyond baseDate flags infeasible with reason=overload', async () => {
+    const target = new Date(Date.UTC(2026, 10, 2));         // Mon 2026-11-02
+    const projectStart = new Date(Date.UTC(2026, 10, 2));   // same day → baseDate=11-02
+
+    const tasks = [
+      makeTask({ id: 1, budgetHours: 8 }),
+      makeTask({ id: 2, budgetHours: 8 }),
+    ];
+    const { prisma } = makePrisma({
+      tasks,
+      deps: [],
+      deliverable: {
+        id: 14,
+        targetDate: target,
+        zoneId: 1,
+        projectDeliverableId: 14,
+        projectStartDate: projectStart,
+      },
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 14 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    // Task 1 fits exactly on anchor day.
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-02');
+    expect(byId.get(1)!.infeasible).toBeFalsy();
+
+    // Task 2 overflows → walks back and lands below baseDate →
+    // infeasible. We don't pin its exact startDate (the engine exposes
+    // the below-baseDate cursor), only the flag.
+    expect(byId.get(2)!.infeasible).toBe(true);
+    expect(byId.get(2)!.infeasibleReason).toBe('overload');
+  });
+
+  // ─── D2 · Test 5 — WorkSchedule capacity ───────────────────────────
+  //
+  // When a WorkSchedule row exists for the assignee it OVERRIDES the
+  // dailyStandardHours fallback. Row: 08:00-17:00, break 60 min = 480
+  // min/day. Two 4h tasks → fit in one day. Add a third 4h task → the
+  // third spills (same as D2·Test 3 but via the WorkSchedule path).
+  it('D2 · WorkSchedule row sets capacity (shiftEnd − shiftStart − break)', async () => {
+    const target = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+
+    const tasks = [
+      makeTask({ id: 1, budgetHours: 4 }),
+      makeTask({ id: 2, budgetHours: 4 }),
+      makeTask({ id: 3, budgetHours: 4 }),
+    ];
+    const { prisma } = makePrisma({
+      tasks,
+      deps: [],
+      deliverable: { id: 15, targetDate: target, zoneId: 1, projectDeliverableId: 15 },
+      workSchedules: [
+        {
+          userId: 1,
+          shiftStart: '08:00',
+          shiftEnd: '17:00',
+          breakMinutes: 60,
+        },
+      ],
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 15 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    // 9h − 1h break = 8h/day. Same spill behavior as D2·Test 3.
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-10');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-10');
+    expect(iso(byId.get(3)!.startDate)).toBe('2026-11-09');
   });
 });

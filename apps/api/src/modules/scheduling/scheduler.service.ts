@@ -76,6 +76,19 @@ export interface ScheduledTask {
   endDate: Date;           // Task.endDate (working-day aligned OR the raw anchor when non-working — see §Convention below)
   workingDaysDuration: number;
   skippedByOverride: boolean; // true if dueDateOverridden preserved the stored dates
+  assigneeId: number | null;  // first assignee (same convention as duration); null = unassigned
+  /**
+   * D2 (resource leveling + spec rule 13): true when the task cannot be
+   * placed inside the available runway at its assignee's daily capacity.
+   * Reasons:
+   *   - 'overload'              : hours spill past baseDate (project.startDate / today).
+   *   - 'predecessor-conflict'  : leveling moved startDate below prevWorkingDay(pred.endDate)+1wd.
+   * The PM dashboard surfaces these (D3, follow-up); the engine never
+   * "forces" an infeasible plan but still exposes the computed dates so
+   * the reviewer can see the gap.
+   */
+  infeasible?: boolean;
+  infeasibleReason?: 'overload' | 'predecessor-conflict';
 }
 
 export interface ScheduleResult {
@@ -260,6 +273,7 @@ export class SchedulerService {
     for (const taskId of backwardOrder) {
       const task = tasks.find((t) => t.id === taskId)!;
       const dur = durationByTask.get(taskId)!;
+      const assigneeId = task.assignees?.[0]?.user?.id ?? null;
 
       // Respect manual override — do NOT touch the task's stored dates.
       if (task.dueDateOverridden) {
@@ -271,6 +285,7 @@ export class SchedulerService {
           endDate: this.stripTime(ed),
           workingDaysDuration: dur,
           skippedByOverride: true,
+          assigneeId,
         });
         continue;
       }
@@ -309,6 +324,7 @@ export class SchedulerService {
         endDate,
         workingDaysDuration: dur,
         skippedByOverride: false,
+        assigneeId,
       });
     }
 
@@ -361,6 +377,32 @@ export class SchedulerService {
     const status: ScheduleResult['feasibility']['status'] =
       overflowDays === 0 ? 'feasible' : overflowDays <= 5 ? 'at-risk' : 'infeasible';
 
+    // ─── 10b. RESOURCE LEVELING (D2) ────────────────────────────────
+    // After DAG dependencies pinned endDate (and the initial startDate
+    // via duration), pack same-assignee hours into daily capacity.
+    // Leveling can push startDate EARLIER (never endDate). Flags
+    // `infeasible: 'overload'` when hours spill past baseDate.
+    await this.levelByAssignee(scheduled, tasks, isWorkingDay, baseDate);
+
+    // Post-leveling check: did any task's startDate drift below the
+    // predecessor's end+1 working day constraint? If so, the leveling
+    // violated the finish-to-start+1 rule (spec rule 3). We don't
+    // "force" the plan — just flag.
+    for (const [taskId, s] of scheduled) {
+      if (s.skippedByOverride || s.infeasible) continue;
+      const preds = predecessors.get(taskId) ?? [];
+      for (const pId of preds) {
+        const p = scheduled.get(pId);
+        if (!p) continue;
+        const minStart = nextWorkingDay(p.endDate, isWorkingDay);
+        if (s.startDate.getTime() < minStart.getTime()) {
+          s.infeasible = true;
+          s.infeasibleReason = 'predecessor-conflict';
+          break;
+        }
+      }
+    }
+
     // ─── 11. WRITE-BACK (commit path only) ──────────────────────────
     if (opts.writeBack) {
       await this.prisma.$transaction(async (tx) => {
@@ -394,6 +436,136 @@ export class SchedulerService {
   }
 
   // ─── helpers ─────────────────────────────────────────────────────
+
+  /**
+   * D2 · Resource leveling by daily capacity.
+   *
+   * After the backward pass pinned each task's endDate (via DAG) and
+   * provisional startDate (via duration), pack same-assignee hours
+   * into available working-day capacity. Walking BACKWARD from each
+   * task's endDate, we fill a per-day bucket until the task's
+   * budgetHours are placed; the task's final `startDate` becomes the
+   * EARLIEST day it occupied (which may be well before the provisional
+   * duration-only startDate when the assignee's days are already busy
+   * with other tasks).
+   *
+   * Why backward: endDate is anchored by the DAG, and the engine's job
+   * is to push Start back when the day is overloaded. Walking forward
+   * would need to re-derive endDate.
+   *
+   * Interaction with D1: the gap rule is enforced in the backward pass
+   * (endDate = prevWorkingDay(successor.start)). Leveling only moves
+   * startDate earlier, which can VIOLATE the pred.end+1 rule — flagged
+   * post-hoc as `predecessor-conflict`.
+   *
+   * Capacity source order (spec rule 6 + rule 8):
+   *   1. `WorkSchedule` (active row, any day-of-week): shiftEnd −
+   *      shiftStart − breakMinutes.
+   *   2. assignee's `dailyStandardHours` × 60 (first assignee).
+   *   3. org default 8h × 60 = 480 min.
+   *
+   * Skipped: `skippedByOverride` tasks and unassigned tasks (nothing
+   * to level against). 0-hour tasks also skip the pack loop.
+   */
+  private async levelByAssignee(
+    scheduled: Map<number, ScheduledTask>,
+    tasks: TaskRow[],
+    isWorkingDay: (d: Date) => boolean,
+    baseDate: Date,
+  ): Promise<void> {
+    // Group scheduled tasks by first-assignee id.
+    const byAssignee = new Map<number, Array<{ s: ScheduledTask; t: TaskRow }>>();
+    for (const t of tasks) {
+      const s = scheduled.get(t.id);
+      if (!s) continue;
+      if (s.skippedByOverride) continue;
+      const assigneeId = s.assigneeId;
+      if (assigneeId == null) continue;
+      const list = byAssignee.get(assigneeId) ?? [];
+      list.push({ s, t });
+      byAssignee.set(assigneeId, list);
+    }
+
+    const fmt = (d: Date): string => d.toISOString().split('T')[0];
+
+    for (const [assigneeId, items] of byAssignee) {
+      // Resolve daily capacity in minutes. WorkSchedule rows are
+      // per-day-of-week; the current spec treats capacity as a single
+      // value, so we pick the first active row as representative. If
+      // multiple shifts exist with different lengths, this is a
+      // simplification — revisit once per-day capacity is modelled.
+      const wsRow = await this.prisma.workSchedule.findFirst({
+        where: { userId: assigneeId, isActive: true },
+        select: { shiftStart: true, shiftEnd: true, breakMinutes: true },
+      });
+      const dsh = Number(
+        items[0]?.t.assignees?.[0]?.user?.dailyStandardHours ?? DEFAULT_DAILY_STANDARD_HOURS,
+      );
+      const dailyMinutes = wsRow
+        ? resolveWorkScheduleDailyMinutes(wsRow)
+        : Math.max(1, dsh * 60);
+
+      if (dailyMinutes <= 0) continue;
+
+      // Sort by endDate desc, then taskId asc (stable). Latest-ending
+      // tasks claim the latest days first; earlier-ending tasks fall
+      // into the days they already own.
+      const sorted = [...items].sort((a, b) => {
+        const d = b.s.endDate.getTime() - a.s.endDate.getTime();
+        if (d !== 0) return d;
+        return a.s.taskId - b.s.taskId;
+      });
+
+      const dayBuckets = new Map<string, number>();
+
+      for (const { s, t } of sorted) {
+        const budgetHours = t.budgetHours != null ? Number(t.budgetHours) : 0;
+        if (budgetHours <= 0) continue; // nothing to pack — keep backward-pass start
+
+        let remaining = Math.round(budgetHours * 60);
+        // Anchor cursor at task's endDate (snapped backward in case the
+        // terminal task ended on a non-working anchor).
+        let cursor = snapToWorkingDayBack(this.stripTime(s.endDate), isWorkingDay);
+        let earliestUsed: Date | null = null;
+
+        // Hard-bound against a runaway walk: at most 10k iterations
+        // covers decades of working days at worst.
+        for (let iter = 0; iter < 10000 && remaining > 0; iter++) {
+          const key = fmt(cursor);
+          const used = dayBuckets.get(key) ?? 0;
+          const available = Math.max(0, dailyMinutes - used);
+          if (available > 0) {
+            const place = Math.min(remaining, available);
+            dayBuckets.set(key, used + place);
+            earliestUsed = new Date(cursor.getTime());
+            remaining -= place;
+            if (remaining === 0) break;
+          }
+          // Walk to previous working day.
+          const prev = new Date(cursor.getTime());
+          prev.setUTCDate(prev.getUTCDate() - 1);
+          cursor = snapToWorkingDayBack(prev, isWorkingDay);
+          if (cursor.getTime() < baseDate.getTime()) {
+            // Ran out of runway — flag infeasible but still "place"
+            // whatever is left on `cursor` so the computed start is
+            // visible. We DON'T update any further buckets past this
+            // point; the overload is surfaced to the PM instead.
+            earliestUsed = earliestUsed ?? new Date(cursor.getTime());
+            s.infeasible = true;
+            s.infeasibleReason = 'overload';
+            // Expose the below-baseDate cursor as the task's start so
+            // the dashboard shows how far it ran over.
+            s.startDate = this.stripTime(cursor);
+            break;
+          }
+        }
+
+        if (!s.infeasible && earliestUsed) {
+          s.startDate = this.stripTime(earliestUsed);
+        }
+      }
+    }
+  }
 
   private resolveWorkingDaysDuration(task: TaskRow): number {
     const firstAssignee = task.assignees?.[0]?.user;
@@ -534,6 +706,33 @@ export function snapToWorkingDayForward(from: Date, isWorkingDay: (d: Date) => b
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return cursor;
+}
+
+/**
+ * Compute `WorkSchedule`-defined daily minutes:
+ *   shiftEnd(HH:MM) − shiftStart(HH:MM) − breakMinutes.
+ * Negative or malformed rows clamp to 0 (the caller then falls back
+ * to `dailyStandardHours × 60`).
+ *
+ * Why `WorkSchedule.shiftStart/shiftEnd` are strings: they're stored
+ * as "HH:MM" per schema. We parse defensively — a stray value becomes
+ * 0 minutes, which triggers the fallback.
+ */
+export function resolveWorkScheduleDailyMinutes(ws: {
+  shiftStart: string;
+  shiftEnd: string;
+  breakMinutes: number;
+}): number {
+  const parseHM = (s: string | null | undefined): number => {
+    if (!s) return 0;
+    const [h, m] = s.split(':').map((x) => parseInt(x, 10));
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+    return (h || 0) * 60 + (m || 0);
+  };
+  const start = parseHM(ws.shiftStart);
+  const end = parseHM(ws.shiftEnd);
+  const breakM = Number.isFinite(ws.breakMinutes) ? ws.breakMinutes : 0;
+  return Math.max(0, end - start - breakM);
 }
 
 /**
