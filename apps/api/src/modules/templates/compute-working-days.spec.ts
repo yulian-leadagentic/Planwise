@@ -11,8 +11,27 @@ import {
 // cycle. 1-day finish-to-start gap per
 // `docs/bm2/planwise-scheduling-business-rules-LOCKED.md` §3.
 describe('computeFastestWorkingDays', () => {
-  it('returns 0 for an empty template', () => {
-    expect(computeFastestWorkingDays([], [])).toBe(0);
+  it('returns null for an empty template', () => {
+    // bm2 (2026-10-28, "no hours = no measure") — a template with
+    // no tasks has no measure to display; null lets the FE hide the
+    // chip rather than render "~0 working days".
+    expect(computeFastestWorkingDays([], [])).toBeNull();
+  });
+
+  it('returns null when every task has null / zero / missing budgetHours', () => {
+    // The real screenshot the user reported: 6 tasks, all `-`
+    // (NULL budgetHours) → the old formula collapsed to just the
+    // (N-1) gap days, producing "Slowest ~5" nonsense. Both fns
+    // now bail with null.
+    const tasks: SwdTask[] = [
+      { id: 1, budgetHours: null },
+      { id: 2, budgetHours: undefined },
+      { id: 3, budgetHours: 0 },
+      { id: 4, budgetHours: null },
+      { id: 5, budgetHours: null },
+      { id: 6, budgetHours: null },
+    ];
+    expect(computeFastestWorkingDays(tasks, [])).toBeNull();
   });
 
   it('linear chain: 3 tasks of 8h with 1-day gap → ceil(5) = 5 days', () => {
@@ -114,8 +133,23 @@ describe('computeFastestWorkingDays', () => {
 // "worst-case solo operator" number that pairs with the Fastest
 // critical-path calc above.
 describe('computeSlowestWorkingDays', () => {
-  it('returns 0 for an empty template', () => {
-    expect(computeSlowestWorkingDays([])).toBe(0);
+  it('returns null for an empty template', () => {
+    expect(computeSlowestWorkingDays([])).toBeNull();
+  });
+
+  it('returns null when every task has null / zero / missing budgetHours', () => {
+    // Mirror of the "no hours = no measure" case for the slowest
+    // calc: the (N-1) gap-day term alone used to produce a bogus
+    // "~5 working days" for 6 unestimated tasks.
+    const tasks: SwdTask[] = [
+      { id: 1, budgetHours: null },
+      { id: 2, budgetHours: undefined },
+      { id: 3, budgetHours: 0 },
+      { id: 4, budgetHours: null },
+      { id: 5, budgetHours: null },
+      { id: 6, budgetHours: null },
+    ];
+    expect(computeSlowestWorkingDays(tasks)).toBeNull();
   });
 
   it('single 8h task → 1 day', () => {
@@ -163,9 +197,19 @@ describe('computeSlowestWorkingDays', () => {
 // everything is serial they should agree, when everything is
 // parallel they should diverge.
 describe('fastest vs slowest', () => {
-  it('empty → both 0', () => {
-    expect(computeFastestWorkingDays([], [])).toBe(0);
-    expect(computeSlowestWorkingDays([])).toBe(0);
+  it('empty → both null', () => {
+    expect(computeFastestWorkingDays([], [])).toBeNull();
+    expect(computeSlowestWorkingDays([])).toBeNull();
+  });
+
+  it('all-null hours → both null (FE hides the chip)', () => {
+    const tasks: SwdTask[] = [
+      { id: 1, budgetHours: null },
+      { id: 2, budgetHours: null },
+      { id: 3, budgetHours: null },
+    ];
+    expect(computeFastestWorkingDays(tasks, [])).toBeNull();
+    expect(computeSlowestWorkingDays(tasks)).toBeNull();
   });
 
   it('single 8h task → both 1', () => {

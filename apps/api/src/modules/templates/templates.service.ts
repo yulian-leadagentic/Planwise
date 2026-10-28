@@ -35,10 +35,18 @@ const CATALOG_LINKED_READONLY_FIELDS = [
 // numbers the templates screen surfaces; the real per-project
 // scheduler lives under modules/scheduling.
 //
-// Fastest returns 0 when there are no tasks or when the DAG has a
-// cycle (defensive: the write-side `setTaskPredecessors` guard
-// already rejects new cycles, but a template that pre-dates that
-// guard cannot be allowed to crash a list fetch).
+// bm2 (2026-10-28, "no hours = no measure") — Both calcs return
+// `null` when the template has no tasks OR when every task's
+// `budgetHours` is missing / zero. The old behavior (return 0)
+// produced "Slowest ~5 working days" for a 6-task template with
+// all NULL hours — nonsense, since the "sum/8 + (N-1)" formula
+// collapsed to just the (N-1) gap days. Returning null lets the
+// FE hide the chip entirely for the "we don't know yet" case.
+//
+// Fastest also returns 0 (not null) when a cycle breaks the DAG
+// forward pass — the hours are real, we just couldn't compute a
+// critical path. Keeping that distinct from null preserves the
+// existing cycle-detection test.
 const STANDARD_DAY_HOURS = 8.0;
 const workingDaysLogger = new Logger('computeFastestWorkingDays');
 export interface SwdTask {
@@ -51,11 +59,21 @@ export interface SwdEdge {
   // The task it depends on (predecessor).
   dependsOnTemplateTaskId: number;
 }
+// Shared "has any real hours?" predicate so both compute fns agree
+// on what counts as "no measure" (null / undefined / non-finite / <= 0).
+function hasAnyBudgetedHours(tasks: readonly SwdTask[]): boolean {
+  for (const t of tasks) {
+    const h = Number(t.budgetHours ?? 0);
+    if (Number.isFinite(h) && h > 0) return true;
+  }
+  return false;
+}
 export function computeFastestWorkingDays(
   tasks: readonly SwdTask[],
   edges: readonly SwdEdge[],
-): number {
-  if (!tasks || tasks.length === 0) return 0;
+): number | null {
+  if (!tasks || tasks.length === 0) return null;
+  if (!hasAnyBudgetedHours(tasks)) return null;
 
   // Per-task duration in days. Null/missing budgetHours → 0, which
   // keeps the task in the DAG but adds nothing to its chain length.
@@ -131,8 +149,14 @@ export function computeFastestWorkingDays(
 // Dependency edges don't matter here; this is the upper-bound
 // "worst-case solo operator" number that pairs with the Fastest
 // critical-path calc above.
-export function computeSlowestWorkingDays(tasks: readonly SwdTask[]): number {
-  if (!tasks || tasks.length === 0) return 0;
+//
+// Returns `null` when there are no tasks or none has any real
+// `budgetHours`. Otherwise the (N-1) gap-day term would produce
+// a non-zero figure for a template with ALL-NULL hours, which the
+// user flagged as nonsense ("אין שעות = אין מידה").
+export function computeSlowestWorkingDays(tasks: readonly SwdTask[]): number | null {
+  if (!tasks || tasks.length === 0) return null;
+  if (!hasAnyBudgetedHours(tasks)) return null;
   const sum = tasks.reduce((s, t) => {
     const h = Number(t.budgetHours ?? 0);
     return s + (Number.isFinite(h) && h > 0 ? h : 0);

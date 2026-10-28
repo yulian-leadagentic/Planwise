@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen, GripVertical, AlertTriangle, Lock } from 'lucide-react';
+import { Plus, ArrowLeft, Trash2, Copy, Search, X, BookOpen, GripVertical, AlertTriangle, Lock, Zap, Hourglass } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -872,21 +872,43 @@ function EditorView({
               {template.description && <p className="mt-1 text-sm text-muted-foreground">{template.description}</p>}
               <p className="mt-1 text-xs text-muted-foreground">
                 {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; Used {template.usageCount ?? 0} time{(template.usageCount ?? 0) !== 1 ? 's' : ''}
-                {(() => {
-                  // bm2 (2026-10-28) — surface both fastest (critical-path, min
-                  // completion with unlimited parallel resources) and slowest
-                  // (pure sequential) estimates so the user can see the range
-                  // at a glance. Hide the whole segment when neither is a
-                  // positive number (template has no tasks or no hours).
-                  const f = typeof template.fastestWorkingDays === 'number' ? template.fastestWorkingDays : 0;
-                  const s = typeof template.slowestWorkingDays === 'number' ? template.slowestWorkingDays : 0;
-                  if (f <= 0 && s <= 0) return null;
-                  const unit = f === 1 && s === 1 ? 'working day' : 'working days';
-                  return (
-                    <> &middot; Fastest ~{f} &middot; Slowest ~{s} {unit}</>
-                  );
-                })()}
               </p>
+              {(() => {
+                // bm2 (2026-10-28, "more prominent") — surface fastest
+                // (critical-path, min completion with unlimited parallel)
+                // and slowest (pure sequential) as colored pill badges on
+                // a new line so the range stands out from the subtle
+                // "N tasks · Used M times" caption above. Each pill hides
+                // itself when its value is <= 0 or non-numeric (the BE
+                // now returns `null` for the "no hours = no measure"
+                // case; the guard here keeps a defensive floor for
+                // legacy payloads).
+                const f = typeof template.fastestWorkingDays === 'number' ? template.fastestWorkingDays : null;
+                const s = typeof template.slowestWorkingDays === 'number' ? template.slowestWorkingDays : null;
+                if ((f == null || f <= 0) && (s == null || s <= 0)) return null;
+                return (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    {f != null && f > 0 && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-[5px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-2 py-0.5 text-[11px] font-bold tracking-[0.05em]"
+                        title={`Fastest completion (critical path, unlimited parallel): ~${f} working day${f === 1 ? '' : 's'}`}
+                      >
+                        <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        Fastest ~{f}d
+                      </span>
+                    )}
+                    {s != null && s > 0 && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-[5px] bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300 px-2 py-0.5 text-[11px] font-bold tracking-[0.05em]"
+                        title={`Slowest completion (pure sequential): ~${s} working day${s === 1 ? '' : 's'}`}
+                      >
+                        <Hourglass className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        Slowest ~{s}d
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
             <button onClick={startEditingHeader} className={btnSecondary}>Edit</button>
           </div>
@@ -1292,22 +1314,39 @@ export function DeliverableTemplatesPage() {
                   <span>{t._count?.templateTasks ?? 0} task{(t._count?.templateTasks ?? 0) !== 1 ? 's' : ''}</span>
                   <span>&middot;</span>
                   <span>Used {t.usageCount ?? 0} time{(t.usageCount ?? 0) !== 1 ? 's' : ''}</span>
-                  {(() => {
-                    // bm2 (2026-10-28) — fastest = critical-path (unlimited
-                    // parallel), slowest = pure sequential. See parent-page
-                    // callsite above for rationale.
-                    const f = typeof t.fastestWorkingDays === 'number' ? t.fastestWorkingDays : 0;
-                    const s = typeof t.slowestWorkingDays === 'number' ? t.slowestWorkingDays : 0;
-                    if (f <= 0 && s <= 0) return null;
-                    const unit = f === 1 && s === 1 ? 'working day' : 'working days';
-                    return (
-                      <>
-                        <span>&middot;</span>
-                        <span>Fastest ~{f} &middot; Slowest ~{s} {unit}</span>
-                      </>
-                    );
-                  })()}
                 </div>
+                {(() => {
+                  // bm2 (2026-10-28, "more prominent") — same pill badges
+                  // as the editor header. On the list row they sit under
+                  // the "N tasks · Used M times" caption so the range is
+                  // visible at a glance when scanning the deliverables
+                  // list, without crowding the main title row.
+                  const f = typeof t.fastestWorkingDays === 'number' ? t.fastestWorkingDays : null;
+                  const s = typeof t.slowestWorkingDays === 'number' ? t.slowestWorkingDays : null;
+                  if ((f == null || f <= 0) && (s == null || s <= 0)) return null;
+                  return (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {f != null && f > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-[5px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-2 py-0.5 text-[11px] font-bold tracking-[0.05em]"
+                          title={`Fastest completion (critical path, unlimited parallel): ~${f} working day${f === 1 ? '' : 's'}`}
+                        >
+                          <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          Fastest ~{f}d
+                        </span>
+                      )}
+                      {s != null && s > 0 && (
+                        <span
+                          className="inline-flex items-center gap-1 rounded-[5px] bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300 px-2 py-0.5 text-[11px] font-bold tracking-[0.05em]"
+                          title={`Slowest completion (pure sequential): ~${s} working day${s === 1 ? '' : 's'}`}
+                        >
+                          <Hourglass className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          Slowest ~{s}d
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
               <button
                 onClick={async (e) => {
