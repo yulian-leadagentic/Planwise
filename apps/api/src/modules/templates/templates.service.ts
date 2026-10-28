@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { extractServiceMarker } from '../planning/marker-phase-resolver';
 
@@ -13,6 +13,133 @@ const CATALOG_LINKED_READONLY_FIELDS = [
   'defaultBudgetHours',
   'defaultBudgetAmount',
 ] as const;
+
+// bm2 (2026-10-28) — Two template-level "working days" calculations
+// the Deliverable Templates screen surfaces side by side:
+//
+//   • Fastest = critical-path forward pass over the predecessor DAG,
+//     i.e. the minimum possible completion time with unlimited
+//     parallel resources. Takes each task's effective budget hours,
+//     divides by an 8h standard day for a fractional per-task
+//     duration, then runs a Kahn forward pass. The `+1` gap between
+//     a predecessor's end and a successor's start enforces the
+//     finish-to-start = 1 full working day rule locked in
+//     `docs/bm2/planwise-scheduling-business-rules-LOCKED.md` §3.
+//
+//   • Slowest = pure sequential execution — "what if we could only
+//     do one task at a time". `ceil(sum(budgetHours)/8 + (N-1) × 1
+//     gap day)`, ignoring the DAG entirely.
+//
+// Both deliberately ignore the calendar (holidays, weekends,
+// assignee capacity, project start) — these are the "pure standard"
+// numbers the templates screen surfaces; the real per-project
+// scheduler lives under modules/scheduling.
+//
+// Fastest returns 0 when there are no tasks or when the DAG has a
+// cycle (defensive: the write-side `setTaskPredecessors` guard
+// already rejects new cycles, but a template that pre-dates that
+// guard cannot be allowed to crash a list fetch).
+const STANDARD_DAY_HOURS = 8.0;
+const workingDaysLogger = new Logger('computeFastestWorkingDays');
+export interface SwdTask {
+  id: number;
+  budgetHours: number | null | undefined;
+}
+export interface SwdEdge {
+  // The task that depends on another (successor).
+  templateTaskId: number;
+  // The task it depends on (predecessor).
+  dependsOnTemplateTaskId: number;
+}
+export function computeFastestWorkingDays(
+  tasks: readonly SwdTask[],
+  edges: readonly SwdEdge[],
+): number {
+  if (!tasks || tasks.length === 0) return 0;
+
+  // Per-task duration in days. Null/missing budgetHours → 0, which
+  // keeps the task in the DAG but adds nothing to its chain length.
+  const duration = new Map<number, number>();
+  for (const t of tasks) {
+    const hours = Number(t.budgetHours ?? 0);
+    duration.set(t.id, Number.isFinite(hours) && hours > 0 ? hours / STANDARD_DAY_HOURS : 0);
+  }
+
+  // Build adjacency + in-degree over the task set. Edges that point
+  // outside the task set (orphaned deps) are ignored — the live
+  // schema's FKs make that unreachable for sane rows, but defensive.
+  const taskIds = new Set<number>(duration.keys());
+  const outgoing = new Map<number, number[]>(); // pred -> [succ...]
+  const inDegree = new Map<number, number>();
+  for (const id of taskIds) {
+    outgoing.set(id, []);
+    inDegree.set(id, 0);
+  }
+  for (const e of edges) {
+    if (!taskIds.has(e.templateTaskId) || !taskIds.has(e.dependsOnTemplateTaskId)) continue;
+    outgoing.get(e.dependsOnTemplateTaskId)!.push(e.templateTaskId);
+    inDegree.set(e.templateTaskId, (inDegree.get(e.templateTaskId) ?? 0) + 1);
+  }
+
+  // Kahn forward pass. `end[t]` is the finish day of task t; for roots
+  // start = 0, end = duration. For non-roots start = max(pred.end) + 1
+  // (the finish-to-start +1 gap).
+  const end = new Map<number, number>();
+  const queue: number[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) {
+      end.set(id, duration.get(id) ?? 0);
+      queue.push(id);
+    }
+  }
+
+  // Track the running max-end so each successor can read it from its
+  // predecessors without re-scanning.
+  const maxPredEnd = new Map<number, number>();
+  let processed = 0;
+  while (queue.length) {
+    const n = queue.shift()!;
+    processed++;
+    const nEnd = end.get(n) ?? 0;
+    for (const s of outgoing.get(n) ?? []) {
+      const prev = maxPredEnd.get(s);
+      if (prev === undefined || nEnd > prev) maxPredEnd.set(s, nEnd);
+      const deg = (inDegree.get(s) ?? 0) - 1;
+      inDegree.set(s, deg);
+      if (deg === 0) {
+        const start = (maxPredEnd.get(s) ?? 0) + 1;
+        end.set(s, start + (duration.get(s) ?? 0));
+        queue.push(s);
+      }
+    }
+  }
+
+  if (processed !== taskIds.size) {
+    workingDaysLogger.warn(
+      `cycle detected in template dependency graph — processed ${processed}/${taskIds.size} tasks; returning 0`,
+    );
+    return 0;
+  }
+
+  let max = 0;
+  for (const v of end.values()) if (v > max) max = v;
+  return Math.ceil(max);
+}
+
+// bm2 (2026-10-28) — Slowest = pure sequential execution with no
+// parallelism. `ceil(sum(budgetHours) / 8 + (N - 1) × 1 gap day)`.
+// Dependency edges don't matter here; this is the upper-bound
+// "worst-case solo operator" number that pairs with the Fastest
+// critical-path calc above.
+export function computeSlowestWorkingDays(tasks: readonly SwdTask[]): number {
+  if (!tasks || tasks.length === 0) return 0;
+  const sum = tasks.reduce((s, t) => {
+    const h = Number(t.budgetHours ?? 0);
+    return s + (Number.isFinite(h) && h > 0 ? h : 0);
+  }, 0);
+  const totalDays = sum / STANDARD_DAY_HOURS + (tasks.length - 1);
+  return Math.ceil(totalDays);
+}
 
 // DN-ext — reusable live-override: when a template task row has a
 // `catalogTask` relation populated by the `findOne` include, prefer
@@ -128,7 +255,24 @@ export class TemplatesService {
         creator: { select: { id: true, firstName: true, lastName: true } },
         phase: true,
         _count: { select: { templateTasks: true, templateZones: true } },
-        templateTasks: { select: { id: true, description: true }, take: 100 },
+        // bm2 (2026-10-28) — expanded from `{ id, description }` so the
+        // standard-working-days rollup below can read per-task budget
+        // hours + the predecessor edges without a second round trip.
+        // `defaultBudgetHours` + `catalogTask.defaultBudgetHours` mirror
+        // the live-resolve pattern used by `findOne` (DN-ext): the
+        // catalog value wins when the row is linked, local scalar is a
+        // snapshot fallback. The `take: 100` cap stays — it already
+        // bounds the earlier services-extraction scan.
+        templateTasks: {
+          select: {
+            id: true,
+            description: true,
+            defaultBudgetHours: true,
+            catalogTask: { select: { defaultBudgetHours: true } },
+            predecessors: { select: { dependsOnTemplateTaskId: true } },
+          },
+          take: 100,
+        },
         templateZones: {
           select: {
             instanceCount: true,
@@ -203,6 +347,39 @@ export class TemplatesService {
         0,
       );
       const rollup = computeRollup(t.id);
+      // bm2 (2026-10-28) — Deliverable Templates ("task_list") get
+      // both fastest (critical-path) and slowest (sequential) working
+      // day estimates so the list row can preview the range before
+      // you open the editor. Other template types (zone_template,
+      // team_template, …) return `null` so the FE can hide the chip
+      // for them. The predecessor edges ride on
+      // `templateTasks[i].predecessors` from the include above.
+      let fastestWorkingDays: number | null = null;
+      let slowestWorkingDays: number | null = null;
+      if (t.type === 'task_list') {
+        const rawTasks = (t.templateTasks ?? []) as any[];
+        const tasks: SwdTask[] = rawTasks.map((row) => ({
+          id: row.id,
+          budgetHours:
+            // DN-ext live-resolve: catalog value wins when linked,
+            // snapshot scalar is the fallback for ad-hoc rows or when
+            // the catalog row was deleted and `onDelete: SetNull`
+            // nulled the FK.
+            row.catalogTask?.defaultBudgetHours != null
+              ? Number(row.catalogTask.defaultBudgetHours)
+              : row.defaultBudgetHours != null
+                ? Number(row.defaultBudgetHours)
+                : null,
+        }));
+        const edges: SwdEdge[] = rawTasks.flatMap((row) =>
+          (row.predecessors ?? []).map((p: any) => ({
+            templateTaskId: row.id,
+            dependsOnTemplateTaskId: p.dependsOnTemplateTaskId,
+          })),
+        );
+        fastestWorkingDays = computeFastestWorkingDays(tasks, edges);
+        slowestWorkingDays = computeSlowestWorkingDays(tasks);
+      }
       return {
         ...t,
         _count: {
@@ -212,6 +389,8 @@ export class TemplatesService {
           templateRootTasks: t._count?.templateTasks ?? 0,
           templateTasks: rollup.tasks,
         },
+        fastestWorkingDays,
+        slowestWorkingDays,
         // Effective service list for the UI to count distinct services
         // without needing to walk descriptions itself. Replaces the direct
         // templateTasks list (which the picker only used for service extraction).
@@ -397,7 +576,32 @@ export class TemplatesService {
     // came from. This handles only the output shape; the write-side
     // guard that forbids editing name/hours when the row is linked
     // lives on `updateTask`.
-    return resolveCatalogLiveFields(template);
+    const resolved = resolveCatalogLiveFields(template) as any;
+
+    // bm2 (2026-10-28) — same fastest + slowest working-days rollup
+    // the list page shows, re-computed on the detail payload so the
+    // header stat line stays in sync with the task table immediately
+    // after the resolve-live pass. Deliberately uses the
+    // just-resolved `defaultBudgetHours` so an unlinked (ad-hoc)
+    // task's local snapshot still counts.
+    let fastestWorkingDays: number | null = null;
+    let slowestWorkingDays: number | null = null;
+    if (resolved.type === 'task_list') {
+      const rawTasks = (resolved.templateTasks ?? []) as any[];
+      const tasks: SwdTask[] = rawTasks.map((row) => ({
+        id: row.id,
+        budgetHours: row.defaultBudgetHours != null ? Number(row.defaultBudgetHours) : null,
+      }));
+      const edges: SwdEdge[] = rawTasks.flatMap((row) =>
+        (row.predecessors ?? []).map((p: any) => ({
+          templateTaskId: row.id,
+          dependsOnTemplateTaskId: p.dependsOnTemplateTaskId,
+        })),
+      );
+      fastestWorkingDays = computeFastestWorkingDays(tasks, edges);
+      slowestWorkingDays = computeSlowestWorkingDays(tasks);
+    }
+    return { ...resolved, fastestWorkingDays, slowestWorkingDays };
   }
 
   async update(id: number, body: any) {

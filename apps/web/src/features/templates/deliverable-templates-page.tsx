@@ -870,7 +870,23 @@ function EditorView({
                 {template.phase && <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700">{template.phase.name}</span>}
               </div>
               {template.description && <p className="mt-1 text-sm text-muted-foreground">{template.description}</p>}
-              <p className="mt-1 text-xs text-muted-foreground">{tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; Used {template.usageCount ?? 0} time{(template.usageCount ?? 0) !== 1 ? 's' : ''}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; Used {template.usageCount ?? 0} time{(template.usageCount ?? 0) !== 1 ? 's' : ''}
+                {(() => {
+                  // bm2 (2026-10-28) — surface both fastest (critical-path, min
+                  // completion with unlimited parallel resources) and slowest
+                  // (pure sequential) estimates so the user can see the range
+                  // at a glance. Hide the whole segment when neither is a
+                  // positive number (template has no tasks or no hours).
+                  const f = typeof template.fastestWorkingDays === 'number' ? template.fastestWorkingDays : 0;
+                  const s = typeof template.slowestWorkingDays === 'number' ? template.slowestWorkingDays : 0;
+                  if (f <= 0 && s <= 0) return null;
+                  const unit = f === 1 && s === 1 ? 'working day' : 'working days';
+                  return (
+                    <> &middot; Fastest ~{f} &middot; Slowest ~{s} {unit}</>
+                  );
+                })()}
+              </p>
             </div>
             <button onClick={startEditingHeader} className={btnSecondary}>Edit</button>
           </div>
@@ -924,8 +940,8 @@ function EditorView({
               <thead>
                 <tr className="border-b border-border bg-muted/50">
                   <th className="px-2 py-2 w-10"></th>
-                  <th className="px-2 py-2 text-left font-medium w-24 whitespace-nowrap" title="Sort order / סדר">
-                    Order
+                  <th className="px-2 py-2 text-left font-medium w-24 whitespace-nowrap" title="Display Order / סדר">
+                    Display Order
                     <span className="ml-1 text-[10px] text-muted-foreground">סדר</span>
                   </th>
                   <th className="px-3 py-2 text-left font-medium">Code</th>
@@ -1276,6 +1292,21 @@ export function DeliverableTemplatesPage() {
                   <span>{t._count?.templateTasks ?? 0} task{(t._count?.templateTasks ?? 0) !== 1 ? 's' : ''}</span>
                   <span>&middot;</span>
                   <span>Used {t.usageCount ?? 0} time{(t.usageCount ?? 0) !== 1 ? 's' : ''}</span>
+                  {(() => {
+                    // bm2 (2026-10-28) — fastest = critical-path (unlimited
+                    // parallel), slowest = pure sequential. See parent-page
+                    // callsite above for rationale.
+                    const f = typeof t.fastestWorkingDays === 'number' ? t.fastestWorkingDays : 0;
+                    const s = typeof t.slowestWorkingDays === 'number' ? t.slowestWorkingDays : 0;
+                    if (f <= 0 && s <= 0) return null;
+                    const unit = f === 1 && s === 1 ? 'working day' : 'working days';
+                    return (
+                      <>
+                        <span>&middot;</span>
+                        <span>Fastest ~{f} &middot; Slowest ~{s} {unit}</span>
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
               <button
