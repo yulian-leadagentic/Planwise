@@ -569,6 +569,13 @@ function EditorView({
   const [addToCatalog, setAddToCatalog] = useState(true);
   const emptyTask = { code: '', name: '', defaultBudgetHours: '', defaultBudgetAmount: '' };
   const [newTask, setNewTask] = useState(emptyTask);
+  // bm2 (2026-10-28) — Code is required. Track whether the user has
+  // interacted with the Code input (blur OR a Save attempt) so the
+  // red hint only appears after they've had a chance to type, not
+  // the moment the add row opens. Reset whenever the row re-opens
+  // so the hint doesn't survive a Cancel → re-Add cycle.
+  const [codeTouched, setCodeTouched] = useState(false);
+  const codeInvalid = codeTouched && !newTask.code.trim();
 
   const addTaskMutation = useMutation({
     mutationFn: (data: Record<string, any>) =>
@@ -578,6 +585,7 @@ function EditorView({
       queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
       notify.success('Task added', { code: 'TASK-ADD-200' });
       setNewTask(emptyTask);
+      setCodeTouched(false);
       setShowAddTask(false);
     },
     onError: (err: any) => notify.apiError(err, 'Failed to add task'),
@@ -765,8 +773,18 @@ function EditorView({
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTask.name.trim()) return;
+    // bm2 (2026-10-28) — Code is required for a template task. The BE
+    // already rejects empty codes with a friendly 400 but we short-
+    // circuit on the FE so the user sees the inline "Code is required"
+    // hint immediately. Flipping `codeTouched` here makes the hint
+    // appear even if the user clicked Save without ever focusing the
+    // Code input first.
+    if (!newTask.code.trim()) {
+      setCodeTouched(true);
+      return;
+    }
     const basePayload = {
-      code: newTask.code.trim() || undefined,
+      code: newTask.code.trim(),
       name: newTask.name.trim(),
       defaultBudgetHours: newTask.defaultBudgetHours ? Number(newTask.defaultBudgetHours) : undefined,
       defaultBudgetAmount: newTask.defaultBudgetAmount ? Number(newTask.defaultBudgetAmount) : undefined,
@@ -924,7 +942,16 @@ function EditorView({
               <BookOpen className="h-4 w-4" /> Pick from Catalog
             </button>
             {!showAddTask && (
-              <button onClick={() => setShowAddTask(true)} className={btnPrimary}>
+              <button
+                onClick={() => {
+                  // Fresh add row — clear any lingering "Code is required"
+                  // hint from a prior Cancel in this session.
+                  setNewTask(emptyTask);
+                  setCodeTouched(false);
+                  setShowAddTask(true);
+                }}
+                className={btnPrimary}
+              >
                 <Plus className="h-4 w-4" /> Add Task
               </button>
             )}
@@ -983,28 +1010,65 @@ function EditorView({
                   <tr className="border-b border-border bg-brand-50/40 dark:bg-blue-950/30">
                     <td className="px-2 py-2 w-10" />
                     <td className="px-2 py-2 w-24" />
-                    <td className="px-3 py-2">
-                      <input value={newTask.code} onChange={(e) => setNewTask((p) => ({ ...p, code: e.target.value }))} placeholder="Code" className={inputClass} />
+                    <td className="px-3 py-2 align-top">
+                      {/* bm2 (2026-10-28) — Code required. Placeholder
+                          carries the "*" marker so empty-state scanners
+                          see it before touch; red border + hint appear
+                          after onBlur (or after a Save attempt with an
+                          empty value). The input class string stays the
+                          same baseline so dark-mode + focus-ring behavior
+                          match every other input on the page. */}
+                      <input
+                        value={newTask.code}
+                        onChange={(e) => setNewTask((p) => ({ ...p, code: e.target.value }))}
+                        onBlur={() => setCodeTouched(true)}
+                        placeholder="Code *"
+                        aria-invalid={codeInvalid || undefined}
+                        aria-describedby={codeInvalid ? 'new-task-code-error' : undefined}
+                        className={cn(
+                          inputClass,
+                          codeInvalid && 'border-red-400 focus:ring-red-400 dark:border-red-500/70',
+                        )}
+                      />
+                      {codeInvalid && (
+                        <p
+                          id="new-task-code-error"
+                          className="mt-1 text-[11px] font-medium text-red-600 dark:text-red-400"
+                        >
+                          Code is required
+                        </p>
+                      )}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <input value={newTask.name} onChange={(e) => setNewTask((p) => ({ ...p, name: e.target.value }))} placeholder="Task name *" className={inputClass} autoFocus />
                     </td>
-                    <td className="px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500 italic">
+                    <td className="px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500 italic align-top">
                       Save first, then set predecessors
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <input type="number" step="any" min="0" value={newTask.defaultBudgetHours} onChange={(e) => setNewTask((p) => ({ ...p, defaultBudgetHours: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 align-top">
                       <input type="number" step="any" min="0" value={newTask.defaultBudgetAmount} onChange={(e) => setNewTask((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
                     </td>
-                    <td className="px-3 py-2 text-center">
+                    <td className="px-3 py-2 text-center align-top">
                       <div className="flex flex-col items-center gap-1.5">
                         <div className="flex items-center gap-1">
-                          <button onClick={handleAddTask} disabled={addTaskMutation.isPending} className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                          <button
+                            onClick={handleAddTask}
+                            disabled={addTaskMutation.isPending || !newTask.code.trim() || !newTask.name.trim()}
+                            className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={
+                              !newTask.code.trim()
+                                ? 'Code is required'
+                                : !newTask.name.trim()
+                                  ? 'Task name is required'
+                                  : 'Save'
+                            }
+                          >
                             {addTaskMutation.isPending ? 'Saving...' : 'Save'}
                           </button>
-                          <button onClick={() => { setShowAddTask(false); setNewTask(emptyTask); }} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent">Cancel</button>
+                          <button onClick={() => { setShowAddTask(false); setNewTask(emptyTask); setCodeTouched(false); }} className="rounded-md border border-border px-3 py-1.5 text-xs hover:bg-accent">Cancel</button>
                         </div>
                         <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
                           <input type="checkbox" checked={addToCatalog} onChange={(e) => setAddToCatalog(e.target.checked)} className="h-3 w-3 rounded border-input" />

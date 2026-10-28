@@ -428,6 +428,40 @@ export class TemplatesService {
   }
 
   async create(userId: number, body: any) {
+    // bm2 (2026-10-28) — Validate all inline-task shapes BEFORE
+    // creating the parent template, so a bad task payload can't
+    // leave an orphan Template behind. Mirrors the per-task guards
+    // in `addTask` (code required + unique within template).
+    //  • code required: an empty / whitespace-only / missing code
+    //    used to crash downstream as a raw Prisma P2012 ("Argument
+    //    `code` is missing"); we surface it as a friendly 400.
+    //  • within-batch uniqueness: catches `[{code:'A'},{code:'A'}]`
+    //    before Prisma does, so the error message names which task
+    //    index collided.
+    //  TODO(dedup migration): once the staging DB has been cleaned
+    //  of pre-existing duplicates, add `@@unique([templateId,code])`
+    //  on `TemplateTask` so the DB enforces this too.
+    if (body.tasks && Array.isArray(body.tasks)) {
+      const seenCodes = new Set<string>();
+      for (let i = 0; i < body.tasks.length; i++) {
+        const t = body.tasks[i];
+        const codeTrim = String(t?.code ?? '').trim();
+        if (!codeTrim) {
+          throw new BadRequestException({
+            code: 'TEMPLATE_TASK_CODE_REQUIRED',
+            message: `Code is required for task "${t?.name ?? '(unnamed)'}" (index ${i})`,
+          });
+        }
+        if (seenCodes.has(codeTrim)) {
+          throw new BadRequestException({
+            code: 'TEMPLATE_TASK_CODE_DUPLICATE',
+            message: `Duplicate code "${codeTrim}" in this batch (task "${t?.name ?? '(unnamed)'}", index ${i})`,
+          });
+        }
+        seenCodes.add(codeTrim);
+      }
+    }
+
     const template = await this.prisma.template.create({
       data: {
         code: body.code || `TPL-${Date.now()}`,
@@ -665,6 +699,33 @@ export class TemplatesService {
 
   async addTask(templateId: number, body: any) {
     await this.findOne(templateId);
+    // bm2 (2026-10-28) — Code required + unique within the template.
+    //  • Required: the Prisma schema has `code VARCHAR(50) NOT NULL`,
+    //    so `undefined` used to surface as a raw P2012 500. We
+    //    short-circuit here with a friendly 400 instead.
+    //  • Unique within template: no DB `@@unique([templateId,code])`
+    //    yet (staging has pre-existing duplicates we need to clean
+    //    first — TODO(dedup migration)). Service-level check closes
+    //    the window for NEW rows so cleanup starts from a stable
+    //    baseline. Trimmed form is the source of truth so trailing
+    //    whitespace can't bypass the guard.
+    const codeTrim = String(body.code ?? '').trim();
+    if (!codeTrim) {
+      throw new BadRequestException({
+        code: 'TEMPLATE_TASK_CODE_REQUIRED',
+        message: 'Code is required for a template task',
+      });
+    }
+    const dup = await this.prisma.templateTask.findFirst({
+      where: { templateId, code: codeTrim },
+      select: { id: true, name: true },
+    });
+    if (dup) {
+      throw new BadRequestException({
+        code: 'TEMPLATE_TASK_CODE_DUPLICATE',
+        message: `Code "${codeTrim}" already exists in this template`,
+      });
+    }
     const maxOrder = await this.prisma.templateTask.aggregate({
       where: { templateId },
       _max: { sortOrder: true },
@@ -701,7 +762,10 @@ export class TemplatesService {
         serviceTypeId: body.serviceTypeId || null,
         deliverableTemplateId,
         catalogTaskId,
-        code: body.code,
+        // Store the trimmed code so the duplicate check above and the
+        // persisted value stay in sync — a user typing "BIM-012 " and
+        // the next one typing "BIM-012" would otherwise both land.
+        code: codeTrim,
         name: body.name,
         description: body.description || null,
         defaultBudgetHours: body.defaultBudgetHours || null,
@@ -735,16 +799,50 @@ export class TemplatesService {
     const touchedReadonly = CATALOG_LINKED_READONLY_FIELDS.filter(
       (f) => Object.prototype.hasOwnProperty.call(body, f) && body[f] !== undefined,
     );
-    if (touchedReadonly.length > 0) {
+    // bm2 (2026-10-28) — Code validation: only runs when the caller
+    // actually sends a `code` field. `undefined` means "don't touch
+    // the code" (Prisma skips the field entirely), which lets
+    // sortOrder-only / description-only PATCHes keep working without
+    // re-querying siblings. When code IS sent, we require it and
+    // reject siblings that already own that code.
+    const touchingCode = Object.prototype.hasOwnProperty.call(body, 'code') && body.code !== undefined;
+    let codeTrim: string | null = null;
+    if (touchingCode) {
+      codeTrim = String(body.code ?? '').trim();
+      if (!codeTrim) {
+        throw new BadRequestException({
+          code: 'TEMPLATE_TASK_CODE_REQUIRED',
+          message: 'Code is required for a template task',
+        });
+      }
+    }
+    if (touchedReadonly.length > 0 || touchingCode) {
       const existing = await this.prisma.templateTask.findUnique({
         where: { id: taskId },
-        select: { id: true, catalogTaskId: true },
+        select: { id: true, catalogTaskId: true, templateId: true },
       });
       if (!existing) throw new NotFoundException('Template task not found');
-      if (existing.catalogTaskId != null) {
+      if (touchedReadonly.length > 0 && existing.catalogTaskId != null) {
         throw new BadRequestException(
           `Fields ${touchedReadonly.join(', ')} are read-only on tasks linked to a catalog entry — edit the task in the Task Catalog instead.`,
         );
+      }
+      if (touchingCode && codeTrim) {
+        // Sibling-uniqueness within the same template, excluding self
+        // so a no-op rename (same value as current) succeeds.
+        //   TODO(dedup migration): once staging duplicates are cleaned,
+        //   add `@@unique([templateId, code])` on TemplateTask so the
+        //   DB enforces this at the storage layer too.
+        const dup = await this.prisma.templateTask.findFirst({
+          where: { templateId: existing.templateId, code: codeTrim, id: { not: taskId } },
+          select: { id: true },
+        });
+        if (dup) {
+          throw new BadRequestException({
+            code: 'TEMPLATE_TASK_CODE_DUPLICATE',
+            message: `Code "${codeTrim}" already exists in this template`,
+          });
+        }
       }
     }
     return this.prisma.templateTask.update({
@@ -761,7 +859,9 @@ export class TemplatesService {
         // already-linked row, so a client that wants to override a
         // name must first unlink the row with a dedicated PATCH.
         catalogTaskId: body.catalogTaskId,
-        code: body.code,
+        // Use the trimmed form when the caller sent a code, so the
+        // persisted value matches what the duplicate-check compared.
+        code: touchingCode ? codeTrim ?? undefined : undefined,
         name: body.name,
         description: body.description,
         defaultBudgetHours: body.defaultBudgetHours,
