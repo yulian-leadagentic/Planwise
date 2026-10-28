@@ -1717,7 +1717,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             type="button"
             onClick={attemptSave}
             disabled={!hasUnsavedChanges || save.isPending || rescheduling}
-            className="flex items-center gap-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
+            className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
             title="Save deliverable targets without rescheduling task dates"
           >
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
