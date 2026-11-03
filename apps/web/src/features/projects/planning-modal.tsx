@@ -13,6 +13,7 @@ import { useColumnVisibility, ColumnVisibilityPicker } from '@/components/shared
 import { STATUS_LABEL } from '@/lib/task-constants';
 import { rollupCompletion } from '@/lib/completion-rollup';
 import { ZONE_DISPLAY } from '@/features/templates/zone-templates/constants';
+import { useZoneTypeOptions } from '@/hooks/use-zone-type-options';
 import client from '@/api/client';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
@@ -2502,7 +2503,12 @@ function ProjectArchivedTasksModal({
 function AddZoneManuallyDialog({ projectId, onClose, onCreated }: { projectId: number; onClose: () => void; onCreated: () => void }) {
   const [name, setName] = useState('');
   const [zoneType, setZoneType] = useState('zone');
-  const ZONE_TYPES = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'];
+  // ZT-5 · zoneType dropdown is sourced from the admin-managed
+  // `/admin/config/zone-types` catalog (replacing the previously
+  // hardcoded 8-item list). Pass the current form state so the
+  // initial 'zone' default renders as a legacy option when it isn't
+  // in the catalog, keeping the pre-existing default behavior.
+  const { options: zoneTypeOptions } = useZoneTypeOptions(zoneType);
 
   const createZone = useMutation({
     mutationFn: () => zonesApi.create({ projectId, name: name.trim(), zoneType }),
@@ -2525,7 +2531,7 @@ function AddZoneManuallyDialog({ projectId, onClose, onCreated }: { projectId: n
         <div>
           <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Zone Type</label>
           <select value={zoneType} onChange={(e) => setZoneType(e.target.value)} className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none">
-            {ZONE_TYPES.map(zt => <option key={zt} value={zt}>{zt.charAt(0).toUpperCase() + zt.slice(1)}</option>)}
+            {zoneTypeOptions.map(o => <option key={o.code} value={o.code}>{o.label}</option>)}
           </select>
         </div>
       </div>
@@ -3866,7 +3872,14 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
     onError: (err: any) => notify.apiError(err, 'Failed to update zone type'),
   });
 
-  const ZONE_TYPES = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'];
+  // ZT-5 · zoneType options are sourced from the admin-managed
+  // `/admin/config/zone-types` catalog (replacing the previously
+  // hardcoded 8-item list). The ZoneTypePicker takes a `string[]` so
+  // we hand it the catalog codes, and the inline Add-Sub-Zone form
+  // renders its own labelled options. Pass the saved zone.zoneType so
+  // a legacy code (zone/area/section/floor) stays selectable.
+  const { options: zoneTypeOptions } = useZoneTypeOptions(zone.zoneType);
+  const zoneTypeCodes = zoneTypeOptions.map((o) => o.code);
 
   const directTasks = allTasks.filter((t: any) => t.zoneId === zone.id);
   const allZoneIds = new Set<number>();
@@ -3939,7 +3952,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
         <ZoneTypePicker
           zoneType={zone.zoneType}
           zoneColors={zoneColors}
-          types={ZONE_TYPES}
+          types={zoneTypeCodes}
           pending={updateZoneTypeMutation.isPending}
           onPick={(next) => {
             if (next === zone.zoneType) return;
@@ -4042,7 +4055,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                 className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
               <select value={newZone.zoneType} onChange={(e) => setNewZone(f => ({ ...f, zoneType: e.target.value }))}
                 className="w-28 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none">
-                {ZONE_TYPES.map(zt => <option key={zt} value={zt}>{zt.charAt(0).toUpperCase() + zt.slice(1)}</option>)}
+                {zoneTypeOptions.map(o => <option key={o.code} value={o.code}>{o.label}</option>)}
               </select>
               <button onClick={() => {
                 if (!newZone.name.trim()) { notify.warning('Zone name is required'); return; }

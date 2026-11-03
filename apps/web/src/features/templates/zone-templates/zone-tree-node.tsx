@@ -10,7 +10,8 @@ import { ZoneTemplatePicker } from './zone-template-picker';
 import { ServiceGroupItem } from './service-group-item';
 import { ReadOnlyZoneNode } from './read-only-zone-node';
 import { ManualZoneForm } from './manual-zone-form';
-import { ZONE_TYPES, ZONE_DISPLAY } from './constants';
+import { ZONE_DISPLAY } from './constants';
+import { useZoneTypeOptions } from '@/hooks/use-zone-type-options';
 
 // ---------------------------------------------------------------------------
 // Zone Tree Node (recursive)
@@ -43,6 +44,13 @@ export function ZoneTreeNode({
   // Tracks the in-flight "delete this zone" confirmation so the styled
   // ConfirmDialog can replace the native confirm() popup.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  // ZT-5 · zoneType dropdown sourced from the admin-managed
+  // `/admin/config/zone-types` catalog (replacing the previously
+  // hardcoded `ZONE_TYPES` list). Pass the zone's current zoneType so
+  // a legacy code admin has removed from the catalog still renders
+  // as a selectable option.
+  const { options: zoneTypeOptions } = useZoneTypeOptions(zone.zoneType);
 
   const children: any[] = zone.children ?? [];
 
@@ -148,9 +156,9 @@ export function ZoneTreeNode({
             className="bg-transparent border-none outline-none text-[11px] font-semibold text-slate-700 dark:text-slate-200 pr-1 cursor-pointer"
             aria-label={`Zone type — currently ${ZONE_DISPLAY[zone.zoneType]?.label ?? zone.zoneType}`}
           >
-            {ZONE_TYPES.map((zt) => (
-              <option key={zt} value={zt}>
-                {ZONE_DISPLAY[zt]?.label ?? zt}
+            {zoneTypeOptions.map((o) => (
+              <option key={o.code} value={o.code}>
+                {o.label}
               </option>
             ))}
           </select>

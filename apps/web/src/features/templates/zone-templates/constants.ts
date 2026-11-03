@@ -7,8 +7,15 @@ export const inputClass = 'w-full rounded-md border border-input bg-background p
 export const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
 export const btnSecondary = 'rounded-md border border-border px-4 py-2 text-sm hover:bg-accent';
 
-export const ZONE_TYPES = ['site', 'building', 'level', 'zone', 'area', 'section', 'wing', 'floor'] as const;
-
+// ZT-5 · the hardcoded `ZONE_TYPES` list that used to live here was
+// removed when all four remaining dropdowns switched to the catalog-
+// driven `useZoneTypeOptions` hook. The admin-managed
+// `/admin/config/zone-types` endpoint is now the single source of
+// truth for which zone types are selectable in the UI.
+//
+// ZONE_DISPLAY is still used as a static color + label fallback for
+// zone-type chips at render time; new catalog codes without a
+// ZONE_DISPLAY entry fall back to the raw code with a neutral color.
 export const ZONE_DISPLAY: Record<string, { color: string; label: string }> = {
   site: { color: '#6B7280', label: 'Site' },
   building: { color: '#3B82F6', label: 'Building' },

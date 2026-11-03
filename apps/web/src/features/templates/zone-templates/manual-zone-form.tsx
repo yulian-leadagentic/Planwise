@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
-import { inputClass, btnPrimary, btnSecondary, ZONE_TYPES, ZONE_DISPLAY } from './constants';
+import { inputClass, btnPrimary, btnSecondary } from './constants';
+import { useZoneTypeOptions } from '@/hooks/use-zone-type-options';
 
 /**
  * Inline "New manual zone" form for the routed template EditorView
@@ -12,8 +13,12 @@ import { inputClass, btnPrimary, btnSecondary, ZONE_TYPES, ZONE_DISPLAY } from '
  * authors had no way to tag a zone as Site / Building / Level etc.
  * without editing every row after the fact.
  *
- * Reuses the ZONE_TYPES catalog from `./constants` so the picker
- * options stay in sync with ZoneTypeBadge's display map.
+ * ZT-5 · the picker is sourced from the admin-managed
+ * `/admin/config/zone-types` catalog via `useZoneTypeOptions`
+ * (replacing the previously-hardcoded `ZONE_TYPES` list), so admin
+ * curates the available zone types in one place. The current form
+ * state is passed as `includeValue` so the initial 'zone' default
+ * still renders as a legacy option when it's not in the catalog.
  */
 export function ManualZoneForm({
   templateId,
@@ -28,6 +33,7 @@ export function ManualZoneForm({
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [zoneType, setZoneType] = useState<string>('zone');
+  const { options: zoneTypeOptions } = useZoneTypeOptions(zoneType);
 
   const createZone = useMutation({
     mutationFn: (payload: Record<string, any>) =>
@@ -72,9 +78,9 @@ export function ManualZoneForm({
         className={`${inputClass} !w-32`}
         aria-label="Zone type"
       >
-        {ZONE_TYPES.map((zt) => (
-          <option key={zt} value={zt}>
-            {ZONE_DISPLAY[zt]?.label ?? zt}
+        {zoneTypeOptions.map((o) => (
+          <option key={o.code} value={o.code}>
+            {o.label}
           </option>
         ))}
       </select>
