@@ -259,8 +259,24 @@ export class ProjectsController {
   @Post('tasks/:taskId/dependencies')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Add task dependency' })
-  addDependency(@Param('taskId', ParseIntPipe) taskId: number, @Body('dependsOnId', ParseIntPipe) dependsOnId: number) {
-    return this.projectsService.addDependency(taskId, dependsOnId);
+  // T1-Lag (2026-11-03) — payload gained per-edge Lag metadata (same
+  // shape used on the template side). Body:
+  //   {dependsOnId, lag?, lagUnit?: 'WORKING_DAYS'|'CALENDAR_DAYS', reason?}
+  // Service does the heavy validation (lag in [0..365], lagUnit
+  // enum, self-dep, circular). We parse `dependsOnId` by hand (no
+  // dedicated pipe on a Body field) so the error message matches the
+  // service-layer language instead of Nest's generic ParseIntPipe one.
+  addDependency(
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Body()
+    body: {
+      dependsOnId: number;
+      lag?: number;
+      lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+      reason?: string | null;
+    },
+  ) {
+    return this.projectsService.addDependency(taskId, body);
   }
 
   @Delete('tasks/:taskId/dependencies/:dependsOnId')

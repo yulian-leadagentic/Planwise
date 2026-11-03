@@ -175,11 +175,31 @@ export class TemplatesController {
   @Post('tasks/:taskId/predecessors')
   @RequirePermissions({ module: 'templates', action: 'write' })
   @ApiOperation({ summary: 'Replace the predecessor set for a template task' })
+  // T1-Lag (2026-11-03) — payload gained per-edge Lag metadata. The
+  // extended shape is `{predecessors: Array<{id, lag?, lagUnit?, reason?}>}`.
+  // Legacy callers that still send `{predecessorIds: number[]}` are
+  // accepted and auto-mapped to the extended shape with defaults
+  // (lag=0, lagUnit=WORKING_DAYS, reason=null) so FE/BE deploys don't
+  // need lock-step. The service does the heavy validation (lag >= 0,
+  // lag <= 365, duplicate ids, cross-template, cycle).
   setTaskPredecessors(
     @Param('taskId', ParseIntPipe) taskId: number,
-    @Body() body: { predecessorIds: number[] },
+    @Body()
+    body: {
+      predecessorIds?: number[];
+      predecessors?: Array<{
+        id: number;
+        lag?: number;
+        lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+        reason?: string | null;
+      }>;
+    },
   ) {
-    return this.templatesService.setTaskPredecessors(taskId, body.predecessorIds ?? []);
+    const list =
+      Array.isArray(body?.predecessors) && body.predecessors.length >= 0
+        ? body.predecessors
+        : (body?.predecessorIds ?? []).map((id) => ({ id }));
+    return this.templatesService.setTaskPredecessors(taskId, list ?? []);
   }
 
   // Zone management within a template — implies zone-templates permission

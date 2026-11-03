@@ -948,15 +948,63 @@ export class TemplatesService {
   // discards the body and re-fetches, so moving to the richer shape
   // is safe):
   //   { predecessors: TemplateTaskDependency[], autoReorder?: {oldOrder, newOrder} }
-  async setTaskPredecessors(taskId: number, predecessorIds: number[]) {
+  //
+  // T1-Lag (2026-11-03) — input is now a richer per-edge shape so each
+  // predecessor can carry `lag`, `lagUnit`, `reason`. The controller
+  // accepts both the new `{predecessors: [{id,lag?,lagUnit?,reason?}]}`
+  // and the legacy `{predecessorIds: number[]}` shapes and normalizes
+  // the legacy one to the new one with defaults before calling here,
+  // so we only have one code path to maintain.
+  async setTaskPredecessors(
+    taskId: number,
+    proposedPreds: Array<{
+      id: number;
+      lag?: number;
+      lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+      reason?: string | null;
+    }>,
+  ) {
     const task = await this.prisma.templateTask.findUnique({
       where: { id: taskId },
       select: { id: true, templateId: true, sortOrder: true },
     });
     if (!task) throw new NotFoundException('Template task not found');
 
-    // Normalize + dedupe, drop self-refs defensively (also hard-rejected below).
-    const proposed = Array.from(new Set(predecessorIds.filter((p) => Number.isFinite(p))));
+    // T1-Lag — normalize into a validated, deduped list keyed by id.
+    // Validation (per the spec): lag in [0..365], lagUnit ∈ enum,
+    // reason trimmed to 255 chars (null when empty). Duplicate ids
+    // in the payload → 400 (keeps the FE honest; "two edges to the
+    // same predecessor" has no semantic meaning).
+    const normalized: Array<{
+      id: number;
+      lag: number;
+      lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+      reason: string | null;
+    }> = [];
+    const seen = new Set<number>();
+    for (const p of proposedPreds ?? []) {
+      const pid = Number(p?.id);
+      if (!Number.isFinite(pid)) continue;
+      if (seen.has(pid)) {
+        throw new BadRequestException(`Duplicate predecessor id ${pid}`);
+      }
+      seen.add(pid);
+      const lag = Math.floor(Number(p.lag ?? 0));
+      if (!Number.isFinite(lag) || lag < 0) {
+        throw new BadRequestException(`Lag must be a non-negative integer (got ${p.lag})`);
+      }
+      if (lag > 365) {
+        throw new BadRequestException(`Lag must be <= 365 (got ${lag})`);
+      }
+      const lagUnit = p.lagUnit ?? 'WORKING_DAYS';
+      if (lagUnit !== 'WORKING_DAYS' && lagUnit !== 'CALENDAR_DAYS') {
+        throw new BadRequestException(`Invalid lagUnit: ${lagUnit}`);
+      }
+      const rawReason = typeof p.reason === 'string' ? p.reason.trim() : '';
+      const reason = rawReason ? rawReason.slice(0, 255) : null;
+      normalized.push({ id: pid, lag, lagUnit, reason });
+    }
+    const proposed = normalized.map((p) => p.id);
     if (proposed.includes(taskId)) {
       throw new BadRequestException('A task cannot depend on itself');
     }
@@ -1041,11 +1089,15 @@ export class TemplatesService {
       await tx.templateTaskDependency.deleteMany({
         where: { templateTaskId: taskId },
       });
-      if (proposed.length > 0) {
+      if (normalized.length > 0) {
+        // T1-Lag — persist per-edge lag/lagUnit/reason alongside the FK.
         await tx.templateTaskDependency.createMany({
-          data: proposed.map((p) => ({
+          data: normalized.map((p) => ({
             templateTaskId: taskId,
-            dependsOnTemplateTaskId: p,
+            dependsOnTemplateTaskId: p.id,
+            lag: p.lag,
+            lagUnit: p.lagUnit,
+            reason: p.reason,
           })),
         });
       }

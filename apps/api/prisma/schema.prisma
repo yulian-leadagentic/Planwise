@@ -59,6 +59,17 @@ enum TaskPriority {
   critical
 }
 
+/// T1-Lag (2026-11-03) — unit of measure for a dependency's `lag` field,
+/// used by both `TemplateTaskDependency` and `TaskDependency`. WORKING_DAYS
+/// is the default (internal handoff — e.g. "wait 2 business days for
+/// internal review"); CALENDAR_DAYS covers external causes (customer
+/// approval, delivery) that elapse in real time regardless of the
+/// business calendar. See docs/bm2/planwise-dependency-lag-and-critical-path.md.
+enum LagUnit {
+  WORKING_DAYS
+  CALENDAR_DAYS
+}
+
 // HR Phase B (2026-10-15) — remapped per spec §3.2 so the enum aligns
 // with the HR module's absence/eligibility surfaces. Migration
 // `20261015010000_hr_phase_b` rewrites existing rows:
@@ -1722,6 +1733,17 @@ model TaskDependency {
   id          Int @id @default(autoincrement())
   taskId      Int @map("task_id")
   dependsOnId Int @map("depends_on_id")
+  /// T1-Lag (2026-11-03) — Finish-to-Start lag in `lagUnit` days. 0 =
+  /// pure sequence (dependent starts the next working day after the
+  /// predecessor). >0 = wait. Service-layer validation keeps the range
+  /// in [0..365]; the DB default is 0 so legacy rows migrate forward
+  /// without changing scheduling semantics.
+  lag         Int     @default(0)
+  lagUnit     LagUnit @default(WORKING_DAYS) @map("lag_unit")
+  /// T1-Lag — free-text justification for the lag (optional). Typical
+  /// values: "אישור לקוח", "אספקה", "בדיקה פנימית". Capped at 255
+  /// chars at the service layer.
+  reason      String? @db.VarChar(255)
 
   task      Task @relation("TaskDeps", fields: [taskId], references: [id], onDelete: Cascade)
   dependsOn Task @relation("TaskDepBy", fields: [dependsOnId], references: [id], onDelete: Cascade)
@@ -1913,6 +1935,12 @@ model TemplateTaskDependency {
   templateTaskId          Int
   dependsOnTemplateTaskId Int
   createdAt               DateTime     @default(now())
+  /// T1-Lag (2026-11-03) — mirrors `TaskDependency.lag`. See the
+  /// comment there for semantics. Column uses camelCase to match the
+  /// 2026-10-20 migration that created this table (no `@map`).
+  lag                     Int          @default(0)
+  lagUnit                 LagUnit      @default(WORKING_DAYS)
+  reason                  String?      @db.VarChar(255)
 
   templateTask          TemplateTask @relation("TemplateTaskPredecessors", fields: [templateTaskId], references: [id], onDelete: Cascade)
   dependsOnTemplateTask TemplateTask @relation("TemplateTaskSuccessors", fields: [dependsOnTemplateTaskId], references: [id], onDelete: Cascade)

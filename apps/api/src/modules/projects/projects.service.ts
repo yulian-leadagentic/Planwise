@@ -2139,7 +2139,15 @@ export class ProjectsService {
     });
   }
 
-  async addDependency(taskId: number, dependsOnId: number) {
+  async addDependency(
+    taskId: number,
+    body: {
+      dependsOnId: number;
+      lag?: number;
+      lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+      reason?: string | null;
+    },
+  ) {
     // TODO(D6 · scheduling auto-reschedule) — adding/removing a
     // TaskDependency re-shapes the DAG the scheduler walks. For v1
     // the PM re-runs "Save & update due dates" manually (spec §D6
@@ -2147,6 +2155,11 @@ export class ProjectsService {
     // trigger is approved, call SchedulerService.saveAndUpdateDueDates
     // for the parent project after the write commits — mirror in
     // `removeDependency` below.
+
+    const dependsOnId = Number(body?.dependsOnId);
+    if (!Number.isFinite(dependsOnId)) {
+      throw new BadRequestException('dependsOnId is required');
+    }
 
     // Prevent self-dependency
     if (taskId === dependsOnId) throw new BadRequestException('Task cannot depend on itself');
@@ -2156,8 +2169,27 @@ export class ProjectsService {
     });
     if (reverse) throw new BadRequestException('Circular dependency detected');
 
+    // T1-Lag (2026-11-03) — validate per-edge Lag metadata. Same bounds
+    // as the template side: lag non-negative + <=365; lagUnit must be
+    // one of the enum values; reason trimmed to 255 chars (null when
+    // empty). All three default to the FS-sequence shape so legacy
+    // callers that still send only `{dependsOnId}` keep working.
+    const lag = Math.floor(Number(body?.lag ?? 0));
+    if (!Number.isFinite(lag) || lag < 0) {
+      throw new BadRequestException(`Lag must be a non-negative integer (got ${body?.lag})`);
+    }
+    if (lag > 365) {
+      throw new BadRequestException(`Lag must be <= 365 (got ${lag})`);
+    }
+    const lagUnit = body?.lagUnit ?? 'WORKING_DAYS';
+    if (lagUnit !== 'WORKING_DAYS' && lagUnit !== 'CALENDAR_DAYS') {
+      throw new BadRequestException(`Invalid lagUnit: ${lagUnit}`);
+    }
+    const rawReason = typeof body?.reason === 'string' ? body.reason.trim() : '';
+    const reason = rawReason ? rawReason.slice(0, 255) : null;
+
     return this.prisma.taskDependency.create({
-      data: { taskId, dependsOnId },
+      data: { taskId, dependsOnId, lag, lagUnit, reason },
       include: { dependsOn: { select: { id: true, code: true, name: true } } },
     });
   }

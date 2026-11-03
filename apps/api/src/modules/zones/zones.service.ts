@@ -550,7 +550,17 @@ export class ZonesService {
           templateTasks: {
             include: {
               serviceType: true,
-              predecessors: { select: { dependsOnTemplateTaskId: true } },
+              // T1-Lag (2026-11-03) — carry lag/lagUnit/reason through
+              // to the project side so the materialized `TaskDependency`
+              // rows preserve the Deliverable Template's wait semantics.
+              predecessors: {
+                select: {
+                  dependsOnTemplateTaskId: true,
+                  lag: true,
+                  lagUnit: true,
+                  reason: true,
+                },
+              },
               // DN-ext (2026-10-22) — resolve the task's name + budget
               // LIVE from the catalog at pull-time so the project
               // Task row snapshots the CURRENT catalog name, not the
@@ -647,14 +657,30 @@ export class ZonesService {
       // `skipDuplicates` guards against the unique(taskId, dependsOnId)
       // index in the rare case the same template is re-applied against
       // tasks already present in the project (idempotent re-apply).
-      const depEdges: { taskId: number; dependsOnId: number }[] = [];
+      // T1-Lag (2026-11-03) — carry lag/lagUnit/reason through so a
+      // "wait 3 calendar days for customer approval" edge in the
+      // template arrives on the project with the same semantics the
+      // scheduler will read next (D1 gap=lag — follow-up task).
+      const depEdges: {
+        taskId: number;
+        dependsOnId: number;
+        lag: number;
+        lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+        reason: string | null;
+      }[] = [];
       for (const tt of template.templateTasks) {
         const taskId = idMap.get(tt.id);
         if (!taskId) continue;
         for (const pred of (tt as any).predecessors ?? []) {
           const dependsOnId = idMap.get(pred.dependsOnTemplateTaskId);
           if (!dependsOnId) continue;
-          depEdges.push({ taskId, dependsOnId });
+          depEdges.push({
+            taskId,
+            dependsOnId,
+            lag: Number(pred.lag ?? 0),
+            lagUnit: (pred.lagUnit as 'WORKING_DAYS' | 'CALENDAR_DAYS') ?? 'WORKING_DAYS',
+            reason: pred.reason ?? null,
+          });
         }
       }
       if (depEdges.length > 0) {
@@ -828,7 +854,17 @@ export class ZonesService {
     } as const;
     const templateTaskInclude = {
       include: {
-        predecessors: { select: { dependsOnTemplateTaskId: true } },
+        // T1-Lag (2026-11-03) — pull per-edge Lag metadata through to
+        // the materialized project `TaskDependency` rows (see
+        // `materializeDeps` below). Same select on `applyTaskTemplate`.
+        predecessors: {
+          select: {
+            dependsOnTemplateTaskId: true,
+            lag: true,
+            lagUnit: true,
+            reason: true,
+          },
+        },
         catalogTask: { select: catalogTaskSelect },
       },
       orderBy: { sortOrder: 'asc' as const },
@@ -941,12 +977,27 @@ export class ZonesService {
         for (const { tt, projectTaskId } of tasksCreated) {
           localIdMap.set(tt.id, projectTaskId);
         }
-        const edges: { taskId: number; dependsOnId: number }[] = [];
+        // T1-Lag (2026-11-03) — same shape as `applyTaskTemplate`'s
+        // edge list; copy the template-side lag/lagUnit/reason to the
+        // materialized project `TaskDependency` row.
+        const edges: {
+          taskId: number;
+          dependsOnId: number;
+          lag: number;
+          lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+          reason: string | null;
+        }[] = [];
         for (const { tt, projectTaskId } of tasksCreated) {
           for (const pred of (tt.predecessors ?? [])) {
             const dependsOnId = localIdMap.get(pred.dependsOnTemplateTaskId);
             if (!dependsOnId) continue; // predecessor fell outside this group — skip
-            edges.push({ taskId: projectTaskId, dependsOnId });
+            edges.push({
+              taskId: projectTaskId,
+              dependsOnId,
+              lag: Number(pred.lag ?? 0),
+              lagUnit: (pred.lagUnit as 'WORKING_DAYS' | 'CALENDAR_DAYS') ?? 'WORKING_DAYS',
+              reason: pred.reason ?? null,
+            });
           }
         }
         if (edges.length > 0) {
