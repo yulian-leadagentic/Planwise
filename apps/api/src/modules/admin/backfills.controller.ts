@@ -715,6 +715,115 @@ export class BackfillsController {
   }
 
   /**
+   * DP · empty-ZDT cleanup (2026-11-03).
+   *
+   * Root cause (verified on staging, project 40 "אזור תעסוקה דרומי יקנעם"):
+   * the pre-2026-11-03 `project-deliverables.service` grid save walked
+   * every row — including "no target" cells — and upserted a
+   * `ZoneDeliverableTarget` with `targetDate=null`, `targetMonths=null`,
+   * `estimatedDurationWeeks=null` for each. These all-null rows have
+   * no planning meaning, but the DP scoping (`connectionsByDeliverable`
+   * in `deliverable-planning-tab.tsx`) treated any ZDT as an
+   * intent-to-plan and emitted the deliverable under every zone that
+   * carried a ghost row. On project 40 this showered every deliverable
+   * (185–191) under both top-zones instead of its real one.
+   *
+   * The write-path fix (same date) stops NEW empty rows from being
+   * created and auto-deletes any ZDT that is cleared to empty. This
+   * backfill sweeps the historical rows so staging/prod match the
+   * post-fix invariant.
+   *
+   * Deletes every `ZoneDeliverableTarget` where ALL of:
+   *   • `targetDate IS NULL`
+   *   • `targetMonths IS NULL`
+   *   • `estimatedDurationWeeks IS NULL`
+   *
+   * The FE fix already renders empty rows harmless; this endpoint just
+   * removes the noise so the DB stays truthful ("a ZDT only exists for
+   * a real target"). Idempotent — a re-run after a clean sweep finds
+   * zero rows and returns `deleted: 0`.
+   *
+   * Query param `?dryRun=1|true|yes|on` → read-only; returns the plan
+   * (per-project row count) so Yulian can sanity-check scope before
+   * the real run. The plural `?dryRun=true` default across admin
+   * backfills is retained.
+   *
+   * Response shape:
+   *   { scanned, wouldDelete, deleted, projects: [{ id, name, count }] }
+   */
+  @Post('empty-zone-deliverable-targets')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · delete empty ZoneDeliverableTarget rows (targetDate+targetMonths+estimatedDurationWeeks all null; idempotent; ?dryRun=1|true|yes|on for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runEmptyZoneDeliverableTargets(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // 1. Scan every ghost ZDT. Prisma's `null` on each of the three
+    //    target columns is exactly the all-null case the DP scoping
+    //    treats as a false connection.
+    const rows = await this.prisma.zoneDeliverableTarget.findMany({
+      where: {
+        targetDate: null,
+        targetMonths: null,
+        estimatedDurationWeeks: null,
+      },
+      select: {
+        zoneId: true,
+        projectDeliverableId: true,
+        projectDeliverable: {
+          select: {
+            projectId: true,
+            project: { select: { id: true, name: true } },
+          },
+        },
+      },
+    });
+
+    const scanned = rows.length;
+
+    // 2. Group by project so Yulian can eyeball the scope before the
+    //    real run (expected ~14 on project 40 per the work order).
+    const projectMap = new Map<number, { id: number; name: string; count: number }>();
+    for (const r of rows) {
+      const projectId = r.projectDeliverable?.projectId ?? 0;
+      const projectName = r.projectDeliverable?.project?.name ?? `(unknown project ${projectId})`;
+      const existing = projectMap.get(projectId);
+      if (existing) existing.count++;
+      else projectMap.set(projectId, { id: projectId, name: projectName, count: 1 });
+    }
+    const projects = Array.from(projectMap.values()).sort((a, b) => a.id - b.id);
+
+    if (dryRun) {
+      return { scanned, wouldDelete: scanned, deleted: 0, projects };
+    }
+
+    // 3. Real run — single-statement deleteMany inside a transaction.
+    //    No pre-count/match-count race window: a row created between
+    //    the scan and the delete is covered too, since the WHERE
+    //    matches structural shape, not row ids. Idempotent: zero rows
+    //    returns zero.
+    const deleted = scanned === 0
+      ? 0
+      : await this.prisma.$transaction(async (tx) => {
+          const res = await tx.zoneDeliverableTarget.deleteMany({
+            where: {
+              targetDate: null,
+              targetMonths: null,
+              estimatedDurationWeeks: null,
+            },
+          });
+          return res.count;
+        });
+
+    return { scanned, wouldDelete: scanned, deleted, projects };
+  }
+
+  /**
    * QA4 CT-DEDUP (2026-09-30) — merge duplicate organization BPs.
    *
    * Motivating case (verified on staging 2026-09-30):
