@@ -232,11 +232,53 @@ export class ProjectDeliverablesService {
     const targetDate = this.computeTarget(months, baseDate);
     const durPatch = durationWeeks === undefined ? {} : { estimatedDurationWeeks: durationWeeks };
     if (zoneId != null) {
-      await this.prisma.zoneDeliverableTarget.upsert({
-        where: { zoneId_projectDeliverableId: { zoneId, projectDeliverableId: id } },
-        create: { zoneId, projectDeliverableId: id, targetDate, targetMonths: months ?? null, ...durPatch },
-        update: { targetDate, targetMonths: months ?? null, ...durPatch },
-      });
+      // 2026-11-03 · DP empty-ZDT prevention (project 40). The pre-fix
+      // behavior upserted a ZDT for every (zone × deliverable) cell the
+      // grid walked — including "no target" cells — producing all-null
+      // ghost rows that the FE scoping then counted as connections.
+      // Short-circuit here so an empty save (a) never CREATES a row,
+      // and (b) DELETES an existing row that was cleared, instead of
+      // persisting it as all-null.
+      //
+      // "Empty" = targetDate==null && months==null && resulting
+      // duration==null. `durationWeeks` is tri-state (undefined=keep
+      // existing, null=clear, number=set); when undefined we peek at
+      // the persisted row to decide if the resulting shape is empty.
+      const incomingTargetIsEmpty = targetDate == null && (months ?? null) == null;
+      if (incomingTargetIsEmpty) {
+        let resultingDuration: number | null;
+        if (durationWeeks === undefined) {
+          const existing = await this.prisma.zoneDeliverableTarget.findUnique({
+            where: { zoneId_projectDeliverableId: { zoneId, projectDeliverableId: id } },
+            select: { estimatedDurationWeeks: true },
+          });
+          resultingDuration = existing?.estimatedDurationWeeks ?? null;
+        } else {
+          resultingDuration = durationWeeks;
+        }
+        if (resultingDuration == null) {
+          // Row would be fully empty — delete if present, else no-op.
+          // `deleteMany` with the composite WHERE is safe either way.
+          await this.prisma.zoneDeliverableTarget.deleteMany({
+            where: { zoneId, projectDeliverableId: id },
+          });
+        } else {
+          // Not fully empty (duration survives) — upsert as before, with
+          // targetDate/targetMonths cleared and duration left untouched
+          // (durPatch is {} when durationWeeks is undefined).
+          await this.prisma.zoneDeliverableTarget.upsert({
+            where: { zoneId_projectDeliverableId: { zoneId, projectDeliverableId: id } },
+            create: { zoneId, projectDeliverableId: id, targetDate, targetMonths: months ?? null, ...durPatch },
+            update: { targetDate, targetMonths: months ?? null, ...durPatch },
+          });
+        }
+      } else {
+        await this.prisma.zoneDeliverableTarget.upsert({
+          where: { zoneId_projectDeliverableId: { zoneId, projectDeliverableId: id } },
+          create: { zoneId, projectDeliverableId: id, targetDate, targetMonths: months ?? null, ...durPatch },
+          update: { targetDate, targetMonths: months ?? null, ...durPatch },
+        });
+      }
     } else {
       await this.prisma.projectDeliverable.update({
         where: { id },
@@ -313,11 +355,31 @@ export class ProjectDeliverablesService {
       const durPatch = it.durationWeeks === undefined ? {} : { estimatedDurationWeeks: it.durationWeeks };
 
       if (zoneId != null) {
-        await this.prisma.zoneDeliverableTarget.upsert({
-          where: { zoneId_projectDeliverableId: { zoneId, projectDeliverableId: it.id } },
-          create: { zoneId, projectDeliverableId: it.id, targetDate, targetMonths: it.months ?? null, ...durPatch },
-          update: { targetDate, targetMonths: it.months ?? null, ...durPatch },
-        });
+        // 2026-11-03 · DP empty-ZDT prevention (project 40). Same
+        // short-circuit as `setTarget` — see the comment there for
+        // the full rationale. `prior` is already loaded above with
+        // `estimatedDurationWeeks` so we don't need another query to
+        // decide the resulting duration.
+        const incomingTargetIsEmpty = targetDate == null && (it.months ?? null) == null;
+        const resultingDuration = it.durationWeeks === undefined
+          ? ((prior as any)?.estimatedDurationWeeks ?? null)
+          : it.durationWeeks;
+        const resultingRowIsEmpty = incomingTargetIsEmpty && resultingDuration == null;
+
+        if (resultingRowIsEmpty) {
+          // Fully empty — delete the row (idempotent) instead of writing
+          // all-null. Never writes a ghost ZDT that the DP grid would
+          // scope as a connection.
+          await this.prisma.zoneDeliverableTarget.deleteMany({
+            where: { zoneId, projectDeliverableId: it.id },
+          });
+        } else {
+          await this.prisma.zoneDeliverableTarget.upsert({
+            where: { zoneId_projectDeliverableId: { zoneId, projectDeliverableId: it.id } },
+            create: { zoneId, projectDeliverableId: it.id, targetDate, targetMonths: it.months ?? null, ...durPatch },
+            update: { targetDate, targetMonths: it.months ?? null, ...durPatch },
+          });
+        }
 
         // DP Bug B — #3-aftermath cleanup (Option X · 2026-10-21).
         //
