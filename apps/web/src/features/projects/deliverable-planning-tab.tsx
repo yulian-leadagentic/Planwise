@@ -335,6 +335,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       endDate: string | null;
       status: string;
       dependencies?: Array<{ dependsOn?: { id?: number; code?: string | null; name?: string | null; endDate?: string | null } | null }>;
+      // D7-Float (2026-11-03) · Scheduler-computed, surfaces as CP chip
+      // on the Gantt row and as a column in the DeliverableTasksModal.
+      float?: number | null;
+      onCriticalPath?: boolean;
     }[];
     // DP-EMPTY-3 (2026-09-30) — true when this row's deliverable is
     // NOT backed by a real `ProjectDeliverable` row (source was a
@@ -531,6 +535,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         // can flag rows whose children have "endDate < predecessor's
         // endDate" (planning.service now exposes dependsOn.endDate).
         dependencies: Array.isArray((t as any).dependencies) ? (t as any).dependencies : [],
+        // D7-Float (2026-11-03) · Scheduler-computed, surfaces as CP chip
+        // on the Gantt row and as a column in the DeliverableTasksModal.
+        float: (t as any).float ?? null,
+        onCriticalPath: Boolean((t as any).onCriticalPath),
       }));
       // DPG-1 · Compute the top-level zone ancestor for this row. The
       // `idMap` falls back to the zone's own id when the zone IS a root
@@ -643,6 +651,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     for (const d of deliverables) {
       const zts: any[] = Array.isArray((d as any).zoneTargets) ? (d as any).zoneTargets : [];
       for (const zt of zts) {
+        // 2026-11-03 · DP empty-ZDT regression (project 40). A ZDT row
+        // whose three target fields are ALL null is a ghost — it was
+        // written by the old "Save all" grid loop (now fixed in
+        // project-deliverables.service.ts) with no actual planning
+        // intent. Treat it as "not a connection" so the deliverable
+        // falls back to its task-driven zones only. A ZDT with any
+        // real value (date, months, or duration) still counts.
+        if (zt?.targetDate == null && zt?.targetMonths == null && zt?.estimatedDurationWeeks == null) continue;
         if (zt?.zoneId == null) {
           addConnection(d.id, null);
         } else {
@@ -3645,8 +3661,12 @@ function GanttView({
         </div>
       </div>
 
-      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 italic">
-        * Bar length reflects <span className="font-semibold">calendar weeks</span> (not working time). Drag the left edge to change duration, the right edge (or middle) to change the target date. Scrolling backwards past today triggers a confirmation.
+      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 italic flex items-center gap-4 flex-wrap">
+        <span>* Bar length reflects <span className="font-semibold">calendar weeks</span> (not working time). Drag the left edge to change duration, the right edge (or middle) to change the target date. Scrolling backwards past today triggers a confirmation.</span>
+        <span className="inline-flex items-center gap-1.5 not-italic">
+          <span className="inline-block w-3 h-3 rounded border-2 border-red-600 dark:border-red-500 bg-transparent" />
+          <span>Critical path (float = 0d)</span>
+        </span>
       </div>
     </div>
   );
@@ -3834,13 +3854,19 @@ function GanttRow({
   // now taken by status. Users still see when a deliverable is
   // overdue without losing the progress signal.
   const pastHint = isPastTarget ? 'ring-2 ring-red-300 ring-inset' : '';
+  // D7 (2026-11-03) · If any task under this row is on the critical
+  // path, flag the whole bar with a red [CP] chip + bar outline.
+  const anyCritical = Array.isArray((r as any).taskList)
+    ? (r as any).taskList.some((t: any) => t?.onCriticalPath)
+    : false;
+  const critHint = anyCritical ? 'outline outline-2 outline-red-600/70 dark:outline-red-500/70 outline-offset-[1px]' : '';
 
   return (
     <div className="relative h-8 select-none">
       <div
-        className={cn('absolute top-2 h-4 rounded-md shadow-sm cursor-pointer flex items-center justify-between overflow-hidden', barColor, pastHint)}
+        className={cn('absolute top-2 h-4 rounded-md shadow-sm cursor-pointer flex items-center justify-between overflow-hidden', barColor, pastHint, critHint)}
         style={{ left: leftPx, width: widthPx }}
-        title={`${r.deliverableName} — ${targetDate} · ${durationWeeks}w · ${barStatusLabel}${isPastTarget ? ' · target past' : ''} · click to edit tasks`}
+        title={`${r.deliverableName} — ${targetDate} · ${durationWeeks}w · ${barStatusLabel}${isPastTarget ? ' · target past' : ''}${anyCritical ? ' · critical path' : ''} · click to edit tasks`}
         onPointerDown={startDrag('middle')}
       >
         <div
@@ -3857,6 +3883,15 @@ function GanttRow({
           title="Drag to change target date"
         />
       </div>
+      {anyCritical && (
+        <span
+          className="absolute top-2 h-4 inline-flex items-center rounded-[4px] bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[9px] font-bold tracking-wide px-1 pointer-events-none"
+          style={{ left: rightPx + 4 }}
+          title="At least one task on this deliverable is on the project's critical path"
+        >
+          CP
+        </span>
+      )}
       {/* DPG-2 (2026-10-20) — the 3-numbers badge (total · started · done)
           that used to render to the right of the bar was removed per
           client request. The counts remain available via the row's
@@ -3990,6 +4025,9 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                   <th className="px-4 py-2 w-[110px]">Code</th>
                   <th className="px-4 py-2">Name</th>
                   <th className="px-4 py-2 w-[110px]">Status</th>
+                  {/* D7-Float (2026-11-03) · Scheduler-computed slack + CP flag. */}
+                  <th className="px-4 py-2 w-[80px]">Float</th>
+                  <th className="px-4 py-2 w-[60px]">CP</th>
                   <th className="px-4 py-2 w-[160px]">Due date</th>
                 </tr>
               </thead>
@@ -4007,6 +4045,16 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                         t.status === 'blocked' ? 'bg-red-100 text-red-700' :
                         'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
                       )}>{t.status}</span>
+                    </td>
+                    <td className="px-4 py-2 text-slate-700 dark:text-slate-200 tabular-nums text-[11px]">
+                      {t.float != null ? `${t.float}d` : '—'}
+                    </td>
+                    <td className="px-4 py-2">
+                      {t.onCriticalPath ? (
+                        <span className="inline-flex items-center rounded-[4px] bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[9px] font-bold tracking-wide px-1.5 py-0.5">CP</span>
+                      ) : (
+                        <span className="text-slate-300 dark:text-slate-600">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-2">
                       <input

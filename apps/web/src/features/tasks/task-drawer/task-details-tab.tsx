@@ -2,6 +2,7 @@ import { AlertTriangle } from 'lucide-react';
 import { usePermissions } from '@/hooks/use-permissions';
 import { TaskChecklist } from '@/features/tasks/task-checklist';
 import { notify } from '@/lib/notify';
+import { cn } from '@/lib/utils';
 import {
   hasPredecessorConflict,
   getPredecessorConflictMessage,
@@ -153,6 +154,32 @@ export function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field
           />
         </FieldRow>
       </div>
+
+      {/* D7-Float (2026-11-03) · Scheduler-computed slack. The red accent
+          on 0d / Yes signals "any slip delays delivery". */}
+      {(task.float != null || task.onCriticalPath) && (
+        <div className="grid grid-cols-2 gap-x-3 gap-y-2 text-[12px]">
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 dark:text-slate-500 w-24 shrink-0">Float:</span>
+            <span className={cn(
+              'text-sm font-semibold tabular-nums',
+              task.onCriticalPath ? 'text-red-600 dark:text-red-400' : 'text-slate-700 dark:text-slate-200',
+            )}>
+              {task.float != null ? `${task.float}d` : '—'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-400 dark:text-slate-500 w-28 shrink-0">On critical path:</span>
+            {task.onCriticalPath ? (
+              <span className="inline-flex items-center rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400">
+                Yes
+              </span>
+            ) : (
+              <span className="text-sm text-slate-500 dark:text-slate-400">No</span>
+            )}
+          </div>
+        </div>
+      )}
 
       <AssigneeManager
         taskId={task.id}
