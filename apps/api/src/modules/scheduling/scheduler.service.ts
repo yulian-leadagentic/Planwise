@@ -89,6 +89,13 @@ export interface ScheduledTask {
    */
   infeasible?: boolean;
   infeasibleReason?: 'overload' | 'predecessor-conflict';
+  /**
+   * D7 (2026-11-03) · Float = LS − ES in working days; 0 = critical.
+   * Computed post-leveling from the backward + forward passes. Omitted
+   * for skippedByOverride tasks (keep stored dates untouched).
+   */
+  float?: number;
+  onCriticalPath?: boolean;
 }
 
 export interface ScheduleResult {
@@ -789,9 +796,11 @@ export class SchedulerService {
     const taskIds = tasks.map((t) => t.id);
 
     // 3. Load dependency edges whose BOTH ends are inside the loaded set.
+    //    D1-Lag (2026-11-03): each edge now carries lag/lagUnit — the
+    //    forward/backward passes consult them per edge.
     const deps = await this.prisma.taskDependency.findMany({
       where: { taskId: { in: taskIds }, dependsOnId: { in: taskIds } },
-      select: { taskId: true, dependsOnId: true },
+      select: { taskId: true, dependsOnId: true, lag: true, lagUnit: true },
     });
 
     // 4. Load the org calendar (holidays + partial-day rows).
@@ -842,15 +851,28 @@ export class SchedulerService {
     }
 
     // 7. Adjacency maps.
+    //    `successors` / `predecessors` keep plain id→id[] shape for
+    //    Kahn's topo sort. D1-Lag (2026-11-03): the parallel
+    //    `successorEdges` / `predecessorEdges` maps carry per-edge
+    //    `lag`/`lagUnit` for the forward+backward passes.
     const successors = new Map<number, number[]>();
     const predecessors = new Map<number, number[]>();
+    const successorEdges = new Map<number, Array<{ taskId: number; lag: number; lagUnit: LagUnitSched }>>();
+    const predecessorEdges = new Map<number, Array<{ dependsOnId: number; lag: number; lagUnit: LagUnitSched }>>();
     for (const id of taskIds) {
       successors.set(id, []);
       predecessors.set(id, []);
+      successorEdges.set(id, []);
+      predecessorEdges.set(id, []);
     }
     for (const d of deps) {
+      const lag = Math.max(0, Math.floor(Number((d as any).lag) || 0));
+      const lagUnit: LagUnitSched =
+        (d as any).lagUnit === 'CALENDAR_DAYS' ? 'CALENDAR_DAYS' : 'WORKING_DAYS';
       successors.get(d.dependsOnId)?.push(d.taskId);
       predecessors.get(d.taskId)?.push(d.dependsOnId);
+      successorEdges.get(d.dependsOnId)?.push({ taskId: d.taskId, lag, lagUnit });
+      predecessorEdges.get(d.taskId)?.push({ dependsOnId: d.dependsOnId, lag, lagUnit });
     }
 
     // 8. Topological sort (Kahn / BFS). Forward order has sources first.
@@ -882,27 +904,27 @@ export class SchedulerService {
       }
 
       // endDate: terminal → anchor (stored as-is per convention);
-      //          non-terminal → prevWorkingDay(min(successor.startDate))
-      //          (finish-to-start +1 working day — spec rule 3), clamped
-      //          to anchor.
-      const succ = successors.get(taskId) ?? [];
+      //          non-terminal → min over each successor-edge of
+      //          applyLagBackward(succ.start, edge.lag, edge.lagUnit)
+      //          (D1-Lag · spec rule 3 — the +1 base handoff plus any
+      //          per-edge lag), clamped to anchor.
+      const succEdges = successorEdges.get(taskId) ?? [];
       let endDate: Date;
-      if (succ.length === 0) {
+      if (succEdges.length === 0) {
         endDate = anchorDate;
       } else {
-        let minStart: Date | null = null;
-        for (const sId of succ) {
-          const s = scheduled.get(sId);
+        let bestEnd: Date | null = null;
+        for (const edge of succEdges) {
+          const s = scheduled.get(edge.taskId);
           if (!s) continue;
-          if (minStart === null || s.startDate.getTime() < minStart.getTime()) {
-            minStart = s.startDate;
+          const candidate = applyLagBackward(s.startDate, edge.lag, edge.lagUnit, isWorkingDay);
+          if (bestEnd === null || candidate.getTime() < bestEnd.getTime()) {
+            bestEnd = candidate;
           }
         }
-        // D1 (gap = 1 working day): the predecessor must finish ONE
-        // working day BEFORE the successor's start. If no scheduled
-        // successor (e.g. in a cycle the successor was dropped), fall
-        // back to anchor.
-        endDate = minStart !== null ? prevWorkingDay(minStart, isWorkingDay) : anchorDate;
+        // If no scheduled successor (e.g. in a cycle the successor was
+        // dropped), fall back to anchor.
+        endDate = bestEnd !== null ? bestEnd : anchorDate;
         if (endDate.getTime() > anchorDate.getTime()) endDate = anchorDate;
       }
 
@@ -928,21 +950,30 @@ export class SchedulerService {
     const baseDate = snapToWorkingDayForward(baseDateRaw, isWorkingDay);
 
     const earliestFinishByTask = new Map<number, Date>();
+    // D7 (2026-11-03) · Track each task's earliest start as pinned by
+    // the forward pass. Backward pass pins LS (= s.startDate); float =
+    // LS − ES. We keep this map alongside earliestFinishByTask so the
+    // float computation can read ES without re-running the forward
+    // pass.
+    const earliestStartByTask = new Map<number, Date>();
     for (const taskId of topoOrder) {
       const dur = durationByTask.get(taskId)!;
-      const preds = predecessors.get(taskId) ?? [];
+      const predEdges = predecessorEdges.get(taskId) ?? [];
       let earliestStart = baseDate;
-      for (const pId of preds) {
-        const pf = earliestFinishByTask.get(pId);
+      for (const edge of predEdges) {
+        const pf = earliestFinishByTask.get(edge.dependsOnId);
         if (!pf) continue;
-        // D1 (gap = 1 working day): successor starts ONE working day
-        // AFTER the predecessor finishes. baseDate is NOT shifted — the
-        // +1 applies only when there's a predecessor. Multiple preds →
-        // take the max (handoff waits for the latest predecessor).
-        const earliestFromPred = nextWorkingDay(pf, isWorkingDay);
+        // D1-Lag (2026-11-03): successor's earliest start from this
+        // edge = applyLagForward(pred.earliestFinish, edge.lag,
+        // edge.lagUnit). lag=0 preserves the base "next working day"
+        // handoff; lag>0 adds the configured gap. Multiple preds →
+        // take the max across edges (handoff waits for the latest
+        // predecessor along its own edge).
+        const earliestFromPred = applyLagForward(pf, edge.lag, edge.lagUnit, isWorkingDay);
         if (earliestFromPred.getTime() > earliestStart.getTime()) earliestStart = earliestFromPred;
       }
       earliestStart = snapToWorkingDayForward(earliestStart, isWorkingDay);
+      earliestStartByTask.set(taskId, earliestStart);
       const earliestFinish = walkWorkingDaysForward(earliestStart, dur, isWorkingDay);
       earliestFinishByTask.set(taskId, earliestFinish);
     }
@@ -981,17 +1012,47 @@ export class SchedulerService {
     // "force" the plan — just flag.
     for (const [taskId, s] of scheduled) {
       if (s.skippedByOverride || s.infeasible) continue;
-      const preds = predecessors.get(taskId) ?? [];
-      for (const pId of preds) {
-        const p = scheduled.get(pId);
+      const predEdges = predecessorEdges.get(taskId) ?? [];
+      for (const edge of predEdges) {
+        const p = scheduled.get(edge.dependsOnId);
         if (!p) continue;
-        const minStart = nextWorkingDay(p.endDate, isWorkingDay);
+        // D1-Lag (2026-11-03): the minimum legal start for this edge
+        // is applyLagForward(pred.endDate, edge.lag, edge.lagUnit).
+        const minStart = applyLagForward(p.endDate, edge.lag, edge.lagUnit, isWorkingDay);
         if (s.startDate.getTime() < minStart.getTime()) {
           s.infeasible = true;
           s.infeasibleReason = 'predecessor-conflict';
           break;
         }
       }
+    }
+
+    // ─── 10c. D7 · Float + Critical Path ────────────────────────────────
+    // Float (working-day slack) = LS − ES. The backward pass pinned LS
+    // (= s.startDate) and the forward pass pinned ES
+    // (= earliestStartByTask). We re-use ExecutionPlanning.countWorkingDays
+    // so the "working-day count" math has one implementation.
+    for (const [taskId, s] of scheduled) {
+      if (s.skippedByOverride) {
+        s.float = undefined;
+        s.onCriticalPath = false;
+        continue;
+      }
+      const es = earliestStartByTask.get(taskId);
+      const ls = s.startDate;
+      if (!es) {
+        s.float = 0;
+        s.onCriticalPath = true;
+        continue;
+      }
+      let floatDays = 0;
+      if (ls.getTime() > es.getTime()) {
+        const from = new Date(es.getTime() + DAY_MS);
+        floatDays = this.eps.countWorkingDays(from, ls, holidayDates);
+      }
+      // ls < es → infeasible already flagged; treat as critical.
+      s.float = Math.max(0, floatDays);
+      s.onCriticalPath = s.float === 0;
     }
 
     // ─── 11. WRITE-BACK (commit path only) ──────────────────────────
@@ -1004,6 +1065,11 @@ export class SchedulerService {
             data: {
               estimatedStartDate: s.startDate,
               endDate: s.endDate,
+              // D7 (2026-11-03) · Persist float + CP so UI reads do
+              // not have to re-run the scheduler. applyReviewed does
+              // NOT update these — the next full reschedule refreshes.
+              float: s.float ?? null,
+              onCriticalPath: s.onCriticalPath === true,
               // Task.startDate (ACTUAL start) is left untouched by the
               // scheduler. Only `estimatedStartDate` moves on
               // re-schedule.
@@ -1356,5 +1422,71 @@ export function nextWorkingDay(from: Date, isWorkingDay: (d: Date) => boolean): 
     cursor.setUTCDate(cursor.getUTCDate() + 1);
     iter++;
   } while (!isWorkingDay(cursor) && iter < 32);
+  return cursor;
+}
+
+/**
+ * Dependency lag unit — mirrors the Prisma `LagUnit` enum. Kept as a
+ * local string union so the scheduler helpers don't need a Prisma
+ * import. The parent service normalises any wire value into one of
+ * these two literals before invoking the helpers.
+ */
+export type LagUnitSched = 'WORKING_DAYS' | 'CALENDAR_DAYS';
+
+/**
+ * D1-Lag (2026-11-03): compute the earliest successor start given a
+ * predecessor's end plus the edge's lag + unit. WORKING_DAYS lag=0
+ * preserves the base "next working day" handoff; lag=N adds N more
+ * strict working-day steps. CALENDAR_DAYS adds (1 + lag) calendar
+ * days then snaps forward to the next working day.
+ */
+export function applyLagForward(
+  predEnd: Date,
+  lag: number,
+  lagUnit: LagUnitSched,
+  isWorkingDay: (d: Date) => boolean,
+): Date {
+  const safeLag = Math.max(0, Math.floor(Number(lag) || 0));
+  if (lagUnit === 'CALENDAR_DAYS') {
+    const target = new Date(predEnd.getTime());
+    target.setUTCDate(target.getUTCDate() + 1 + safeLag);
+    return snapToWorkingDayForward(target, isWorkingDay);
+  }
+  // WORKING_DAYS: strict next working day, then lag more strict steps.
+  let cursor = nextWorkingDay(predEnd, isWorkingDay);
+  let remaining = safeLag;
+  const hardCap = safeLag * 7 + 32;
+  let iter = 0;
+  while (remaining > 0 && iter++ < hardCap) {
+    cursor = nextWorkingDay(cursor, isWorkingDay);
+    remaining--;
+  }
+  return cursor;
+}
+
+/**
+ * Mirror of applyLagForward for the backward pass. Returns the latest
+ * predecessor-end given a successor's start plus the edge's lag + unit.
+ */
+export function applyLagBackward(
+  succStart: Date,
+  lag: number,
+  lagUnit: LagUnitSched,
+  isWorkingDay: (d: Date) => boolean,
+): Date {
+  const safeLag = Math.max(0, Math.floor(Number(lag) || 0));
+  if (lagUnit === 'CALENDAR_DAYS') {
+    const target = new Date(succStart.getTime());
+    target.setUTCDate(target.getUTCDate() - 1 - safeLag);
+    return snapToWorkingDayBack(target, isWorkingDay);
+  }
+  let cursor = prevWorkingDay(succStart, isWorkingDay);
+  let remaining = safeLag;
+  const hardCap = safeLag * 7 + 32;
+  let iter = 0;
+  while (remaining > 0 && iter++ < hardCap) {
+    cursor = prevWorkingDay(cursor, isWorkingDay);
+    remaining--;
+  }
   return cursor;
 }

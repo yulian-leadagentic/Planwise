@@ -1496,6 +1496,12 @@ model Task {
   estimatedStartDate    DateTime?    @map("estimated_start_date") @db.Date
   startDate             DateTime?    @map("start_date") @db.Date
   endDate               DateTime?    @map("end_date") @db.Date
+  // D7-Float (2026-11-03) — persisted on each successful scheduler
+  // commit. `float` is working-day slack (LS − ES); 0 = on critical
+  // path. Both fields are optional/default so historical rows and
+  // unscheduled tasks render cleanly.
+  float               Int?         @map("float_days")
+  onCriticalPath      Boolean      @default(false) @map("on_critical_path")
   sortOrder             Int          @default(0) @map("sort_order")
   isArchived            Boolean      @default(false) @map("is_archived")
   createdBy             Int          @map("created_by")

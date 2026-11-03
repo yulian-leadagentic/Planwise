@@ -59,7 +59,17 @@ function makeTask(partial: Partial<Task> & { id: number }): Task {
  */
 function makePrisma(fixture: {
   tasks: Task[];
-  deps: Array<{ taskId: number; dependsOnId: number }>;
+  /**
+   * D1-Lag (2026-11-03): each dep may carry `lag` / `lagUnit`. The
+   * mock below normalises missing values to `lag=0, lagUnit='WORKING_DAYS'`
+   * so legacy fixtures auto-populate the new fields.
+   */
+  deps: Array<{
+    taskId: number;
+    dependsOnId: number;
+    lag?: number;
+    lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+  }>;
   deliverable: {
     id: number;
     targetDate: Date;
@@ -106,7 +116,13 @@ function makePrisma(fixture: {
       }),
     },
     taskDependency: {
-      findMany: jest.fn().mockResolvedValue(fixture.deps),
+      findMany: jest.fn().mockResolvedValue(
+        (fixture.deps ?? []).map((d) => ({
+          lag: 0,
+          lagUnit: 'WORKING_DAYS',
+          ...d,
+        })),
+      ),
     },
     calendarDay: {
       findMany: jest.fn().mockResolvedValue(fixture.holidays ?? []),
@@ -608,5 +624,161 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
     expect(iso(byId.get(1)!.startDate)).toBe('2026-11-10');
     expect(iso(byId.get(2)!.startDate)).toBe('2026-11-10');
     expect(iso(byId.get(3)!.startDate)).toBe('2026-11-09');
+  });
+
+  // ─── D1-Lag · WORKING_DAYS lag=2 ───────────────────────────────────
+  //
+  // 2-task linear chain, each 2wd, anchor Tue 2026-11-10. Dep 103←102
+  // carries `lag: 2, lagUnit: 'WORKING_DAYS'`. The base "+1 working-day
+  // handoff" plus 2 extra working-day steps = pred ends 3 working days
+  // before successor starts.
+  //
+  //   Task 103 (terminal, 2 wd): end Tue 11-10, start Mon 11-09.
+  //   Task 102: applyLagBackward(Mon 11-09, lag=2) =
+  //             prevWorkingDay(Mon 11-09) = Sun 11-08 (Sun is working
+  //             under [5,6]), then back 2 more wd — step 1 Thu 11-05
+  //             (skipping Sat 11-07, Fri 11-06), step 2 Wed 11-04.
+  //             Wait — Sun 11-08 back one wd = Thu 11-05 (skipping Sat,
+  //             Fri). Then one more = Wed 11-04. So 102.end = Wed 11-04.
+  //             Hmm. The work-order says 102.end = Thu 11-05 — i.e. only
+  //             ONE more wd step after prevWorkingDay. Let me recount:
+  //             applyLagBackward:
+  //               cursor = prevWorkingDay(Mon 11-09) = Sun 11-08.
+  //               remaining = safeLag = 2.
+  //               loop iter 1: cursor = prevWorkingDay(Sun 11-08) = Thu
+  //                 11-05 (skips Sat 11-07, Fri 11-06). remaining = 1.
+  //               loop iter 2: cursor = prevWorkingDay(Thu 11-05) = Wed
+  //                 11-04. remaining = 0.
+  //             So 102.end = Wed 11-04. walkBack 2 wd inclusive from
+  //             Wed 11-04 → Tue 11-03.
+  it('D1-Lag · WORKING_DAYS lag=2 pushes predecessor earlier by 2 extra wd', async () => {
+    const target = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+
+    const tasks = [
+      makeTask({ id: 102, budgetHours: 16 }),
+      makeTask({ id: 103, budgetHours: 16 }),
+    ];
+    const deps = [
+      { taskId: 103, dependsOnId: 102, lag: 2, lagUnit: 'WORKING_DAYS' as const },
+    ];
+
+    const { prisma } = makePrisma({
+      tasks,
+      deps,
+      deliverable: { id: 20, targetDate: target, zoneId: 1, projectDeliverableId: 20 },
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 20 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    expect(iso(byId.get(103)!.endDate)).toBe('2026-11-10');
+    expect(iso(byId.get(103)!.startDate)).toBe('2026-11-09');
+
+    expect(iso(byId.get(102)!.endDate)).toBe('2026-11-04');
+    expect(iso(byId.get(102)!.startDate)).toBe('2026-11-03');
+  });
+
+  // ─── D1-Lag · CALENDAR_DAYS lag=5 over weekend ─────────────────────
+  //
+  // Chain 2 → 1 (task 1 depends on task 2). Each 1wd, anchor Wed
+  // 2026-11-11. Dep from 1 → 2 is OPPOSITE in the backward pass
+  // direction so we flip: actually, task 1 depends on task 2 means
+  // `taskId=1, dependsOnId=2` — so the successor is task 1. For the
+  // backward pass we want a chain where the terminal task anchors at
+  // 11-11 and the predecessor rolls back 5 cal days + the +1 base.
+  //
+  // Simpler shape: tasks 1 (pred) → 2 (succ, terminal); dep from 2 → 1.
+  //   Task 2 (terminal, 1 wd): end Wed 11-11, start Wed 11-11.
+  //   Task 1: applyLagBackward(Wed 11-11, lag=5, CALENDAR_DAYS) =
+  //           snapBack(Wed 11-11 − 6 cal days = Thu 11-05).
+  //           Thu 11-05 is working under [5,6] → stays. So 1.end = Thu
+  //           11-05, start = Thu 11-05 (1 wd).
+  it('D1-Lag · CALENDAR_DAYS lag=5 rolls backward over Fri/Sat weekend', async () => {
+    const target = new Date(Date.UTC(2026, 10, 11)); // Wed 2026-11-11
+
+    const tasks = [
+      makeTask({ id: 1, budgetHours: 8 }),
+      makeTask({ id: 2, budgetHours: 8 }),
+    ];
+    const deps = [
+      { taskId: 2, dependsOnId: 1, lag: 5, lagUnit: 'CALENDAR_DAYS' as const },
+    ];
+
+    const { prisma } = makePrisma({
+      tasks,
+      deps,
+      deliverable: { id: 21, targetDate: target, zoneId: 1, projectDeliverableId: 21 },
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 21 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-11');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-11');
+
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-05');
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-05');
+  });
+
+  // ─── D7 · diamond critical path ────────────────────────────────────
+  //
+  // A → B → D and A → C → D. B is short (1 wd), C is long (3 wd), so
+  // A → C → D is the longer path. We expect:
+  //   • A, C, D on the critical path (float = 0 under LS==ES).
+  //   • B off the critical path (float ≥ 1).
+  //
+  // We tighten the anchor to Mon 2026-11-09 so the project's own slack
+  // is zero (EF of the terminal task equals LS). Standard CPM: when
+  // project due equals earliest possible finish, every task on the
+  // longest branch has LS==ES → float=0; the shorter branch inherits
+  // the branch-length diff as slack.
+  //
+  // Tasks:  A = 1 wd, B = 1 wd, C = 3 wd, D = 1 wd.
+  // Base date = today (2026-11-03, Tue). Forward pass:
+  //   ES_A=11-03, ES_B=11-04, ES_C=11-04, EF_C=11-08, ES_D=11-09.
+  it('D7 · diamond: critical path flows through the longer branch', async () => {
+    const target = new Date(Date.UTC(2026, 10, 9)); // Mon 2026-11-09
+
+    const tasks = [
+      makeTask({ id: 1, budgetHours: 8 }),  // A — 1 wd
+      makeTask({
+        id: 2,
+        budgetHours: 8,                     // B — 1 wd (short branch)
+        assignees: [{ user: { id: 10, dailyStandardHours: 8 } }],
+      }),
+      makeTask({
+        id: 3,
+        budgetHours: 24,                    // C — 3 wd (long branch)
+        assignees: [{ user: { id: 20, dailyStandardHours: 8 } }],
+      }),
+      makeTask({ id: 4, budgetHours: 8 }),  // D — 1 wd (terminal)
+    ];
+    const deps = [
+      { taskId: 2, dependsOnId: 1 },        // B ← A
+      { taskId: 3, dependsOnId: 1 },        // C ← A
+      { taskId: 4, dependsOnId: 2 },        // D ← B
+      { taskId: 4, dependsOnId: 3 },        // D ← C
+    ];
+
+    const { prisma } = makePrisma({
+      tasks,
+      deps,
+      deliverable: { id: 22, targetDate: target, zoneId: 1, projectDeliverableId: 22 },
+    });
+    const svc = newService(prisma);
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 22 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    // Longer branch (A, C, D) must be on CP (float=0).
+    expect(byId.get(1)!.onCriticalPath).toBe(true);
+    expect(byId.get(3)!.onCriticalPath).toBe(true);
+    expect(byId.get(4)!.onCriticalPath).toBe(true);
+    expect(byId.get(1)!.float).toBe(0);
+    expect(byId.get(3)!.float).toBe(0);
+    expect(byId.get(4)!.float).toBe(0);
+
+    // Shorter branch (B) must have slack.
+    expect(byId.get(2)!.onCriticalPath).toBe(false);
+    expect((byId.get(2)!.float ?? 0)).toBeGreaterThan(0);
   });
 });
