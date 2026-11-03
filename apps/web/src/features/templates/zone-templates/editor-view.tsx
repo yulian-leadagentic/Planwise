@@ -13,7 +13,7 @@ import { RootServicePickerModal } from './root-service-picker-modal';
 import { RootCatalogPickerModal } from './root-catalog-picker-modal';
 import { ManualZoneForm } from './manual-zone-form';
 import { ZONE_DISPLAY } from './constants';
-import { useZoneTypeOptions } from './use-zone-type-options';
+import { useZoneTypeOptions } from '@/hooks/use-zone-type-options';
 
 // ---------------------------------------------------------------------------
 // Editor View

@@ -9,7 +9,7 @@ import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { inputClass, btnPrimary, btnSecondary, ZONE_DISPLAY } from './zone-templates/constants';
 import { EditorView } from './zone-templates/editor-view';
-import { useZoneTypeOptions } from './zone-templates/use-zone-type-options';
+import { useZoneTypeOptions } from '@/hooks/use-zone-type-options';
 
 // ---------------------------------------------------------------------------
 // Main Page (List View)
