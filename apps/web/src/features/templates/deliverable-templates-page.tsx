@@ -241,6 +241,29 @@ function CatalogPickerModal({
 // predecessor-edit expansion. Also hosts the Order + Predecessor(s)
 // cells per planwise-design (mono numbers, slate chip styling, blue
 // primary save button, full dark: branches).
+// T1-Lag (2026-11-03) — per-edge metadata the Deliverable Template
+// screen now stores on every predecessor relation. "רצף" (lag=0) and
+// "המתנה" (lag>0) share the same shape — the UI just paints them
+// differently. Default lagUnit is `WORKING_DAYS` (internal handoff
+// — same calendar the scheduler already uses); the user flips it to
+// `CALENDAR_DAYS` when the reason is external (customer, supplier).
+type PredMeta = {
+  lag: number;
+  lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+  reason: string | null;
+};
+
+// Preset reason suggestions for the Lag "סיבה" input. The input is
+// still free-text (via <datalist>) so an operator can type anything,
+// but these keep the common cases one click away. In sync with the
+// 2026-11-03 lag addendum of planwise-template-task-order-SPEC.md.
+const LAG_REASON_SUGGESTIONS = [
+  'אישור לקוח',
+  'אספקה',
+  'בדיקה פנימית',
+  'אחר',
+] as const;
+
 function SortableTaskRow({
   task,
   allTasks,
@@ -262,7 +285,14 @@ function SortableTaskRow({
   violatedPredecessorName: string;
   onOrderChange: (taskId: number, newSortOrder: number) => void;
   onDeleteTask: (task: any) => void;
-  savePredecessors: (taskId: number, predecessorIds: number[]) => Promise<void>;
+  // T1-Lag (2026-11-03) — carry full per-edge metadata, not just ids.
+  // Each selected predecessor arrives with its own `lag` + `lagUnit` +
+  // optional `reason` so the parent mutation can POST the extended
+  // payload shape the controller now expects.
+  savePredecessors: (
+    taskId: number,
+    predecessors: Array<{ id: number } & PredMeta>,
+  ) => Promise<void>;
   isSavingPreds: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -289,16 +319,32 @@ function SortableTaskRow({
 
   // Predecessor edit mode + draft. Pre-populated from the row's current
   // predecessors so re-opening the picker starts from the saved state.
+  // T1-Lag (2026-11-03) — the draft now carries full PredMeta per id, not
+  // just a Set<number>. Reads existing lag/lagUnit/reason off each row
+  // when the include selected them (the current /templates/:id payload
+  // does, via the service findOne).
   const [editingPreds, setEditingPreds] = useState(false);
-  const currentPredIds = useMemo<number[]>(
-    () => (task.predecessors ?? []).map((p: any) => p.dependsOnTemplateTaskId),
+  const currentPredMap = useMemo<Map<number, PredMeta>>(
+    () => {
+      const map = new Map<number, PredMeta>();
+      for (const p of task.predecessors ?? []) {
+        const id = p?.dependsOnTemplateTaskId ?? p?.dependsOnTemplateTask?.id;
+        if (id == null) continue;
+        map.set(id, {
+          lag: Number(p.lag ?? 0),
+          lagUnit: (p.lagUnit as PredMeta['lagUnit']) ?? 'WORKING_DAYS',
+          reason: p.reason ?? null,
+        });
+      }
+      return map;
+    },
     [task.predecessors],
   );
-  const [predDraft, setPredDraft] = useState<Set<number>>(new Set(currentPredIds));
+  const [predDraft, setPredDraft] = useState<Map<number, PredMeta>>(new Map(currentPredMap));
   const [predError, setPredError] = useState<string | null>(null);
   useEffect(() => {
-    if (!editingPreds) setPredDraft(new Set(currentPredIds));
-  }, [currentPredIds, editingPreds]);
+    if (!editingPreds) setPredDraft(new Map(currentPredMap));
+  }, [currentPredMap, editingPreds]);
 
   const otherTasks = useMemo(
     () => allTasks.filter((t: any) => t.id !== task.id),
@@ -311,10 +357,30 @@ function SortableTaskRow({
     onOrderChange(task.id, next);
   };
 
+  // T1-Lag — toggle adds with sequence defaults (lag=0, WORKING_DAYS,
+  // reason=null); removing drops the whole PredMeta entry. The inline
+  // controls below re-use the same Map setter.
   const togglePredDraft = (id: number) => {
     setPredDraft((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      const next = new Map(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.set(id, { lag: 0, lagUnit: 'WORKING_DAYS', reason: null });
+      }
+      return next;
+    });
+  };
+
+  // Partial update of one predecessor's meta without touching the others.
+  // All three controls (lag, lagUnit, reason) funnel through here so the
+  // Map identity flips on every write and React re-renders deterministically.
+  const updatePredMeta = (id: number, patch: Partial<PredMeta>) => {
+    setPredDraft((prev) => {
+      const existing = prev.get(id);
+      if (!existing) return prev;
+      const next = new Map(prev);
+      next.set(id, { ...existing, ...patch });
       return next;
     });
   };
@@ -322,7 +388,13 @@ function SortableTaskRow({
   const handleSavePreds = async () => {
     setPredError(null);
     try {
-      await savePredecessors(task.id, Array.from(predDraft));
+      const payload = Array.from(predDraft.entries()).map(([id, meta]) => ({
+        id,
+        lag: meta.lag,
+        lagUnit: meta.lagUnit,
+        reason: meta.reason,
+      }));
+      await savePredecessors(task.id, payload);
       setEditingPreds(false);
     } catch (err: any) {
       // Surface the server's cycle-path message inline rather than as a toast
@@ -421,7 +493,7 @@ function SortableTaskRow({
           )}
         </div>
       </td>
-      <td className="px-3 py-2 min-w-[220px] max-w-[320px]">
+      <td className="px-3 py-2 min-w-[260px] max-w-[380px]">
         {editingPreds ? (
           <div className="space-y-1.5">
             {otherTasks.length === 0 ? (
@@ -429,24 +501,168 @@ function SortableTaskRow({
                 No other tasks to pick from.
               </div>
             ) : (
-              <div className="max-h-40 overflow-y-auto rounded-md border border-slate-200 bg-white p-1.5 dark:border-slate-700 dark:bg-slate-900">
-                {otherTasks.map((ot: any) => (
-                  <label
-                    key={ot.id}
-                    className="flex cursor-pointer items-center gap-1.5 rounded px-1.5 py-0.5 text-[11px] hover:bg-slate-100 dark:hover:bg-slate-800"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={predDraft.has(ot.id)}
-                      onChange={() => togglePredDraft(ot.id)}
-                      className="h-3 w-3 rounded border-slate-300 dark:border-slate-600"
-                    />
-                    <span className="truncate text-slate-700 dark:text-slate-200">
-                      {ot.code ? `${ot.code} · ` : ''}
-                      {ot.name}
-                    </span>
-                  </label>
-                ))}
+              <div className="max-h-64 overflow-y-auto rounded-md border border-slate-200 bg-white p-1.5 dark:border-slate-700 dark:bg-slate-900">
+                {otherTasks.map((ot: any) => {
+                  const meta = predDraft.get(ot.id);
+                  const isChecked = meta !== undefined;
+                  // T1-Lag — "המתנה" mode = any lag > 0 OR a reason set.
+                  // We treat both as "wait" semantically; the user can
+                  // flip back to "רצף" at any time (resets lag to 0,
+                  // keeps the reason around under the hood so a
+                  // misclick doesn't erase their note).
+                  const isWait = !!meta && (meta.lag > 0 || !!meta.reason);
+                  return (
+                    <div
+                      key={ot.id}
+                      className={cn(
+                        'rounded-[5px] px-1.5 py-1',
+                        isChecked
+                          ? 'bg-slate-50 dark:bg-slate-800/60'
+                          : 'hover:bg-slate-100 dark:hover:bg-slate-800',
+                      )}
+                    >
+                      <label className="flex cursor-pointer items-center gap-1.5 text-[11px]">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => togglePredDraft(ot.id)}
+                          className="h-3 w-3 rounded border-slate-300 dark:border-slate-600"
+                        />
+                        <span className="truncate text-slate-700 dark:text-slate-200">
+                          {ot.code ? (
+                            <span className="font-mono text-slate-500 dark:text-slate-400">
+                              {ot.code}
+                              {' · '}
+                            </span>
+                          ) : null}
+                          {ot.name}
+                        </span>
+                      </label>
+                      {isChecked && meta && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1 pl-5">
+                          {/* רצף / המתנה segmented control. Orange
+                              accent per planwise-design (Time entity
+                              color) — Lag is a wait concept. */}
+                          <div
+                            className="inline-flex items-center rounded-[5px] border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-900"
+                            role="group"
+                            aria-label="סוג התלות — רצף או המתנה"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => updatePredMeta(ot.id, { lag: 0, reason: null })}
+                              className={cn(
+                                'rounded-[4px] px-2 py-0.5 text-[10px] font-semibold transition-colors',
+                                !isWait
+                                  ? 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100'
+                                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
+                              )}
+                              aria-pressed={!isWait}
+                            >
+                              רצף
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updatePredMeta(ot.id, {
+                                  // Default to 1 day on first flip so the
+                                  // "המתנה" state is immediately visible.
+                                  lag: meta.lag > 0 ? meta.lag : 1,
+                                })
+                              }
+                              className={cn(
+                                'rounded-[4px] px-2 py-0.5 text-[10px] font-semibold transition-colors',
+                                isWait
+                                  ? 'bg-orange-50 text-orange-600 dark:bg-orange-900/40 dark:text-orange-300'
+                                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
+                              )}
+                              aria-pressed={isWait}
+                            >
+                              המתנה
+                            </button>
+                          </div>
+                          {isWait && (
+                            <>
+                              <input
+                                type="number"
+                                min={0}
+                                max={365}
+                                step={1}
+                                value={meta.lag}
+                                onChange={(e) => {
+                                  const raw = Math.max(
+                                    0,
+                                    Math.min(365, Math.floor(Number(e.target.value) || 0)),
+                                  );
+                                  updatePredMeta(ot.id, { lag: raw });
+                                }}
+                                className="w-12 rounded-[5px] border border-orange-200 bg-white px-1.5 py-0.5 text-right font-mono tabular-nums text-[10px] text-slate-700 focus:border-orange-500 focus:outline-none dark:border-orange-800/60 dark:bg-slate-900 dark:text-slate-200"
+                                aria-label={`המתנה בימים לפני ${ot.name}`}
+                                title="Lag (0–365)"
+                              />
+                              <div
+                                className="inline-flex items-center rounded-[5px] border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-900"
+                                role="group"
+                                aria-label="יחידת המתנה"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => updatePredMeta(ot.id, { lagUnit: 'WORKING_DAYS' })}
+                                  className={cn(
+                                    'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
+                                    meta.lagUnit === 'WORKING_DAYS'
+                                      ? 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100'
+                                      : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
+                                  )}
+                                  aria-pressed={meta.lagUnit === 'WORKING_DAYS'}
+                                  title="ימי עבודה — handoff פנימי"
+                                >
+                                  ימי עבודה
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => updatePredMeta(ot.id, { lagUnit: 'CALENDAR_DAYS' })}
+                                  className={cn(
+                                    'rounded-[4px] px-1.5 py-0.5 text-[10px] font-semibold transition-colors',
+                                    meta.lagUnit === 'CALENDAR_DAYS'
+                                      ? 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100'
+                                      : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200',
+                                  )}
+                                  aria-pressed={meta.lagUnit === 'CALENDAR_DAYS'}
+                                  title="ימים קלנדריים — סיבה חיצונית"
+                                >
+                                  קלנדרי
+                                </button>
+                              </div>
+                              <input
+                                type="text"
+                                list="lag-reason-suggestions"
+                                maxLength={255}
+                                value={meta.reason ?? ''}
+                                onChange={(e) =>
+                                  updatePredMeta(ot.id, {
+                                    reason: e.target.value.length > 0 ? e.target.value : null,
+                                  })
+                                }
+                                placeholder="סיבה"
+                                className="w-28 rounded-[5px] border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:placeholder:text-slate-500"
+                                aria-label={`סיבת ההמתנה לפני ${ot.name}`}
+                              />
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {/* Shared datalist for the reason suggestions. Rendered
+                    once per row-editor so the browser's autocomplete
+                    popup picks it up on every reason input above. */}
+                <datalist id="lag-reason-suggestions">
+                  {LAG_REASON_SUGGESTIONS.map((r) => (
+                    <option key={r} value={r} />
+                  ))}
+                </datalist>
               </div>
             )}
             <div className="flex items-center gap-1.5">
@@ -485,14 +701,41 @@ function SortableTaskRow({
                 + add predecessor
               </span>
             ) : (
-              (task.predecessors ?? []).map((p: any) => (
-                <span
-                  key={p.id}
-                  className="rounded-[5px] bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                >
-                  {p.dependsOnTemplateTask?.name ?? `#${p.dependsOnTemplateTaskId}`}
-                </span>
-              ))
+              (task.predecessors ?? []).map((p: any) => {
+                // T1-Lag — paint a "wait" chip in orange when the edge
+                // has lag > 0, otherwise the usual slate "sequence"
+                // chip. The lag number + unit go in mono so the
+                // numbers line up across rows.
+                const lag = Number(p.lag ?? 0);
+                const isWait = lag > 0;
+                const lagLabel = isWait
+                  ? `${lag} ${p.lagUnit === 'CALENDAR_DAYS' ? 'קלנדרי' : 'ימי עבודה'}`
+                  : null;
+                const label = p.dependsOnTemplateTask?.name ?? `#${p.dependsOnTemplateTaskId}`;
+                return (
+                  <span
+                    key={p.id}
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-[5px] px-2 py-0.5 text-[11px] font-semibold',
+                      isWait
+                        ? 'bg-orange-50 text-orange-700 dark:bg-orange-900/40 dark:text-orange-200'
+                        : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
+                    )}
+                    title={
+                      isWait
+                        ? `המתנה ${lag} ${p.lagUnit === 'CALENDAR_DAYS' ? 'ימים קלנדריים' : 'ימי עבודה'}${p.reason ? ` · ${p.reason}` : ''}`
+                        : 'רצף'
+                    }
+                  >
+                    {label}
+                    {isWait && (
+                      <span className="font-mono tabular-nums text-[10px] opacity-80">
+                        +{lagLabel}
+                      </span>
+                    )}
+                  </span>
+                );
+              })
             )}
           </button>
         )}
@@ -637,10 +880,26 @@ function EditorView({
   // holds without the user having to type a new number. Surface the
   // bump with an info toast — the invalidate below pulls the fresh
   // ordered task list so the row reflects the new slot immediately.
+  // T1-Lag (2026-11-03) — payload shape is now `predecessors: [{id,
+  // lag, lagUnit, reason}]` to match the controller's new signature.
+  // The server also accepts legacy `{predecessorIds}` for compat, but
+  // we always send the richer shape so a round-trip through this
+  // mutation preserves user-set lag + unit + reason.
   const setPredecessorsMutation = useMutation({
-    mutationFn: ({ taskId, predecessorIds }: { taskId: number; predecessorIds: number[] }) =>
+    mutationFn: ({
+      taskId,
+      predecessors,
+    }: {
+      taskId: number;
+      predecessors: Array<{
+        id: number;
+        lag: number;
+        lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+        reason: string | null;
+      }>;
+    }) =>
       client
-        .post(`/templates/tasks/${taskId}/predecessors`, { predecessorIds })
+        .post(`/templates/tasks/${taskId}/predecessors`, { predecessors })
         .then((r) => r.data?.data ?? r.data),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
@@ -1105,8 +1364,8 @@ function EditorView({
                         onDeleteTask={async (t) => {
                           if (await confirm(`Delete task "${t.name}"?`)) deleteTaskMutation.mutate(t.id);
                         }}
-                        savePredecessors={async (taskId, predecessorIds) => {
-                          await setPredecessorsMutation.mutateAsync({ taskId, predecessorIds });
+                        savePredecessors={async (taskId, predecessors) => {
+                          await setPredecessorsMutation.mutateAsync({ taskId, predecessors });
                         }}
                         isSavingPreds={setPredecessorsMutation.isPending}
                       />
