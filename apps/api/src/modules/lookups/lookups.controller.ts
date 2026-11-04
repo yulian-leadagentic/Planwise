@@ -88,4 +88,27 @@ export class LookupsController {
   async listOrgUnits() {
     return this.orgUnits.getTree();
   }
+
+  /**
+   * B1 (QA-FIX-ALL 2026-11-04) — lag-reason catalog for the dependency
+   * editor on both the project-task and template-task surfaces. Active
+   * rows only, sorted by `sortOrder ASC, name ASC`. Response shape is
+   * LOCKED to a plain array of `{ id, name, nameHe, sortOrder }` — the
+   * FE agent is writing against this exact contract in parallel; do not
+   * wrap it in a pagination envelope.
+   *
+   * Guarded by `projects:write` (same scope that lets a user edit task
+   * dependencies). The admin surface at `/admin/config/lag-reasons` is
+   * the full-CRUD view and uses the `admin:*` guards instead.
+   */
+  @Get('lookups/lag-reasons')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({ summary: 'Active lag reasons for the dependency editor (projects:write).' })
+  async listLagReasons() {
+    return this.prisma.lagReason.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, nameHe: true, sortOrder: true },
+    });
+  }
 }

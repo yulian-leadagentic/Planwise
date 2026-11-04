@@ -413,6 +413,32 @@ async function main() {
   console.log(`  Seeded ${absenceTypes.length} absence_types`);
 
   // ───────────────────────────────────────────────────────────────────
+  // B1 (QA-FIX-ALL 2026-11-04) — LagReason catalog seed. Three
+  // Yulian-approved rows per `docs/bm2/planwise-QA-FIX-ALL-2026-11-04.md`
+  // §B1. Idempotent: upsert on `name` with update:{} so a re-run never
+  // clobbers a hand-edited admin label (sortOrder / nameHe / isActive
+  // remain authoritative to whatever the admin UI last saved).
+  // ───────────────────────────────────────────────────────────────────
+  const lagReasons: Array<{
+    name: string;
+    nameHe: string;
+    sortOrder: number;
+    isActive: boolean;
+  }> = [
+    { name: 'אישור לקוח',   nameHe: 'אישור לקוח',   sortOrder: 10, isActive: true },
+    { name: 'אספקה',         nameHe: 'אספקה',         sortOrder: 20, isActive: true },
+    { name: 'בדיקה פנימית', nameHe: 'בדיקה פנימית', sortOrder: 30, isActive: true },
+  ];
+  for (const r of lagReasons) {
+    await prisma.lagReason.upsert({
+      where: { name: r.name },
+      update: {},
+      create: r,
+    });
+  }
+  console.log(`  Seeded ${lagReasons.length} lag_reasons`);
+
+  // ───────────────────────────────────────────────────────────────────
   // §14 RBAC multi-role — default system role groups (2026-10-18).
   //
   // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2a) — the seed is

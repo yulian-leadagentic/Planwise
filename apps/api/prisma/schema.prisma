@@ -2604,6 +2604,27 @@ model Position {
   @@map("positions")
 }
 
+/// B1 (QA-FIX-ALL 2026-11-04) — Managed catalog of dependency-lag
+/// reasons (אישור לקוח / אספקה / בדיקה פנימית / …). Surfaced in the
+/// task-dependency editor so planners pick a reason from the catalog
+/// instead of free-typing, while `TaskDependency.reason` and
+/// `TemplateTaskDependency.reason` intentionally stay `String?` with
+/// NO FK — the relation is loose so a stale catalog name on a legacy
+/// dependency row keeps rendering after an admin deletes the row from
+/// the catalog. See docs/bm2/planwise-QA-FIX-ALL-2026-11-04.md §B1.
+model LagReason {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique @db.VarChar(120)
+  nameHe    String?  @db.VarChar(120)
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, sortOrder, name])
+  @@map("lag_reasons")
+}
+
 // User-managed seniority ladder (Junior / Mid / Senior / Principal / …).
 // Empty by default — each org defines their own. Used by EmployeeRole and
 // the RoleCostRate matrix (added in M5).

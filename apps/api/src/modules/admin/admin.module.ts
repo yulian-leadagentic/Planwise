@@ -3,6 +3,7 @@ import { RolesController } from './roles.controller';
 import { ActivityLogController } from './activity-log.controller';
 import { EnumsController } from './enums.controller';
 import { ConfigController } from './config.controller';
+import { LagReasonsController } from './lag-reasons.controller';
 import { ReportsController } from './reports.controller';
 import { BackfillsController } from './backfills.controller';
 import { AdminUsersController } from './users.controller';
@@ -25,6 +26,9 @@ import { UsersModule } from '../users/users.module';
     ActivityLogController,
     EnumsController,
     ConfigController,
+    // B1 (QA-FIX-ALL 2026-11-04) — standalone controller for the
+    // LagReason catalog. Shares the `/admin/config` prefix.
+    LagReasonsController,
     ReportsController,
     BackfillsController,
     // §14 RBAC multi-role (2026-10-18) — PATCH /admin/users/:id/roles
