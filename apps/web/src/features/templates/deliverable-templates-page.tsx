@@ -253,16 +253,152 @@ type PredMeta = {
   reason: string | null;
 };
 
-// Preset reason suggestions for the Lag "סיבה" input. The input is
-// still free-text (via <datalist>) so an operator can type anything,
-// but these keep the common cases one click away. In sync with the
-// 2026-11-03 lag addendum of planwise-template-task-order-SPEC.md.
+// Preset reason suggestions for the Lag "סיבה" popover. The popover
+// still accepts free text via the "אחר…" row so an operator can type
+// anything, but these keep the common cases one click away. In sync
+// with the 2026-11-03 lag addendum of planwise-template-task-order-SPEC.md.
+// Phase B will swap this const for an API source without touching the UI.
 const LAG_REASON_SUGGESTIONS = [
   'אישור לקוח',
   'אספקה',
   'בדיקה פנימית',
   'אחר',
 ] as const;
+
+// Self-rendered reason dropdown. Replaces the previous native
+// <input list=...> + <datalist> pair, which the browser drew via OS
+// chrome and rendered black on dark-mode operating systems. This
+// popover is bg-white in light and bg-slate-900 in dark per the
+// planwise-design skill — never OS-themed.
+function LagReasonPopover({
+  value,
+  onChange,
+  taskName,
+}: {
+  value: string | null;
+  onChange: (reason: string | null) => void;
+  taskName: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [customMode, setCustomMode] = useState(false);
+  const [draft, setDraft] = useState<string>(value ?? '');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setDraft(value ?? '');
+  }, [value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        setCustomMode(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false);
+        setCustomMode(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const commitCustom = () => {
+    const v = draft.trim();
+    onChange(v.length > 0 ? v : null);
+    setOpen(false);
+    setCustomMode(false);
+  };
+
+  const presetOptions = LAG_REASON_SUGGESTIONS.filter((r) => r !== 'אחר');
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => {
+          setOpen((prev) => !prev);
+          setCustomMode(false);
+        }}
+        className="flex w-28 items-center justify-between rounded-[5px] border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-700 hover:border-slate-400 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`סיבת ההמתנה לפני ${taskName}`}
+      >
+        <span className={cn('truncate', !value && 'text-slate-400 dark:text-slate-500')}>
+          {value && value.length > 0 ? value : 'סיבה'}
+        </span>
+        <span aria-hidden="true" className="ml-1 shrink-0 text-slate-400 dark:text-slate-500">
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 z-50 mt-1 min-w-[180px] max-h-64 overflow-auto rounded-md border border-slate-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900"
+          role="listbox"
+        >
+          {!customMode ? (
+            <>
+              {presetOptions.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  role="option"
+                  aria-selected={value === r}
+                  onClick={() => {
+                    onChange(r);
+                    setOpen(false);
+                  }}
+                  className="w-full px-2 py-1 text-right text-[11px] text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  {r}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  const presets: readonly string[] = presetOptions;
+                  setDraft(value && !presets.includes(value) ? value : '');
+                  setCustomMode(true);
+                }}
+                className="w-full border-t border-slate-100 px-2 py-1 text-right text-[11px] text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
+                אחר…
+              </button>
+            </>
+          ) : (
+            <div className="p-1.5">
+              <input
+                type="text"
+                autoFocus
+                maxLength={255}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={commitCustom}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitCustom();
+                  }
+                }}
+                placeholder="סיבה חופשית"
+                className="w-full rounded-[5px] border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:placeholder:text-slate-500"
+                aria-label={`סיבת ההמתנה לפני ${taskName} — טקסט חופשי`}
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SortableTaskRow({
   task,
@@ -634,19 +770,10 @@ function SortableTaskRow({
                                   קלנדרי
                                 </button>
                               </div>
-                              <input
-                                type="text"
-                                list="lag-reason-suggestions"
-                                maxLength={255}
-                                value={meta.reason ?? ''}
-                                onChange={(e) =>
-                                  updatePredMeta(ot.id, {
-                                    reason: e.target.value.length > 0 ? e.target.value : null,
-                                  })
-                                }
-                                placeholder="סיבה"
-                                className="w-28 rounded-[5px] border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] text-slate-700 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:placeholder:text-slate-500"
-                                aria-label={`סיבת ההמתנה לפני ${ot.name}`}
+                              <LagReasonPopover
+                                value={meta.reason}
+                                onChange={(reason) => updatePredMeta(ot.id, { reason })}
+                                taskName={ot.name}
                               />
                             </>
                           )}
@@ -655,14 +782,6 @@ function SortableTaskRow({
                     </div>
                   );
                 })}
-                {/* Shared datalist for the reason suggestions. Rendered
-                    once per row-editor so the browser's autocomplete
-                    popup picks it up on every reason input above. */}
-                <datalist id="lag-reason-suggestions">
-                  {LAG_REASON_SUGGESTIONS.map((r) => (
-                    <option key={r} value={r} />
-                  ))}
-                </datalist>
               </div>
             )}
             <div className="flex items-center gap-1.5">
