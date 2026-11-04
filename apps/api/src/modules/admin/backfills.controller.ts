@@ -1,10 +1,14 @@
-import { Controller, Post, Query, UseGuards } from '@nestjs/common';
+import * as fs from 'fs';
+import * as path from 'path';
+
+import { BadRequestException, Controller, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
-import { Prisma } from '@prisma/client';
+import { CalendarDayType, Prisma } from '@prisma/client';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
 import {
@@ -2546,5 +2550,499 @@ export class BackfillsController {
       },
       errors,
     };
+  }
+
+  /**
+   * HR-TESTSET · import (2026-11-04).
+   *
+   * One-shot admin endpoint that loads historical HR data for a Yulian-
+   * curated group of 8 employees (June + September 2026) from the
+   * committed JSON at `docs/bm2/hr-testset-2026.json`. Needed because
+   * `POST /time-entries` is `@OwnData()` — there is no admin path to
+   * seed TimeEntries against ANOTHER user's id. Absences and calendar
+   * days have per-user admin paths but we batch them here so the whole
+   * dataset lands via one call.
+   *
+   * Flow per employee (map by `email` → `User.id`, isActive + non-deleted):
+   *   1. CalendarDay — upsert each holiday (global, keyed on `date`).
+   *      Idempotent via findUnique-then-create; a re-run finds every
+   *      row already present and returns `created: 0`. workingHours
+   *      defaults match `CalendarService`'s type defaults (HOLIDAY=0,
+   *      HOLIDAY_EVE/CHOL_HAMOED=5).
+   *   2. TimeEntry — one row per worked day (`{date, minutes}`). Marked
+   *      with a durable note tag `[HR_TESTSET_IMPORT_2026]` so the
+   *      idempotency check keys on (userId, date, note=marker). Written
+   *      directly via Prisma, NOT via `TimeEntriesService.create` — that
+   *      service is `@OwnData` + requires a projectId, which this
+   *      historical seed intentionally leaves null (bucketId=null,
+   *      taskId=null, projectId=null). isBillable=false because these
+   *      hours are not customer-billable; they exist only to feed the
+   *      HR monthly report.
+   *   3. AbsenceRecord — one row per absence day (`{date, bucket}`).
+   *      Bucket code maps 1:1 to the seeded `AbsenceType.code` catalog
+   *      (vacation/sick/reserve_duty/holiday_eve_leave/chol_hamoed_leave/
+   *      holiday_full). Written directly via Prisma (NOT via
+   *      `HrService.createAbsence`) because the `holiday_*` types were
+   *      deactivated on 2026-10-20 — the service rejects inactive types
+   *      for new user-driven requests, but historical ingest for parity
+   *      against the legacy report must still accept them. `day_off`
+   *      (no seeded type) is aliased to `vacation` per the work order's
+   *      intent. Amount is `1` (full day) for every row; halfDay flag
+   *      on the type is a UI picker hint, not a data constraint.
+   *   4. dailyStandardHours — reported per resolved user. The work
+   *      order says "don't auto-update, just report", so Yulian can
+   *      flip any outlier manually from the HR drawer before kicking
+   *      off `POST /hr/monthly/recompute`.
+   *
+   * Transaction scope: per-employee `$transaction` — a single bad row
+   * (DB constraint violation, FK drift) stops that employee without
+   * poisoning the batch. Errors collected in `errors[]`. Calendar
+   * writes are NOT inside any employee tx (they're global, shared) —
+   * they commit outside the employee loop so a per-employee failure
+   * doesn't orphan the calendar rows.
+   *
+   * Idempotency keys:
+   *   • CalendarDay: unique `date` column.
+   *   • TimeEntry: (userId, date, note=marker, deletedAt=null). The
+   *     marker column lets a later cleanup (hard-delete every HR
+   *     testset row) run via a single WHERE on the note. Pre-fetched
+   *     per user into a Set<ms> for O(1) lookup.
+   *   • AbsenceRecord: (userId, dateFrom, absenceTypeId). Pre-fetched
+   *     per user into a Set<"yyyy-mm-dd:typeId">.
+   *
+   * dryRun (any truthy query param value: `1`, `true`, `yes`, `on`) →
+   * read + report, no writes. Both branches return the exact same
+   * response shape; a diff of two responses confirms what the real
+   * run will land. Expected counts on first run: ~71 TimeEntries in
+   * Sep + ~160 in Jun, ~84 absences in Sep + a few in Jun, 7 calendar
+   * holidays (Sep only; Jun has none).
+   *
+   * Date handling: every input date `YYYY-MM-DD` is parsed into UTC
+   * midnight (`Date.UTC(y, m-1, d)`) so a `@db.Date` column round-trips
+   * byte-stable regardless of the API host's timezone — the DB stores
+   * the date portion, Prisma reads it back as UTC midnight, and the
+   * idempotency Set keys compare cleanly.
+   *
+   * NOT in scope for this endpoint — Yulian triggers these separately:
+   *   • `POST /hr/monthly/recompute` for 2026-06 and 2026-09 after a
+   *     real run (rolls up the new TimeEntries / AbsenceRecords into
+   *     `HrMonthly`).
+   *   • Any FE page — hits the endpoint via Postman/curl.
+   */
+  @Post('import-hr-testset')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'HR · import test group (8 employees, Jun+Sep 2026) from docs/bm2/hr-testset-2026.json (idempotent; ?dryRun=1|true|yes|on for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runImportHrTestset(
+    @Query('dryRun') dryRunRaw: string | undefined,
+    @CurrentUser() actor: any,
+  ) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+    const actorId: number | undefined = actor?.id;
+    if (!actorId) {
+      throw new BadRequestException('Admin actor required (missing JWT user id)');
+    }
+
+    // ─── 1. Load the committed JSON ──────────────────────────────
+    // Lives at `<repo>/docs/bm2/hr-testset-2026.json`. At runtime
+    // `__dirname` is `apps/api/dist/modules/admin` (prod) or
+    // `apps/api/src/modules/admin` (ts-jest / dev); both need 5
+    // `..` steps up to the repo root.
+    const jsonPath = path.resolve(
+      __dirname,
+      '..',
+      '..',
+      '..',
+      '..',
+      '..',
+      'docs',
+      'bm2',
+      'hr-testset-2026.json',
+    );
+    let raw: string;
+    try {
+      raw = fs.readFileSync(jsonPath, 'utf8');
+    } catch (err) {
+      throw new BadRequestException(
+        `Cannot read testset JSON at ${jsonPath}: ${(err as Error).message}`,
+      );
+    }
+    let data: HrTestset;
+    try {
+      data = JSON.parse(raw) as HrTestset;
+    } catch (err) {
+      throw new BadRequestException(
+        `Invalid JSON in testset file: ${(err as Error).message}`,
+      );
+    }
+
+    const employees = Array.isArray(data.employees) ? data.employees : [];
+    const monthKeys = Object.keys(data.months ?? {}).sort();
+    const scanned = { employees: employees.length, months: monthKeys };
+
+    // ─── 2. Resolve bucket code → AbsenceType row ────────────────
+    // The seeded `absence_types` catalog carries the exact codes the
+    // JSON uses (no translation step needed). `day_off` is the sole
+    // alias — the work order includes it for completeness but the
+    // seed has no dedicated row; map to regular vacation. Inactive
+    // rows (holiday_full / holiday_eve_leave / chol_hamoed_leave,
+    // deactivated 2026-10-20) are still resolvable here — the
+    // backfill writes directly via Prisma (not via HrService) so
+    // the service's active-only guard does not fire for history.
+    const BUCKET_TO_CODE: Record<string, string> = {
+      vacation: 'vacation',
+      sick: 'sick',
+      holiday_eve_leave: 'holiday_eve_leave',
+      chol_hamoed_leave: 'chol_hamoed_leave',
+      reserve_duty: 'reserve_duty',
+      holiday_full: 'holiday_full',
+      day_off: 'vacation',
+    };
+    const wantedCodes = Array.from(new Set(Object.values(BUCKET_TO_CODE)));
+    const absenceTypes = await this.prisma.absenceType.findMany({
+      where: { code: { in: wantedCodes } },
+      select: { id: true, code: true, nameHe: true, unit: true, active: true },
+    });
+    const typeByCode = new Map(absenceTypes.map((t) => [t.code, t]));
+
+    // ─── 3. Resolve users by email ──────────────────────────────
+    const emails = employees.map((e) => e.email).filter((e): e is string => !!e);
+    const users =
+      emails.length === 0
+        ? []
+        : await this.prisma.user.findMany({
+            where: {
+              email: { in: emails },
+              deletedAt: null,
+              isActive: true,
+            },
+            select: { id: true, email: true, dailyStandardHours: true },
+          });
+    const userByEmail = new Map(users.map((u) => [u.email, u]));
+
+    const resolved: Array<{
+      email: string;
+      userId: number;
+      dailyStandardHours: number;
+      dailyStandardHoursOk: boolean;
+    }> = [];
+    const skipped: Array<{ email: string; reason: string }> = [];
+    for (const emp of employees) {
+      if (!emp.email) {
+        skipped.push({ email: '(blank)', reason: 'employee row has no email' });
+        continue;
+      }
+      const u = userByEmail.get(emp.email);
+      if (!u) {
+        skipped.push({ email: emp.email, reason: 'no active user' });
+        continue;
+      }
+      const dsh = Number(u.dailyStandardHours);
+      resolved.push({
+        email: emp.email,
+        userId: u.id,
+        dailyStandardHours: dsh,
+        dailyStandardHoursOk: Math.abs(dsh - 8.4) < 1e-9,
+      });
+    }
+
+    // ─── 4. Calendar days — global, scanned once ─────────────────
+    // Deduplicate by date across every month (same date could appear
+    // in multiple months in principle, though the testset keeps them
+    // segregated by YYYY-MM key). UTC midnight so the @db.DateTime
+    // column round-trips byte-stable.
+    const holidayByDate = new Map<
+      string,
+      { date: string; name: string; type: CalendarDayType }
+    >();
+    for (const monthData of Object.values(data.months ?? {})) {
+      for (const h of monthData?.holidays ?? []) {
+        if (!h?.date || !h?.name || !h?.type) continue;
+        if (!holidayByDate.has(h.date)) {
+          holidayByDate.set(h.date, {
+            date: h.date,
+            name: h.name,
+            type: h.type as CalendarDayType,
+          });
+        }
+      }
+    }
+    const uniqueHolidays = Array.from(holidayByDate.values());
+    const holidayDateObjs = uniqueHolidays.map((h) => parseUtcDate(h.date));
+
+    const existingCalendarRows =
+      holidayDateObjs.length === 0
+        ? []
+        : await this.prisma.calendarDay.findMany({
+            where: { date: { in: holidayDateObjs } },
+            select: { date: true },
+          });
+    const existingCalendarMs = new Set(
+      existingCalendarRows.map((r) => r.date.getTime()),
+    );
+
+    let calendarCreated = 0;
+    let calendarWouldCreate = 0;
+    let calendarExisted = 0;
+    for (const h of uniqueHolidays) {
+      const dateObj = parseUtcDate(h.date);
+      if (existingCalendarMs.has(dateObj.getTime())) {
+        calendarExisted++;
+        continue;
+      }
+      calendarWouldCreate++;
+      if (!dryRun) {
+        await this.prisma.calendarDay.create({
+          data: {
+            date: dateObj,
+            name: h.name,
+            type: h.type,
+            workingHours: defaultWorkingHoursForCalendarType(h.type),
+            createdBy: actorId,
+          },
+        });
+        existingCalendarMs.add(dateObj.getTime());
+        calendarCreated++;
+      }
+    }
+
+    // ─── 5. Per-employee time entries + absences ─────────────────
+    const TIME_ENTRY_NOTE_MARKER = '[HR_TESTSET_IMPORT_2026]';
+    const ABSENCE_NOTE = 'HR testset import 2026';
+    let teCreated = 0;
+    let teWouldCreate = 0;
+    let teExisted = 0;
+    let absCreated = 0;
+    let absWouldCreate = 0;
+    let absExisted = 0;
+    const teByMonth: Record<string, number> = {};
+    const absByMonth: Record<string, number> = {};
+    const errors: Array<{ email?: string; code?: string; message: string }> = [];
+
+    for (const emp of employees) {
+      const u = userByEmail.get(emp.email);
+      if (!u) continue; // already in skipped[]
+
+      try {
+        await this.prisma.$transaction(async (tx) => {
+          // Pre-fetch existing marker-tagged TimeEntries for this user.
+          const existingTeRows = await tx.timeEntry.findMany({
+            where: {
+              userId: u.id,
+              note: TIME_ENTRY_NOTE_MARKER,
+              deletedAt: null,
+            },
+            select: { date: true },
+          });
+          const existingTeMs = new Set(
+            existingTeRows.map((r) => r.date.getTime()),
+          );
+
+          // Pre-fetch existing AbsenceRecord keys for this user —
+          // scoped to the catalog of types we might write so the
+          // query stays narrow.
+          const typeIdsInUse = Array.from(typeByCode.values()).map((t) => t.id);
+          const existingAbsRows =
+            typeIdsInUse.length === 0
+              ? []
+              : await tx.absenceRecord.findMany({
+                  where: {
+                    userId: u.id,
+                    absenceTypeId: { in: typeIdsInUse },
+                  },
+                  select: { dateFrom: true, absenceTypeId: true },
+                });
+          const existingAbsKeys = new Set(
+            existingAbsRows.map(
+              (r) => `${toUtcIsoDay(r.dateFrom)}:${r.absenceTypeId}`,
+            ),
+          );
+
+          // Worked days → TimeEntry.
+          for (const [ym, entries] of Object.entries(emp.worked ?? {})) {
+            if (!Array.isArray(entries)) continue;
+            for (const w of entries) {
+              if (!w?.date || typeof w.minutes !== 'number' || w.minutes <= 0) {
+                continue;
+              }
+              const dateObj = parseUtcDate(w.date);
+              if (existingTeMs.has(dateObj.getTime())) {
+                teExisted++;
+                continue;
+              }
+              teWouldCreate++;
+              teByMonth[ym] = (teByMonth[ym] ?? 0) + 1;
+              if (!dryRun) {
+                await tx.timeEntry.create({
+                  data: {
+                    userId: u.id,
+                    date: dateObj,
+                    minutes: w.minutes,
+                    note: TIME_ENTRY_NOTE_MARKER,
+                    projectId: null,
+                    taskId: null,
+                    timeClockId: null,
+                    specialHourBucketId: null,
+                    // Historical seed, not customer-billable hours.
+                    isBillable: false,
+                  },
+                });
+                existingTeMs.add(dateObj.getTime());
+                teCreated++;
+              }
+            }
+          }
+
+          // Absences → AbsenceRecord.
+          for (const [ym, absences] of Object.entries(emp.absences ?? {})) {
+            if (!Array.isArray(absences)) continue;
+            for (const a of absences) {
+              if (!a?.date || !a?.bucket) continue;
+              const code = BUCKET_TO_CODE[a.bucket];
+              if (!code) {
+                errors.push({
+                  email: emp.email,
+                  code: a.bucket,
+                  message: `Unknown bucket code "${a.bucket}" for ${emp.email} on ${a.date}`,
+                });
+                continue;
+              }
+              const type = typeByCode.get(code);
+              if (!type) {
+                errors.push({
+                  email: emp.email,
+                  code,
+                  message: `No AbsenceType with code="${code}" (bucket=${a.bucket}, ${emp.email} on ${a.date}); run the HR seed first`,
+                });
+                continue;
+              }
+              const key = `${a.date}:${type.id}`;
+              if (existingAbsKeys.has(key)) {
+                absExisted++;
+                continue;
+              }
+              absWouldCreate++;
+              absByMonth[ym] = (absByMonth[ym] ?? 0) + 1;
+              if (!dryRun) {
+                const dateObj = parseUtcDate(a.date);
+                await tx.absenceRecord.create({
+                  data: {
+                    userId: u.id,
+                    absenceTypeId: type.id,
+                    dateFrom: dateObj,
+                    dateTo: dateObj,
+                    amount: new Prisma.Decimal(1),
+                    createdById: actorId,
+                    note: ABSENCE_NOTE,
+                  },
+                });
+                existingAbsKeys.add(key);
+                absCreated++;
+              }
+            }
+          }
+        });
+      } catch (err) {
+        errors.push({
+          email: emp.email,
+          message: `Per-employee transaction failed: ${(err as Error).message}`,
+        });
+      }
+    }
+
+    return {
+      dryRun,
+      scanned,
+      resolved,
+      skipped,
+      calendar: {
+        wouldCreate: calendarWouldCreate,
+        created: calendarCreated,
+        existed: calendarExisted,
+      },
+      timeEntries: {
+        wouldCreate: teWouldCreate,
+        created: teCreated,
+        existed: teExisted,
+        byMonth: teByMonth,
+      },
+      absences: {
+        wouldCreate: absWouldCreate,
+        created: absCreated,
+        existed: absExisted,
+        byMonth: absByMonth,
+      },
+      errors,
+    };
+  }
+}
+
+// ─── HR testset local types + helpers ────────────────────────────
+
+/**
+ * Shape of `docs/bm2/hr-testset-2026.json`. Validated at parse time
+ * via runtime nullish checks — this type is only a developer aid.
+ */
+type HrTestset = {
+  source?: string;
+  mapBy?: string;
+  dailyStandardHours?: number;
+  months?: Record<
+    string,
+    {
+      standardDays?: number;
+      holidays?: Array<{ date: string; type: string; name: string }>;
+    }
+  >;
+  employees?: Array<{
+    email: string;
+    legacyId?: string;
+    worked?: Record<string, Array<{ date: string; minutes: number }>>;
+    absences?: Record<string, Array<{ date: string; bucket: string }>>;
+  }>;
+};
+
+/**
+ * Parse `YYYY-MM-DD` into a Date at UTC midnight. Keeps `@db.Date`
+ * columns byte-stable across host timezones (Prisma stores the UTC
+ * date portion and reads it back as UTC midnight).
+ */
+function parseUtcDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
+}
+
+/**
+ * Format a UTC midnight Date back into `YYYY-MM-DD` using UTC
+ * getters — the inverse of {@link parseUtcDate}.
+ */
+function toUtcIsoDay(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Default `CalendarDay.workingHours` for the given type — mirrors
+ * `CalendarService.defaultWorkingHoursForType` (HOLIDAY_EVE /
+ * CHOL_HAMOED = 5h AMEC short-day, HOLIDAY / REST = 0h, REGULAR
+ * never materializes via this path).
+ */
+function defaultWorkingHoursForCalendarType(type: CalendarDayType): number {
+  switch (type) {
+    case CalendarDayType.HOLIDAY_EVE:
+    case CalendarDayType.CHOL_HAMOED:
+      return 5;
+    case CalendarDayType.HOLIDAY:
+    case CalendarDayType.REST:
+      return 0;
+    default:
+      return 0;
   }
 }

@@ -1,0 +1,1490 @@
+{
+ "source": "legacy amec_srs dump (2026-11-03)",
+ "mapBy": "email",
+ "dailyStandardHours": 8.4,
+ "months": {
+  "2026-06": {
+   "standardDays": 22.0,
+   "holidays": []
+  },
+  "2026-09": {
+   "standardDays": 17.5,
+   "holidays": [
+    {
+     "date": "2026-09-13",
+     "type": "HOLIDAY",
+     "name": "ראש השנה"
+    },
+    {
+     "date": "2026-09-20",
+     "type": "HOLIDAY_EVE",
+     "name": "ערב יום כיפור"
+    },
+    {
+     "date": "2026-09-21",
+     "type": "HOLIDAY",
+     "name": "יום כיפור"
+    },
+    {
+     "date": "2026-09-27",
+     "type": "CHOL_HAMOED",
+     "name": "חוה\"מ סוכות"
+    },
+    {
+     "date": "2026-09-28",
+     "type": "CHOL_HAMOED",
+     "name": "חוה\"מ סוכות"
+    },
+    {
+     "date": "2026-09-29",
+     "type": "CHOL_HAMOED",
+     "name": "חוה\"מ סוכות"
+    },
+    {
+     "date": "2026-09-30",
+     "type": "CHOL_HAMOED",
+     "name": "חוה\"מ סוכות"
+    }
+   ]
+  }
+ },
+ "employees": [
+  {
+   "email": "omer.l@amec.co.il",
+   "legacyId": "61",
+   "worked": {
+    "2026-06": [
+     {
+      "date": "2026-06-01",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-02",
+      "minutes": 630
+     },
+     {
+      "date": "2026-06-03",
+      "minutes": 495
+     },
+     {
+      "date": "2026-06-04",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-07",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-09",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-10",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-11",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-14",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-15",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-16",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-17",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-18",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-21",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-22",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-23",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-24",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-25",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-28",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-29",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-30",
+      "minutes": 540
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-01",
+      "minutes": 420
+     },
+     {
+      "date": "2026-09-02",
+      "minutes": 525
+     },
+     {
+      "date": "2026-09-03",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-06",
+      "minutes": 510
+     },
+     {
+      "date": "2026-09-07",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-08",
+      "minutes": 300
+     }
+    ]
+   },
+   "absences": {
+    "2026-06": [
+     {
+      "date": "2026-06-08",
+      "bucket": "sick"
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-09",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-10",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-14",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-15",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-16",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-17",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-20",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-23",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-24",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-27",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-28",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-29",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-30",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-22",
+      "bucket": "sick"
+     }
+    ]
+   }
+  },
+  {
+   "email": "yarden.f@amec.co.il",
+   "legacyId": "41",
+   "worked": {
+    "2026-06": [
+     {
+      "date": "2026-06-01",
+      "minutes": 390
+     },
+     {
+      "date": "2026-06-02",
+      "minutes": 240
+     },
+     {
+      "date": "2026-06-04",
+      "minutes": 210
+     },
+     {
+      "date": "2026-06-07",
+      "minutes": 420
+     },
+     {
+      "date": "2026-06-08",
+      "minutes": 300
+     },
+     {
+      "date": "2026-06-09",
+      "minutes": 360
+     },
+     {
+      "date": "2026-06-10",
+      "minutes": 390
+     },
+     {
+      "date": "2026-06-11",
+      "minutes": 420
+     },
+     {
+      "date": "2026-06-16",
+      "minutes": 375
+     },
+     {
+      "date": "2026-06-17",
+      "minutes": 360
+     },
+     {
+      "date": "2026-06-18",
+      "minutes": 210
+     },
+     {
+      "date": "2026-06-21",
+      "minutes": 300
+     },
+     {
+      "date": "2026-06-22",
+      "minutes": 90
+     },
+     {
+      "date": "2026-06-23",
+      "minutes": 150
+     },
+     {
+      "date": "2026-06-24",
+      "minutes": 300
+     },
+     {
+      "date": "2026-06-25",
+      "minutes": 360
+     },
+     {
+      "date": "2026-06-28",
+      "minutes": 390
+     },
+     {
+      "date": "2026-06-30",
+      "minutes": 90
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-01",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-02",
+      "minutes": 420
+     },
+     {
+      "date": "2026-09-03",
+      "minutes": 420
+     },
+     {
+      "date": "2026-09-06",
+      "minutes": 390
+     },
+     {
+      "date": "2026-09-07",
+      "minutes": 465
+     },
+     {
+      "date": "2026-09-08",
+      "minutes": 390
+     },
+     {
+      "date": "2026-09-09",
+      "minutes": 450
+     },
+     {
+      "date": "2026-09-10",
+      "minutes": 420
+     },
+     {
+      "date": "2026-09-14",
+      "minutes": 360
+     }
+    ]
+   },
+   "absences": {
+    "2026-06": [
+     {
+      "date": "2026-06-14",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-06-15",
+      "bucket": "sick"
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-15",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-16",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-17",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-20",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-22",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-23",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-24",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-27",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-28",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-29",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-30",
+      "bucket": "sick"
+     }
+    ]
+   }
+  },
+  {
+   "email": "gal.h@amec.co.il",
+   "legacyId": "150",
+   "worked": {
+    "2026-06": [
+     {
+      "date": "2026-06-01",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-02",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-03",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-04",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-07",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-08",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-09",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-10",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-11",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-14",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-15",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-16",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-17",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-18",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-21",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-22",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-23",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-24",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-25",
+      "minutes": 540
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-17",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-20",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-22",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-23",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-24",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-27",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-28",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-29",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-30",
+      "minutes": 300
+     }
+    ]
+   },
+   "absences": {
+    "2026-06": [
+     {
+      "date": "2026-06-28",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-06-29",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-06-30",
+      "bucket": "reserve_duty"
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-01",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-02",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-03",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-06",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-07",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-08",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-09",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-10",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-14",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-15",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-16",
+      "bucket": "reserve_duty"
+     }
+    ]
+   }
+  },
+  {
+   "email": "liat.p@amec.co.il",
+   "legacyId": "122",
+   "worked": {
+    "2026-06": [
+     {
+      "date": "2026-06-01",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-02",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-03",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-04",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-07",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-08",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-09",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-10",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-11",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-16",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-17",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-18",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-21",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-22",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-23",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-24",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-25",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-28",
+      "minutes": 450
+     },
+     {
+      "date": "2026-06-29",
+      "minutes": 630
+     },
+     {
+      "date": "2026-06-30",
+      "minutes": 525
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-01",
+      "minutes": 525
+     },
+     {
+      "date": "2026-09-02",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-03",
+      "minutes": 525
+     },
+     {
+      "date": "2026-09-09",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-20",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-22",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-23",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-24",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-27",
+      "minutes": 450
+     },
+     {
+      "date": "2026-09-28",
+      "minutes": 330
+     },
+     {
+      "date": "2026-09-29",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-30",
+      "minutes": 390
+     }
+    ]
+   },
+   "absences": {
+    "2026-06": [
+     {
+      "date": "2026-06-14",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-06-15",
+      "bucket": "vacation"
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-03",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-06",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-07",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-08",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-09",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-10",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-14",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-15",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-16",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-17",
+      "bucket": "reserve_duty"
+     }
+    ]
+   }
+  },
+  {
+   "email": "maor.m@amec.co.il",
+   "legacyId": "127",
+   "worked": {
+    "2026-06": [
+     {
+      "date": "2026-06-01",
+      "minutes": 495
+     },
+     {
+      "date": "2026-06-02",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-03",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-04",
+      "minutes": 465
+     },
+     {
+      "date": "2026-06-07",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-08",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-09",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-10",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-11",
+      "minutes": 465
+     },
+     {
+      "date": "2026-06-14",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-15",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-16",
+      "minutes": 450
+     },
+     {
+      "date": "2026-06-17",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-18",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-21",
+      "minutes": 450
+     },
+     {
+      "date": "2026-06-22",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-23",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-24",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-25",
+      "minutes": 525
+     },
+     {
+      "date": "2026-06-28",
+      "minutes": 555
+     },
+     {
+      "date": "2026-06-29",
+      "minutes": 615
+     },
+     {
+      "date": "2026-06-30",
+      "minutes": 525
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-08",
+      "minutes": 450
+     },
+     {
+      "date": "2026-09-09",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-10",
+      "minutes": 465
+     }
+    ]
+   },
+   "absences": {
+    "2026-06": [],
+    "2026-09": [
+     {
+      "date": "2026-09-01",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-02",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-03",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-06",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-07",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-14",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-15",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-16",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-17",
+      "bucket": "reserve_duty"
+     },
+     {
+      "date": "2026-09-20",
+      "bucket": "reserve_duty"
+     }
+    ]
+   }
+  },
+  {
+   "email": "yael.m@amec.co.il",
+   "legacyId": "51",
+   "worked": {
+    "2026-06": [
+     {
+      "date": "2026-06-01",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-02",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-03",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-04",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-07",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-08",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-09",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-10",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-11",
+      "minutes": 450
+     },
+     {
+      "date": "2026-06-14",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-15",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-16",
+      "minutes": 390
+     },
+     {
+      "date": "2026-06-17",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-18",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-21",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-22",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-23",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-24",
+      "minutes": 600
+     },
+     {
+      "date": "2026-06-25",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-28",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-29",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-30",
+      "minutes": 450
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-01",
+      "minutes": 420
+     },
+     {
+      "date": "2026-09-02",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-03",
+      "minutes": 510
+     },
+     {
+      "date": "2026-09-06",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-07",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-08",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-09",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-10",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-14",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-15",
+      "minutes": 480
+     }
+    ]
+   },
+   "absences": {
+    "2026-06": [],
+    "2026-09": [
+     {
+      "date": "2026-09-16",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-17",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-20",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-22",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-23",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-24",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-27",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-28",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-29",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-30",
+      "bucket": "holiday_eve_leave"
+     }
+    ]
+   }
+  },
+  {
+   "email": "noy.d@amec.co.il",
+   "legacyId": "113",
+   "worked": {
+    "2026-06": [
+     {
+      "date": "2026-06-01",
+      "minutes": 585
+     },
+     {
+      "date": "2026-06-02",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-03",
+      "minutes": 300
+     },
+     {
+      "date": "2026-06-04",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-07",
+      "minutes": 600
+     },
+     {
+      "date": "2026-06-08",
+      "minutes": 300
+     },
+     {
+      "date": "2026-06-09",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-10",
+      "minutes": 495
+     },
+     {
+      "date": "2026-06-11",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-14",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-15",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-16",
+      "minutes": 360
+     },
+     {
+      "date": "2026-06-17",
+      "minutes": 630
+     },
+     {
+      "date": "2026-06-21",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-22",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-23",
+      "minutes": 300
+     },
+     {
+      "date": "2026-06-24",
+      "minutes": 450
+     },
+     {
+      "date": "2026-06-25",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-28",
+      "minutes": 390
+     },
+     {
+      "date": "2026-06-29",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-30",
+      "minutes": 540
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-08",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-09",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-10",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-14",
+      "minutes": 420
+     },
+     {
+      "date": "2026-09-15",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-16",
+      "minutes": 390
+     },
+     {
+      "date": "2026-09-17",
+      "minutes": 420
+     },
+     {
+      "date": "2026-09-27",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-28",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-29",
+      "minutes": 300
+     },
+     {
+      "date": "2026-09-30",
+      "minutes": 300
+     }
+    ]
+   },
+   "absences": {
+    "2026-06": [],
+    "2026-09": [
+     {
+      "date": "2026-09-20",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-22",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-23",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-24",
+      "bucket": "sick"
+     },
+     {
+      "date": "2026-09-01",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-02",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-03",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-06",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-07",
+      "bucket": "vacation"
+     }
+    ]
+   }
+  },
+  {
+   "email": "daniela.t@amec.co.il",
+   "legacyId": "145",
+   "worked": {
+    "2026-06": [
+     {
+      "date": "2026-06-01",
+      "minutes": 555
+     },
+     {
+      "date": "2026-06-02",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-03",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-04",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-07",
+      "minutes": 480
+     },
+     {
+      "date": "2026-06-08",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-09",
+      "minutes": 465
+     },
+     {
+      "date": "2026-06-10",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-11",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-14",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-15",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-16",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-17",
+      "minutes": 510
+     },
+     {
+      "date": "2026-06-18",
+      "minutes": 465
+     },
+     {
+      "date": "2026-06-21",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-22",
+      "minutes": 570
+     },
+     {
+      "date": "2026-06-23",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-24",
+      "minutes": 540
+     },
+     {
+      "date": "2026-06-25",
+      "minutes": 495
+     },
+     {
+      "date": "2026-06-30",
+      "minutes": 570
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-01",
+      "minutes": 390
+     },
+     {
+      "date": "2026-09-02",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-03",
+      "minutes": 570
+     },
+     {
+      "date": "2026-09-09",
+      "minutes": 480
+     },
+     {
+      "date": "2026-09-10",
+      "minutes": 420
+     },
+     {
+      "date": "2026-09-14",
+      "minutes": 435
+     },
+     {
+      "date": "2026-09-15",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-16",
+      "minutes": 525
+     },
+     {
+      "date": "2026-09-17",
+      "minutes": 510
+     },
+     {
+      "date": "2026-09-22",
+      "minutes": 540
+     },
+     {
+      "date": "2026-09-23",
+      "minutes": 510
+     }
+    ]
+   },
+   "absences": {
+    "2026-06": [
+     {
+      "date": "2026-06-28",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-06-29",
+      "bucket": "vacation"
+     }
+    ],
+    "2026-09": [
+     {
+      "date": "2026-09-27",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-28",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-29",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-30",
+      "bucket": "holiday_eve_leave"
+     },
+     {
+      "date": "2026-09-24",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-06",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-07",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-08",
+      "bucket": "vacation"
+     },
+     {
+      "date": "2026-09-20",
+      "bucket": "holiday_eve_leave"
+     }
+    ]
+   }
+  }
+ ]
+}
