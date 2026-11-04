@@ -257,7 +257,9 @@ type PredMeta = {
 // still accepts free text via the "אחר…" row so an operator can type
 // anything, but these keep the common cases one click away. In sync
 // with the 2026-11-03 lag addendum of planwise-template-task-order-SPEC.md.
-// Phase B will swap this const for an API source without touching the UI.
+// B1 (2026-11-04): the popover now sources suggestions from
+// GET /lookups/lag-reasons (useQuery below), with this const as the
+// fallback when the query errors or returns an empty list.
 const LAG_REASON_SUGGESTIONS = [
   'אישור לקוח',
   'אספקה',
@@ -283,6 +285,21 @@ function LagReasonPopover({
   const [customMode, setCustomMode] = useState(false);
   const [draft, setDraft] = useState<string>(value ?? '');
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // B1 (2026-11-04) — pull active lag-reason rows from the API. The
+  // persisted `reason` on TaskDependency / TemplateTaskDependency stays
+  // a plain string (nameHe ?? name) so the row shape of that column
+  // doesn't change; we just source the suggestion list from the admin
+  // catalog instead of the hard-coded const.
+  const lagReasonsQuery = useQuery<Array<{ id: number; name: string; nameHe?: string | null; sortOrder?: number }>>({
+    queryKey: ['lag-reasons'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/lookups/lag-reasons').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+  });
 
   useEffect(() => {
     setDraft(value ?? '');
@@ -317,7 +334,16 @@ function LagReasonPopover({
     setCustomMode(false);
   };
 
-  const presetOptions = LAG_REASON_SUGGESTIONS.filter((r) => r !== 'אחר');
+  // Prefer API rows (nameHe ?? name) and fall back to the hard-coded
+  // const (minus the "אחר" row, which remains its own free-text branch
+  // below) whenever the query errors or returns an empty list.
+  const apiOptions: string[] = (lagReasonsQuery.data ?? [])
+    .map((r) => (r.nameHe ?? r.name ?? '').trim())
+    .filter((s) => s.length > 0);
+  const presetOptions: string[] =
+    lagReasonsQuery.isError || apiOptions.length === 0
+      ? LAG_REASON_SUGGESTIONS.filter((r) => r !== 'אחר')
+      : apiOptions;
 
   return (
     <div ref={containerRef} className="relative">

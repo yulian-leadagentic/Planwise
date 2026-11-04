@@ -31,9 +31,9 @@ import { useConfirm } from '@/components/shared/confirm-dialog';
 // New-Project. Fix: rename the ServiceType tab to "Services" (which is
 // what it actually manages) and add a new "Project Categories" tab wired
 // to the ProjectType table that New-Project actually reads.
-type TabKey = 'zone' | 'projectCategory' | 'service' | 'department' | 'profession' | 'position';
+type TabKey = 'zone' | 'projectCategory' | 'service' | 'department' | 'profession' | 'position' | 'lagReason';
 
-const TAB_VALUES = ['zone', 'projectCategory', 'service', 'department', 'profession', 'position'] as const satisfies readonly TabKey[];
+const TAB_VALUES = ['zone', 'projectCategory', 'service', 'department', 'profession', 'position', 'lagReason'] as const satisfies readonly TabKey[];
 
 // QA4 JT-3 (2026-09-29) — the old "Job Titles" tab renamed to
 // "Qualifications" (matches the partner-drawer rename and the JT-1 split
@@ -47,6 +47,7 @@ const TABS: { value: TabKey; label: string }[] = [
   { value: 'department', label: 'Departments' },
   { value: 'position', label: 'Positions' },
   { value: 'profession', label: 'Qualifications' },
+  { value: 'lagReason', label: 'Lag Reasons' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,11 @@ interface EditState {
   name: string;
   code: string;
   color: string;
+  // B1 (2026-11-04) — Lag Reasons tab extras. Optional so existing
+  // tabs (which never populate them) type-check unchanged.
+  nameHe?: string;
+  sortOrder?: number;
+  isActive?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +105,10 @@ export function TypesPage() {
   const [formName, setFormName] = useState('');
   const [formCode, setFormCode] = useState('');
   const [formColor, setFormColor] = useState('');
+  // B1 (2026-11-04) — extra form fields used only by the Lag Reasons tab.
+  const [formNameHe, setFormNameHe] = useState('');
+  const [formSortOrder, setFormSortOrder] = useState<number>(0);
+  const [formIsActive, setFormIsActive] = useState<boolean>(true);
 
   // Inline edit state
   const [editing, setEditing] = useState<EditState | null>(null);
@@ -343,6 +353,60 @@ export function TypesPage() {
   // the Project types block above — dead code that never rendered.)
 
   // -----------------------------------------------------------------------
+  // Lag Reasons (B1 — 2026-11-04). Admin CRUD lives at
+  // `/admin/config/lag-reasons`; the templates-editor popover reads
+  // `/lookups/lag-reasons` (active-only). Every mutation here
+  // invalidates BOTH keys so the popover picks up changes without a
+  // hard reload.
+  // -----------------------------------------------------------------------
+  const lagReasonsQuery = useQuery({
+    queryKey: ['admin', 'lag-reasons'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: () =>
+      client.get('/admin/config/lag-reasons').then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+    enabled: activeTab === 'lagReason',
+  });
+
+  const invalidateLagReasons = () => {
+    queryClient.invalidateQueries({ queryKey: ['admin', 'lag-reasons'] });
+    queryClient.invalidateQueries({ queryKey: ['lag-reasons'] });
+  };
+
+  const createLagReason = useMutation({
+    mutationFn: (payload: { name: string; nameHe?: string; sortOrder?: number; isActive?: boolean }) =>
+      client.post('/admin/config/lag-reasons', payload).then((r) => r.data),
+    onSuccess: () => {
+      invalidateLagReasons();
+      notify.success('Lag reason created');
+      resetForm();
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to create lag reason'),
+  });
+
+  const updateLagReason = useMutation({
+    mutationFn: ({ id, ...payload }: { id: number; name?: string; nameHe?: string | null; sortOrder?: number; isActive?: boolean }) =>
+      client.patch(`/admin/config/lag-reasons/${id}`, payload).then((r) => r.data),
+    onSuccess: () => {
+      invalidateLagReasons();
+      notify.success('Lag reason updated');
+      setEditing(null);
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to update lag reason'),
+  });
+
+  const deleteLagReason = useMutation({
+    mutationFn: (id: number) => client.delete(`/admin/config/lag-reasons/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      invalidateLagReasons();
+      notify.success('Lag reason deleted');
+    },
+    onError: (err: any) => notify.apiError(err, 'Failed to delete lag reason'),
+  });
+
+  // -----------------------------------------------------------------------
   // Helpers
   // -----------------------------------------------------------------------
   function resetForm() {
@@ -350,6 +414,9 @@ export function TypesPage() {
     setFormName('');
     setFormCode('');
     setFormColor('');
+    setFormNameHe('');
+    setFormSortOrder(0);
+    setFormIsActive(true);
   }
 
   const isLoading =
@@ -358,14 +425,16 @@ export function TypesPage() {
     (activeTab === 'service' && serviceTypesQuery.isLoading) ||
     (activeTab === 'department' && departmentsQuery.isLoading) ||
     (activeTab === 'profession' && professionsQuery.isLoading) ||
-    (activeTab === 'position' && positionsQuery.isLoading);
+    (activeTab === 'position' && positionsQuery.isLoading) ||
+    (activeTab === 'lagReason' && lagReasonsQuery.isLoading);
 
   const isCreating =
     (activeTab === 'projectCategory' && createProjectCategory.isPending) ||
     (activeTab === 'service' && createServiceType.isPending) ||
     (activeTab === 'department' && createDepartment.isPending) ||
     (activeTab === 'profession' && createProfession.isPending) ||
-    (activeTab === 'position' && createPosition.isPending);
+    (activeTab === 'position' && createPosition.isPending) ||
+    (activeTab === 'lagReason' && createLagReason.isPending);
 
   const isSaving =
     updateZoneType.isPending ||
@@ -373,10 +442,11 @@ export function TypesPage() {
     updateServiceType.isPending ||
     updateDepartment.isPending ||
     updateProfession.isPending ||
-    updatePosition.isPending;
+    updatePosition.isPending ||
+    updateLagReason.isPending;
 
   // Build the rows for the active tab
-  const rows: { id: string | number; code: string; name: string; color?: string; static?: boolean; sortOrder?: number }[] =
+  const rows: { id: string | number; code: string; name: string; color?: string; static?: boolean; sortOrder?: number; nameHe?: string; isActive?: boolean }[] =
     useMemo(() => {
       const q = search.toLowerCase().trim();
 
@@ -411,19 +481,34 @@ export function TypesPage() {
           code: (p.code ?? '').toString(),
           name: p.nameHe ? `${p.name} · ${p.nameHe}` : p.name,
         }));
+      } else if (activeTab === 'lagReason') {
+        items = (lagReasonsQuery.data ?? []).map((l: any) => ({
+          id: l.id,
+          code: '',
+          name: l.name ?? '',
+          nameHe: l.nameHe ?? '',
+          sortOrder: l.sortOrder ?? 0,
+          isActive: l.isActive !== false,
+        }));
       }
 
       if (!q) return items;
       return items.filter(
         (r) =>
           r.name.toLowerCase().includes(q) ||
-          r.code.toLowerCase().includes(q),
+          r.code.toLowerCase().includes(q) ||
+          (r.nameHe ?? '').toLowerCase().includes(q),
       );
-    }, [activeTab, search, zoneTypesQuery.data, projectCategoriesQuery.data, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data, positionsQuery.data]);
+    }, [activeTab, search, zoneTypesQuery.data, projectCategoriesQuery.data, serviceTypesQuery.data, departmentsQuery.data, professionsQuery.data, positionsQuery.data, lagReasonsQuery.data]);
 
   const hasColor = activeTab === 'zone' || activeTab === 'projectCategory' || activeTab === 'service';
   const hasCode = activeTab === 'zone' || activeTab === 'projectCategory' || activeTab === 'service' || activeTab === 'department' || activeTab === 'position';
   const hasNumbering = activeTab === 'department';
+  // B1 (2026-11-04) — Lag Reasons columns. Rendered in addition to the
+  // Name column (never replaces it) and never on any other tab.
+  const hasHebrewCol = activeTab === 'lagReason';
+  const hasSortOrderCol = activeTab === 'lagReason';
+  const hasActiveCol = activeTab === 'lagReason';
 
   // -----------------------------------------------------------------------
   // Inline edit handlers
@@ -434,6 +519,11 @@ export function TypesPage() {
       name: row.name,
       code: row.code,
       color: row.color || '',
+      // Lag Reasons extras — harmless on other tabs (undefined is ignored
+      // by the existing save branches).
+      nameHe: row.nameHe ?? '',
+      sortOrder: row.sortOrder ?? 0,
+      isActive: row.isActive ?? true,
     });
   }
 
@@ -520,8 +610,19 @@ export function TypesPage() {
         name: trimmedName,
         code: editing.code.trim() || undefined,
       });
+    } else if (activeTab === 'lagReason') {
+      const trimmedHe = (editing.nameHe ?? '').trim();
+      updateLagReason.mutate({
+        id: editing.id as number,
+        name: trimmedName,
+        // Empty Hebrew → null so the backend clears it rather than
+        // storing an empty string.
+        nameHe: trimmedHe.length > 0 ? trimmedHe : null,
+        sortOrder: Number.isFinite(editing.sortOrder) ? Number(editing.sortOrder) : 0,
+        isActive: editing.isActive !== false,
+      });
     }
-  }, [editing, activeTab, updateZoneType, updateProjectCategory, updateServiceType, updateDepartment, updateProfession, updatePosition, confirm, rows]);
+  }, [editing, activeTab, updateZoneType, updateProjectCategory, updateServiceType, updateDepartment, updateProfession, updatePosition, updateLagReason, confirm, rows]);
 
   // Escape key handler for inline edit
   useEffect(() => {
@@ -561,6 +662,14 @@ export function TypesPage() {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-|-$/g, '');
       createPosition.mutate({ name: trimmedName, code: slug || undefined });
+    } else if (activeTab === 'lagReason') {
+      const trimmedHe = formNameHe.trim();
+      createLagReason.mutate({
+        name: trimmedName,
+        nameHe: trimmedHe.length > 0 ? trimmedHe : undefined,
+        sortOrder: Number.isFinite(formSortOrder) ? Number(formSortOrder) : 0,
+        isActive: formIsActive,
+      });
     }
   }
 
@@ -576,6 +685,7 @@ export function TypesPage() {
       : activeTab === 'zone' ? 'zone type'
       : activeTab === 'projectCategory' ? 'project category'
       : activeTab === 'service' ? 'service type'
+      : activeTab === 'lagReason' ? 'lag reason'
       : 'item';
     // People UX M2d (E-08) — for the two tabs whose values are stored as
     // plain strings on Users, pull the referencing count and inject a
@@ -605,6 +715,7 @@ export function TypesPage() {
     else if (activeTab === 'department') deleteDepartment.mutate(row.id as number);
     else if (activeTab === 'profession') deleteProfession.mutate(row.id as number);
     else if (activeTab === 'position') deletePosition.mutate(row.id as number);
+    else if (activeTab === 'lagReason') deleteLagReason.mutate(row.id as number);
   }
 
   // -----------------------------------------------------------------------
@@ -623,11 +734,16 @@ export function TypesPage() {
   const canAdd = activeTab !== 'zone';
   const canDelete = true;
   const isSimpleList = activeTab === 'profession';
+  // B1 (2026-11-04) — Lag Reasons has its own form layout (Name +
+  // Hebrew + Sort + Active). Flagged here so the generic inline-add
+  // form below can branch cleanly.
+  const isLagReasonForm = activeTab === 'lagReason';
   const addLabel =
     activeTab === 'department' ? 'Add Department' :
     activeTab === 'profession' ? 'Add Qualification' :
     activeTab === 'projectCategory' ? 'Add Category' :
     activeTab === 'service' ? 'Add Service' :
+    activeTab === 'lagReason' ? 'New Lag Reason' :
     'Add Type';
 
   // -----------------------------------------------------------------------
@@ -708,7 +824,7 @@ export function TypesPage() {
             onSubmit={handleSubmit}
             className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/60 px-5 py-4"
           >
-            <div className={`grid grid-cols-1 ${isSimpleList ? 'sm:grid-cols-[1fr]' : hasColor ? 'sm:grid-cols-[1fr_120px_160px]' : 'sm:grid-cols-[1fr_120px]'} gap-3 items-end`}>
+            <div className={`grid grid-cols-1 ${isLagReasonForm ? 'sm:grid-cols-[1fr_1fr_120px_110px]' : isSimpleList ? 'sm:grid-cols-[1fr]' : hasColor ? 'sm:grid-cols-[1fr_120px_160px]' : 'sm:grid-cols-[1fr_120px]'} gap-3 items-end`}>
               <div>
                 <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">
                   Name <span className="text-red-400">*</span>
@@ -721,13 +837,14 @@ export function TypesPage() {
                     activeTab === 'service' ? 'e.g. BIM Coordination, MEP, Structural' :
                     activeTab === 'department' ? 'e.g. Buildings, VDC' :
                     activeTab === 'profession' ? 'e.g. Architect, MEP Engineer' :
+                    activeTab === 'lagReason' ? 'e.g. Customer approval' :
                     'e.g. Civil Engineering'
                   }
                   className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
                   autoFocus
                 />
               </div>
-              {!isSimpleList && (
+              {!isSimpleList && !isLagReasonForm && (
                 <div>
                   <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Code</label>
                   <input
@@ -749,6 +866,41 @@ export function TypesPage() {
                   </div>
                 </div>
               )}
+              {isLagReasonForm && (
+                <>
+                  <div>
+                    <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Hebrew</label>
+                    <input
+                      value={formNameHe}
+                      onChange={(e) => setFormNameHe(e.target.value)}
+                      placeholder="e.g. אישור לקוח"
+                      dir="auto"
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Sort Order</label>
+                    <input
+                      type="number"
+                      value={Number.isFinite(formSortOrder) ? formSortOrder : 0}
+                      onChange={(e) => setFormSortOrder(Number(e.target.value) || 0)}
+                      className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 font-mono focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[13px] font-semibold text-slate-700 dark:text-slate-200 mb-1.5 block">Active</label>
+                    <label className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formIsActive}
+                        onChange={(e) => setFormIsActive(e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                      />
+                      <span className="text-sm text-slate-700 dark:text-slate-200">{formIsActive ? 'Active' : 'Inactive'}</span>
+                    </label>
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex gap-2 mt-4">
               <button type="submit" disabled={isCreating} className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50">
@@ -764,7 +916,7 @@ export function TypesPage() {
         {/* Table */}
         {isLoading ? (
           <div className="p-5">
-            <TableSkeleton rows={5} cols={hasColor ? 5 : 4} />
+            <TableSkeleton rows={5} cols={activeTab === 'lagReason' ? 5 : hasColor ? 5 : 4} />
           </div>
         ) : rows.length === 0 ? (
           <EmptyState
@@ -792,8 +944,18 @@ export function TypesPage() {
                    activeTab === 'profession' ? 'Qualification Name' :
                    activeTab === 'projectCategory' ? 'Category Name' :
                    activeTab === 'service' ? 'Service Name' :
+                   activeTab === 'lagReason' ? 'Name' :
                    'Name'}
                 </th>
+                {hasHebrewCol && (
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">Hebrew</th>
+                )}
+                {hasSortOrderCol && (
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-28">Sort Order</th>
+                )}
+                {hasActiveCol && (
+                  <th className="px-5 py-2.5 text-left text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-24">Active</th>
+                )}
                 <th className="px-5 py-2.5 text-right text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em] w-28">Actions</th>
               </tr>
             </thead>
@@ -827,6 +989,42 @@ export function TypesPage() {
                           className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
                           autoFocus />
                       </td>
+                      {hasHebrewCol && (
+                        <td className="px-5 py-2.5">
+                          <input
+                            value={editing.nameHe ?? ''}
+                            onChange={(e) => setEditing({ ...editing, nameHe: e.target.value })}
+                            onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
+                            placeholder="Hebrew"
+                            dir="auto"
+                            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                          />
+                        </td>
+                      )}
+                      {hasSortOrderCol && (
+                        <td className="px-5 py-2.5">
+                          <input
+                            type="number"
+                            value={Number.isFinite(editing.sortOrder) ? editing.sortOrder : 0}
+                            onChange={(e) => setEditing({ ...editing, sortOrder: Number(e.target.value) || 0 })}
+                            onKeyDown={(e) => { if (e.key === 'Enter') saveEditing(); if (e.key === 'Escape') cancelEditing(); }}
+                            className="w-full px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 font-mono focus:border-blue-500 focus:outline-none"
+                          />
+                        </td>
+                      )}
+                      {hasActiveCol && (
+                        <td className="px-5 py-2.5">
+                          <label className="inline-flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={editing.isActive !== false}
+                              onChange={(e) => setEditing({ ...editing, isActive: e.target.checked })}
+                              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="text-[12px] text-slate-500 dark:text-slate-400">{editing.isActive !== false ? 'Active' : 'Inactive'}</span>
+                          </label>
+                        </td>
+                      )}
                       <td className="px-5 py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button onClick={saveEditing} disabled={isSaving}
@@ -868,6 +1066,23 @@ export function TypesPage() {
                       </td>
                     )}
                     <td className="px-5 py-3 font-medium text-slate-700 dark:text-slate-200">{row.name}</td>
+                    {hasHebrewCol && (
+                      <td className="px-5 py-3 text-slate-600 dark:text-slate-300" dir="auto">
+                        {row.nameHe ? row.nameHe : <span className="text-slate-300 dark:text-slate-600">--</span>}
+                      </td>
+                    )}
+                    {hasSortOrderCol && (
+                      <td className="px-5 py-3 font-mono text-slate-600 dark:text-slate-300">{row.sortOrder ?? 0}</td>
+                    )}
+                    {hasActiveCol && (
+                      <td className="px-5 py-3">
+                        {row.isActive !== false ? (
+                          <span className="inline-flex items-center rounded-[5px] border border-green-200 bg-green-50 px-2 py-0.5 text-[11px] font-semibold text-green-700 dark:border-green-900 dark:bg-green-950/40 dark:text-green-400">Active</span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-[5px] border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400">Inactive</span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-5 py-3 text-right">
                       {canDelete && (
                         <button onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
