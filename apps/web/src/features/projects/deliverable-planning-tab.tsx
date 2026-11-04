@@ -645,6 +645,17 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
       addConnection(dId, topZoneId);
     }
+    // 2026-11-04 · B2 lock (Yulian, Option A). Snapshot the
+    // (deliverableId, topZoneId) pairs created by the task loop above.
+    // The ZDT loop below may only re-assert these pairs — a ZDT alone
+    // never invents a new (deliverable, zone) connection. Non-empty
+    // ZDTs still carry target data for already-connected pairs; that
+    // render path reads `deliverable.zoneTargets[]` directly in `emit`
+    // (see the aggregation block ~L483), independent of this map.
+    const taskConnectedPairs = new Map<number, Set<number | null>>();
+    for (const [dId, set] of connectionsByDeliverable) {
+      taskConnectedPairs.set(dId, new Set(set));
+    }
     // ZDT-driven connections: pre-task planning intent (PM saved a
     // target for the zone before any task was created). Walk every
     // deliverable's zoneTargets[] and roll each one up to its root.
@@ -660,10 +671,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         // real value (date, months, or duration) still counts.
         if (zt?.targetDate == null && zt?.targetMonths == null && zt?.estimatedDurationWeeks == null) continue;
         if (zt?.zoneId == null) {
-          addConnection(d.id, null);
+          // B2 gate: only re-assert when a task of this deliverable
+          // already sits in Project Root (zoneId=null).
+          if (taskConnectedPairs.get(d.id)?.has(null)) addConnection(d.id, null);
         } else {
           const topZoneId = topLevelZoneInfo.idMap.get(zt.zoneId) ?? zt.zoneId;
-          addConnection(d.id, topZoneId);
+          // B2 gate: only re-assert when a task of this deliverable
+          // already landed in this top-zone.
+          if (taskConnectedPairs.get(d.id)?.has(topZoneId)) addConnection(d.id, topZoneId);
         }
       }
     }
