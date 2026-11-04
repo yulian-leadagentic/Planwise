@@ -57,11 +57,39 @@ export class ExecutionBoardService {
     const MAX_PROJECTS = 50;
     const MAX_TASKS = 5000;
 
-    const projects = await this.prisma.project.findMany({
+    const rawProjects = await this.prisma.project.findMany({
       where: projectWhere,
-      select: { id: true, name: true, number: true, status: true },
+      select: {
+        id: true,
+        name: true,
+        number: true,
+        status: true,
+        // A2 (QA-FIX 2026-11-04): expose the project's category set so the
+        // Execution Board can offer a 4th "Categories" filter. The primary
+        // FK (`projectType`) and the multi-select junction rows
+        // (`categoryLinks[].projectType`) are a distinct union per project
+        // — the filter matches a project when its category set intersects
+        // the user's picks (primary OR tag).
+        projectType: { select: { id: true, name: true } },
+        categoryLinks: {
+          select: { projectType: { select: { id: true, name: true } } },
+        },
+      },
       orderBy: { name: 'asc' },
       take: MAX_PROJECTS,
+    });
+
+    // Flatten primary + link types into a single deduped `categories` array
+    // per project so the FE never has to know about the two-sided schema.
+    const projects = rawProjects.map((p) => {
+      const { projectType, categoryLinks, ...rest } = p;
+      const byId = new Map<number, { id: number; name: string }>();
+      if (projectType) byId.set(projectType.id, { id: projectType.id, name: projectType.name });
+      for (const link of categoryLinks) {
+        const pt = link.projectType;
+        if (pt && !byId.has(pt.id)) byId.set(pt.id, { id: pt.id, name: pt.name });
+      }
+      return { ...rest, categories: Array.from(byId.values()) };
     });
 
     const projectIds = projects.map((p) => p.id);

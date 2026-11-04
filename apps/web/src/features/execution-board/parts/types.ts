@@ -58,6 +58,14 @@ export interface Project {
   name: string;
   number: string | null;
   status: string;
+  /**
+   * Distinct union of the project's primary ProjectType and every
+   * ProjectCategoryLink[].projectType — deduped by id. Drives the
+   * 4th "Categories" filter on the Execution Board (A2, 2026-11-04).
+   * Always present on the wire; empty array when the project has
+   * no category at all.
+   */
+  categories: { id: number; name: string }[];
 }
 
 export interface BoardData {

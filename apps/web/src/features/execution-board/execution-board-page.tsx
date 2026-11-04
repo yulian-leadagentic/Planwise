@@ -51,6 +51,11 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   useEffect(() => {
     if (forcedProjectId != null) setProjectIds(new Set([forcedProjectId]));
   }, [forcedProjectId]);
+  // A2 (QA-FIX 2026-11-04): 4th filter — narrow the board to projects whose
+  // category set (primary type + link tags) intersects the user's picks.
+  // Empty set = no filter (all projects). Shape mirrors `projectIds` so the
+  // filter pipeline composes with it rather than replacing it.
+  const [categoryIds, setCategoryIds] = useState<Set<number>>(new Set());
   // Backwards-compat alias for the cluster of legacy reads below
   // (matrix grouping, header visibility, API call optimization). Single
   // value when EXACTLY one project is selected; null otherwise (all or
@@ -282,7 +287,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     // Inline the filter-active check (the memoized isFilterActive const
     // is declared later in the component — referencing it here would hit
     // its TDZ during render).
-    const filterActive = projectIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0 || dueWindow !== 'all';
+    const filterActive = projectIds.size > 0 || categoryIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || !!statusFilter || phaseFilter.size > 0 || dueWindow !== 'all';
     if (!filterActive || !data) return;
     const keys = new Set<string>();
     const addZones = (nodes: ZoneNode[]) => {
@@ -296,7 +301,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       addZones(data.zones[project.id] ?? []);
     }
     setExpandedIds((prev) => new Set([...prev, ...keys]));
-  }, [projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data, dueWindow]);
+  }, [projectIds, categoryIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, data, dueWindow]);
 
   const toggleExpand = useCallback((key: string) => {
     setExpandedIds((prev) => {
@@ -358,6 +363,36 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     return m;
   }, [data?.templates]);
 
+  // A2 (QA-FIX 2026-11-04): options for the 4th "Categories" filter —
+  // the distinct union of every project's category set, sorted by name.
+  // Mirrors the shape MultiSelectFilter expects (same as Projects).
+  const categoryOptions = useMemo(() => {
+    const byId = new Map<number, string>();
+    for (const p of data?.projects ?? []) {
+      for (const c of p.categories ?? []) {
+        if (!byId.has(c.id)) byId.set(c.id, c.name);
+      }
+    }
+    return Array.from(byId, ([value, label]) => ({ value, label })).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    );
+  }, [data?.projects]);
+
+  // A2: resolve the category filter to the project-id set it matches.
+  // Returns `null` when the filter is inactive so callers can short-
+  // circuit without a redundant .size check — mirrors the explicit
+  // "empty = pass-through" contract documented on each filter site
+  // below. A project matches when its distinct category set (primary
+  // type + link tags) intersects the user's picks.
+  const projectIdsMatchingCategory = useMemo<Set<number> | null>(() => {
+    if (categoryIds.size === 0) return null;
+    const matched = new Set<number>();
+    for (const p of data?.projects ?? []) {
+      if ((p.categories ?? []).some((c) => categoryIds.has(c.id))) matched.add(p.id);
+    }
+    return matched;
+  }, [data?.projects, categoryIds]);
+
   // X3 — narrow the option list to deliverables that ACTUALLY appear in
   // the projects currently in scope. Previously the dropdown was built
   // from ALL tasks across ALL projects; picking a name that exists only
@@ -376,6 +411,9 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   const availableServices = useMemo(() => {
     const allTasks = (data?.tasks ?? []).filter((t: any) => {
       if (projectIds.size > 0 && !projectIds.has(t.projectId)) return false;
+      // A2: parallel category gate — empty = pass-through, else the task's
+      // project must be in the category-matched set.
+      if (projectIdsMatchingCategory && !projectIdsMatchingCategory.has(t.projectId)) return false;
       if (phaseFilter.size > 0) {
         const svc = getTaskServiceName(t, deliverableNameToService) ?? '__none__';
         if (!phaseFilter.has(svc)) return false;
@@ -408,7 +446,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
 
     return ordered;
-  }, [data?.tasks, data?.templates, projectIds, phaseFilter, deliverableNameToService]);
+  }, [data?.tasks, data?.templates, projectIds, projectIdsMatchingCategory, phaseFilter, deliverableNameToService]);
 
   // Prune stale picks from the Deliverable filter whenever the Service
   // filter narrows the available options. Without this, a Deliverable
@@ -431,9 +469,12 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // currently in scope. Picks up the project-owned deliverable's service
   // (post-refactor) and falls back to the task's phase / serviceType.
   const availablePhases = useMemo(() => {
-    const allTasks = (data?.tasks ?? []).filter((t: any) =>
-      projectIds.size === 0 ? true : projectIds.has(t.projectId),
-    );
+    const allTasks = (data?.tasks ?? []).filter((t: any) => {
+      if (projectIds.size > 0 && !projectIds.has(t.projectId)) return false;
+      // A2: parallel category gate — see availableServices above.
+      if (projectIdsMatchingCategory && !projectIdsMatchingCategory.has(t.projectId)) return false;
+      return true;
+    });
     const present = new Set<string>();
     for (const t of allTasks) {
       const n = getTaskServiceName(t, deliverableNameToService);
@@ -449,7 +490,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       if (!ordered.includes(n)) ordered.push(n);
     }
     return ordered;
-  }, [data?.tasks, data?.services, projectIds, deliverableNameToService]);
+  }, [data?.tasks, data?.services, projectIds, projectIdsMatchingCategory, deliverableNameToService]);
 
   // Apply client-side filters before the matrix is built. Order matters:
   // deliverable filter narrows by template-phase; date filters trim by endDate.
@@ -463,6 +504,10 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       // every downstream view (Status / Task / Matrix / Zone Tasks) showed
       // all projects regardless of selection (bug, 2026-06-21).
       if (projectIds.size > 0 && !projectIds.has(t.projectId)) return false;
+      // A2: parallel category gate — see availableServices above. Empty
+      // set = pass-through; otherwise the task's project must sit in the
+      // category-matched set (primary type OR link tag intersects).
+      if (projectIdsMatchingCategory && !projectIdsMatchingCategory.has(t.projectId)) return false;
       // Status filter is removed from the Zone Tasks view (Ops backlog
       // #3(b), 2026-08-08). Skip it there even if a stale value lingers
       // from switching from Matrix view.
@@ -490,7 +535,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
       }
       return true;
     });
-  }, [data?.tasks, projectIds, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService, viewMode, dueWindow, execNow]);
+  }, [data?.tasks, projectIds, projectIdsMatchingCategory, serviceFilter, dueFrom, dueTo, onlyWithDue, statusFilter, phaseFilter, deliverableNameToService, viewMode, dueWindow, execNow]);
 
   const { phaseColumns, directMatrix, hasNoPhase, phaseToService } = useMemo(() => {
     const tasks = filteredTasks;
@@ -760,9 +805,15 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     // a Matrix view with 1 project selected (showProjects=false) walked
     // zones of ALL projects at depth 0 — the user saw a mixed jumble of
     // zones that didn't belong to their chosen project.
-    const projectsInScope = projectIds.size === 0
+    const projectsInScope = (projectIds.size === 0
       ? data.projects
-      : data.projects.filter((p) => projectIds.has(p.id));
+      : data.projects.filter((p) => projectIds.has(p.id))
+    ).filter((p) =>
+      // A2: parallel category gate — see filteredTasks. Empty set =
+      // pass-through, so this .filter is a no-op when the user hasn't
+      // picked any category.
+      projectIdsMatchingCategory ? projectIdsMatchingCategory.has(p.id) : true,
+    );
     for (const project of projectsInScope) {
       const zoneTree = data.zones[project.id] ?? [];
       const hasRoot = projectsWithRootTasks.has(project.id);
@@ -788,7 +839,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
     }
 
     return result;
-  }, [data, projectId, projectIds, expandedIds, projectsWithRootTasks]);
+  }, [data, projectId, projectIds, projectIdsMatchingCategory, expandedIds, projectsWithRootTasks]);
 
   // Zone Tasks view — preconfigure the Service filter to the current
   // user's DEPARTMENT service(s) by default (Ops backlog #3(a),
@@ -834,7 +885,7 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
   // guard so the "any filter active" check doesn't spuriously flip the
   // empty-row pruning on a stale status.
   const statusFilterActive = viewMode !== 'zone-tasks' && !!statusFilter;
-  const isFilterActive = projectIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || statusFilterActive || phaseFilter.size > 0;
+  const isFilterActive = projectIds.size > 0 || categoryIds.size > 0 || serviceFilter.size > 0 || !!dueFrom || !!dueTo || onlyWithDue || statusFilterActive || phaseFilter.size > 0;
   const visibleFlatRows = useMemo(() => {
     if (!isFilterActive) return flatRows;
 
@@ -996,6 +1047,19 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
             triggerClassName="w-64"
           />
         )}
+        {/* A2 (QA-FIX 2026-11-04): Categories multi-select — the 4th filter,
+            placed immediately after Projects per spec. Options are the
+            distinct union of every project's category set (primary type +
+            link tags). Picking some narrows the board to projects whose
+            categories intersect the selection; empty = pass-through. */}
+        <MultiSelectFilter
+          options={categoryOptions}
+          selected={categoryIds}
+          onChange={setCategoryIds}
+          placeholder="Categories"
+          title="Filter by category"
+          triggerClassName="w-56"
+        />
         {/* Service (Phase) multi-select — narrows the board to tasks
             belonging to any of the selected Services. Resolved via
             getTaskServiceName so it honors the project-owned deliverable's
