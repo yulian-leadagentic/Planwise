@@ -11,6 +11,7 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UsersService } from '../users/users.service';
+import { ProjectDeliverablesService } from '../project-deliverables/project-deliverables.service';
 import {
   extractServiceMarker,
   resolvePhasesByMarkerNames,
@@ -49,6 +50,11 @@ export class BackfillsController {
     // so historical orphan users land the exact same BP shape
     // that `UsersService.create` writes today, with no drift.
     private readonly usersService: UsersService,
+    // B2.5 (2026-11-05) — the materialize-project-deliverables
+    // backfill delegates to `ProjectDeliverablesService.materializeFromTasks`,
+    // the single source of truth shared with the apply-template path in
+    // `ZonesService` so the two can no longer drift.
+    private readonly projectDeliverables: ProjectDeliverablesService,
   ) {}
 
   /**
@@ -2979,6 +2985,130 @@ export class BackfillsController {
       },
       errors,
     };
+  }
+
+  /**
+   * B1 (QA-FIX-ALL 2026-11-04) — LagReason catalog seed backfill.
+   *
+   * The LagReason catalog (schema + migration + admin CRUD + lookups
+   * endpoint) shipped in 33cc866 + 800f5ea, but Railway does NOT run
+   * `prisma:seed` on deploy, so `lag_reasons` is empty on staging /
+   * prod. The `prisma/seed.ts` block at §B1 performs 3 upserts; this
+   * endpoint runs the exact same upserts so Yulian can trigger the
+   * seed via a POST once per environment.
+   *
+   * Seeds (verbatim from `apps/api/prisma/seed.ts`):
+   *   1. "אישור לקוח"   · nameHe "אישור לקוח"   · sortOrder 10
+   *   2. "אספקה"         · nameHe "אספקה"         · sortOrder 20
+   *   3. "בדיקה פנימית" · nameHe "בדיקה פנימית" · sortOrder 30
+   *
+   * Idempotent — upserts on `name` (unique). On update we re-assert
+   * nameHe + sortOrder + isActive=true so a row that drifted (admin
+   * toggled isActive off, or the sortOrder was hand-edited) snaps
+   * back to the catalog default. The seed.ts block uses `update:{}`
+   * to preserve admin edits; this endpoint is slightly stricter per
+   * the work-order spec, which is intentional: the endpoint exists
+   * so Yulian can re-seed to a known-good state after a drift.
+   *
+   * Response:
+   *   { created: number, updated: number, skipped: number,
+   *     rows: Array<{id, name, action}> }
+   *
+   * Query param `?dryRun=1|true|yes|on` → read-only; returns the
+   * plan (which rows would be created vs updated) without writing.
+   * Mirrors the convention used by `import-hr-testset` and
+   * `materialize-project-deliverables`.
+   */
+  @Post('lag-reasons-seed')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Backfill · LagReason catalog seed (3 rows, idempotent; ?dryRun=1|true|yes|on for plan-only)',
+  })
+  @ApiQuery({ name: 'dryRun', required: false, type: String, description: 'Truthy → plan only, no writes' })
+  async runLagReasonsSeed(@Query('dryRun') dryRunRaw?: string) {
+    const dryRun =
+      typeof dryRunRaw === 'string' &&
+      ['1', 'true', 'yes', 'on'].includes(dryRunRaw.toLowerCase());
+
+    // Verbatim from apps/api/prisma/seed.ts §B1 — three Yulian-approved
+    // rows. Keep this list in lockstep with the seed; any addition
+    // there should be mirrored here.
+    const SEEDS: Array<{
+      name: string;
+      nameHe: string;
+      sortOrder: number;
+    }> = [
+      { name: 'אישור לקוח',   nameHe: 'אישור לקוח',   sortOrder: 10 },
+      { name: 'אספקה',         nameHe: 'אספקה',         sortOrder: 20 },
+      { name: 'בדיקה פנימית', nameHe: 'בדיקה פנימית', sortOrder: 30 },
+    ];
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const rows: Array<{ id: number; name: string; action: 'created' | 'updated' | 'skipped' }> = [];
+
+    for (const s of SEEDS) {
+      const existing = await this.prisma.lagReason.findUnique({
+        where: { name: s.name },
+        select: { id: true, nameHe: true, sortOrder: true, isActive: true },
+      });
+
+      if (!existing) {
+        if (dryRun) {
+          created++;
+          // id=0 as a placeholder in dry-run; real id is only known
+          // after the upsert actually writes.
+          rows.push({ id: 0, name: s.name, action: 'created' });
+        } else {
+          const r = await this.prisma.lagReason.create({
+            data: {
+              name: s.name,
+              nameHe: s.nameHe,
+              sortOrder: s.sortOrder,
+              isActive: true,
+            },
+            select: { id: true, name: true },
+          });
+          created++;
+          rows.push({ id: r.id, name: r.name, action: 'created' });
+        }
+        continue;
+      }
+
+      // Determine if the row needs an update — nameHe / sortOrder /
+      // isActive must match the catalog defaults.
+      const needsUpdate =
+        existing.nameHe !== s.nameHe ||
+        existing.sortOrder !== s.sortOrder ||
+        existing.isActive !== true;
+
+      if (!needsUpdate) {
+        skipped++;
+        rows.push({ id: existing.id, name: s.name, action: 'skipped' });
+        continue;
+      }
+
+      if (dryRun) {
+        updated++;
+        rows.push({ id: existing.id, name: s.name, action: 'updated' });
+      } else {
+        const r = await this.prisma.lagReason.update({
+          where: { name: s.name },
+          data: {
+            nameHe: s.nameHe,
+            sortOrder: s.sortOrder,
+            isActive: true,
+          },
+          select: { id: true, name: true },
+        });
+        updated++;
+        rows.push({ id: r.id, name: r.name, action: 'updated' });
+      }
+    }
+
+    return { dryRun, created, updated, skipped, rows };
   }
 }
 
