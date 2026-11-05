@@ -10,13 +10,17 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { withQueryTimeout } from '../../common/query-timeout';
+import { ProjectDeliverablesService } from '../project-deliverables/project-deliverables.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { buildCatalogMap, resolveBudget as resolveBudgetUtil } from './zones.util';
 
 @Injectable()
 export class ZonesService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private projectDeliverables: ProjectDeliverablesService,
+  ) {}
 
   /**
    * Loads the Task Catalog and returns a map of code → { defaultBudgetHours, defaultBudgetAmount }.
@@ -68,111 +72,20 @@ export class ZonesService {
    * with the same name is reused (upsert-by-name), and the marker in
    * `description` is left untouched (existing display paths still read
    * it as a fallback / provenance).
+   *
+   * 2026-11-05 — this helper now DELEGATES to
+   * `ProjectDeliverablesService.materializeFromTasks(projectId, { tx })`,
+   * the single source of truth shared with the admin backfill endpoint
+   * `POST /admin/backfills/materialize-project-deliverables`. The two
+   * paths can no longer drift on the resolution rules (template.name
+   * vs `[SERVICE:…]` marker), the group-by-name upsert, or the repoint
+   * step.
    */
   private async materializeProjectDeliverablesForProject(
     tx: Prisma.TransactionClient,
     projectId: number,
   ): Promise<void> {
-    const tasks = await tx.task.findMany({
-      where: {
-        projectId,
-        projectDeliverableId: null,
-        deletedAt: null,
-      },
-      select: {
-        id: true,
-        description: true,
-        deliverableTemplateId: true,
-        phaseId: true,
-        deliverableTemplate: { select: { id: true, name: true } },
-      },
-    });
-    if (tasks.length === 0) return;
-
-    type PlanGroup = {
-      name: string;
-      sourceTemplateId: number | null;
-      phaseIds: Set<number>;
-      taskIds: number[];
-    };
-    const groups = new Map<string, PlanGroup>();
-
-    for (const t of tasks) {
-      let resolvedName: string | null = null;
-      let sourceTemplateId: number | null = null;
-
-      if (t.deliverableTemplateId != null && t.deliverableTemplate?.name) {
-        resolvedName = t.deliverableTemplate.name;
-        sourceTemplateId = t.deliverableTemplate.id;
-      } else if (t.description) {
-        // Inline the marker parser rather than pulling the shared util
-        // from a different module — keeps zones.service self-contained.
-        const m = t.description.match(/^\[SERVICE:(.+)\]$/);
-        if (m) resolvedName = m[1];
-      }
-      if (!resolvedName) continue;
-
-      let g = groups.get(resolvedName);
-      if (!g) {
-        g = { name: resolvedName, sourceTemplateId, phaseIds: new Set<number>(), taskIds: [] };
-        groups.set(resolvedName, g);
-      }
-      if (g.sourceTemplateId == null && sourceTemplateId != null) {
-        g.sourceTemplateId = sourceTemplateId;
-      }
-      if (t.phaseId != null) g.phaseIds.add(t.phaseId);
-      g.taskIds.push(t.id);
-    }
-    if (groups.size === 0) return;
-
-    // Reuse existing rows by name (idempotent) — a second apply on the
-    // same project doesn't duplicate.
-    const existing = await tx.projectDeliverable.findMany({
-      where: {
-        projectId,
-        deletedAt: null,
-        name: { in: Array.from(groups.keys()) },
-      },
-      select: { id: true, name: true },
-    });
-    const existingByName = new Map(existing.map((e) => [e.name, e.id]));
-
-    // Tail-append sortOrder — matches ProjectDeliverablesService.create
-    // (max + 1000 with midpoint headroom).
-    const last = await tx.projectDeliverable.findFirst({
-      where: { projectId, deletedAt: null },
-      orderBy: [{ sortOrder: 'desc' }, { id: 'desc' }],
-      select: { sortOrder: true },
-    });
-    let nextSortOrder = (last?.sortOrder ?? 0) + 1000;
-
-    for (const g of groups.values()) {
-      let deliverableId = existingByName.get(g.name);
-      if (deliverableId == null) {
-        // Seed serviceId only when every task in the group agrees on
-        // phaseId. Disagreement → serviceId stays null (edited by PM
-        // later); doesn't block the create.
-        const phaseIds = Array.from(g.phaseIds);
-        const sourcePhaseId = phaseIds.length === 1 ? phaseIds[0] : null;
-        const created = await tx.projectDeliverable.create({
-          data: {
-            projectId,
-            name: g.name,
-            sourceTemplateId: g.sourceTemplateId,
-            serviceId: sourcePhaseId,
-            sortOrder: nextSortOrder,
-            status: 'active',
-          },
-          select: { id: true },
-        });
-        deliverableId = created.id;
-        nextSortOrder += 1000;
-      }
-      await tx.task.updateMany({
-        where: { id: { in: g.taskIds }, projectDeliverableId: null },
-        data: { projectDeliverableId: deliverableId },
-      });
-    }
+    await this.projectDeliverables.materializeFromTasks(projectId, { tx });
   }
 
   async findAll(projectId: number) {

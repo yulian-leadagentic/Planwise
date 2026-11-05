@@ -10,6 +10,7 @@ import { AdminUsersController } from './users.controller';
 import { AuthorizationModule } from '../../common/authorization.module';
 import { BusinessPartnersModule } from '../business-partners/business-partners.module';
 import { UsersModule } from '../users/users.module';
+import { ProjectDeliverablesModule } from '../project-deliverables/project-deliverables.module';
 
 @Module({
   // People UX M6 — ReportsController re-uses BusinessPartnersService for
@@ -20,7 +21,12 @@ import { UsersModule } from '../users/users.module';
   // backfill reuses `UsersService.ensureBpForUser` +
   // `syncEmployeeBpRole` so the historical 26 orphan users land the
   // exact same BP shape that `UsersService.create` writes today.
-  imports: [AuthorizationModule, BusinessPartnersModule, UsersModule],
+  //
+  // B2.5 (2026-11-05) — BackfillsController's
+  // materialize-project-deliverables endpoint delegates to
+  // `ProjectDeliverablesService.materializeFromTasks` so the admin
+  // backfill and the apply-template path can no longer drift.
+  imports: [AuthorizationModule, BusinessPartnersModule, UsersModule, ProjectDeliverablesModule],
   controllers: [
     RolesController,
     ActivityLogController,
