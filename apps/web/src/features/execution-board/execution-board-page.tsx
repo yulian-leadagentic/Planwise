@@ -7,8 +7,10 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
+import { CategoryMultiSelect } from '@/components/shared/category-multi-select';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { useMe } from '@/hooks/use-auth';
+import { useProjectTypes } from '@/hooks/use-projects';
 import {
   userPreferencesApi,
   USER_PREF_KEYS,
@@ -365,18 +367,37 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
 
   // A2 (QA-FIX 2026-11-04): options for the 4th "Categories" filter —
   // the distinct union of every project's category set, sorted by name.
-  // Mirrors the shape MultiSelectFilter expects (same as Projects).
+  // Uses `useProjectTypes()` for color (the project payload's
+  // `p.categories[]` rows don't carry it) and keeps only types actually
+  // referenced by the current project set so the dropdown stays scoped
+  // to what the user can usefully filter on.
+  const { data: projectTypes } = useProjectTypes();
   const categoryOptions = useMemo(() => {
-    const byId = new Map<number, string>();
+    const inUse = new Set<number>();
+    for (const p of data?.projects ?? []) {
+      for (const c of p.categories ?? []) inUse.add(c.id);
+    }
+    const colorById = new Map<number, string | null>();
+    const nameById = new Map<number, string>();
+    for (const t of projectTypes ?? []) {
+      colorById.set(t.id, t.color ?? null);
+      nameById.set(t.id, t.name);
+    }
+    // Fallback to the name on the project's own category row if the
+    // types catalog hasn't loaded yet — avoids a flash of empty labels.
     for (const p of data?.projects ?? []) {
       for (const c of p.categories ?? []) {
-        if (!byId.has(c.id)) byId.set(c.id, c.name);
+        if (!nameById.has(c.id)) nameById.set(c.id, c.name);
       }
     }
-    return Array.from(byId, ([value, label]) => ({ value, label })).sort((a, b) =>
-      a.label.localeCompare(b.label),
-    );
-  }, [data?.projects]);
+    return Array.from(inUse)
+      .map((id) => ({
+        value: id,
+        label: nameById.get(id) ?? '',
+        color: colorById.get(id) ?? null,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [data?.projects, projectTypes]);
 
   // A2: resolve the category filter to the project-id set it matches.
   // Returns `null` when the filter is inactive so callers can short-
@@ -1051,8 +1072,13 @@ export function ExecutionBoardPage({ forcedProjectId }: { forcedProjectId?: numb
             placed immediately after Projects per spec. Options are the
             distinct union of every project's category set (primary type +
             link tags). Picking some narrows the board to projects whose
-            categories intersect the selection; empty = pass-through. */}
-        <MultiSelectFilter
+            categories intersect the selection; empty = pass-through.
+
+            Uses the dedicated `CategoryMultiSelect` (not the generic
+            `MultiSelectFilter`) so each row shows the Project-Type color
+            dot, matching the `ProjectCategoryEditor` dropdown visual
+            on the project detail header. */}
+        <CategoryMultiSelect
           options={categoryOptions}
           selected={categoryIds}
           onChange={setCategoryIds}
