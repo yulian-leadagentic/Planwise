@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ProjectDeliverablesService } from '../project-deliverables/project-deliverables.service';
 import { taskCompletionValue } from '../../common/task-completion';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -18,6 +19,8 @@ export class TasksService {
     private eventEmitter: EventEmitter2,
     private activityLog: ActivityLogService,
     private notifications: NotificationsService,
+    // 2026-11-08 · DP-EMPTY-3 defensive hook — see `create()` below.
+    private projectDeliverables: ProjectDeliverablesService,
   ) {}
 
   /**
@@ -249,6 +252,21 @@ export class TasksService {
         },
       },
     });
+
+    // DP-EMPTY-3 defensive hook (2026-11-08). Any future ad-hoc task
+    // create that sets `deliverableTemplateId` without a matching
+    // `projectDeliverableId` would re-introduce the orphan state the DP
+    // grid surfaces as "NOT YET PLANNED · run backfill to plan". The
+    // template-apply and zone-duplicate paths already materialize in
+    // their own transactions; this covers everything else (direct API
+    // writes, future surfaces) with one idempotent pass.
+    if (
+      task.projectId != null &&
+      dto.deliverableTemplateId != null &&
+      task.projectDeliverableId == null
+    ) {
+      await this.projectDeliverables.materializeFromTasks(task.projectId);
+    }
 
     await this.activityLog.logTaskCreated({
       actorUserId: userId,

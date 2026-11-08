@@ -689,6 +689,14 @@ export class ZonesService {
       };
 
       const result = await copyZoneRecursive(zone, zone.parentId, '', zone.depth, newName);
+      // DP-EMPTY-3 (2026-11-08) — mirror applyTaskTemplate /
+      // applyProjectTemplate: the recursive copy above carries
+      // `deliverableTemplateId` forward on every task but never sets
+      // `projectDeliverableId`, which leaves the DP-EMPTY-2 invariant
+      // broken for the duplicated subtree. Materialize once at the end
+      // of the tx: within-project duplicates reuse the existing PD by
+      // name (no new row); cross-project duplicates get a fresh PD.
+      await this.materializeProjectDeliverablesForProject(tx, zone.projectId);
       return result;
     }, { timeout: 30_000 });
   }

@@ -443,18 +443,51 @@ export class ProjectDeliverablesService {
    * link (project_deliverable_id is set NULL by the FK's ON DELETE SET NULL on
    * a hard delete; for the soft delete we null it explicitly so the board
    * doesn't render a phantom column).
+   *
+   * 2026-11-08 · DP-EMPTY-3 (the "run backfill to plan" regression):
+   * nulling `projectDeliverableId` on linked tasks without re-running the
+   * materialize pass left tasks with `deliverableTemplateId != null && pd
+   * IS NULL` — the invariant violation the DP grid surfaces as the
+   * synthetic "NOT YET PLANNED" chip. We now re-materialize inside the
+   * same tx: tasks whose template link survived get a fresh
+   * ProjectDeliverable (grouped by `deliverableTemplate.name` / legacy
+   * `[SERVICE:…]` marker, same rules as the admin backfill) and are
+   * repointed before the tx commits. From the user's POV: the row the PM
+   * deleted is gone, but the tasks' template link is still there, so the
+   * system materializes a fresh row for them rather than dropping them
+   * into the orphan bucket. The DP grid stays consistent with its
+   * invariant "every task with `deliverableTemplateId != null` has a
+   * `projectDeliverableId`".
    */
   async remove(id: number) {
-    await this.prisma.$transaction([
-      this.prisma.task.updateMany({
+    // Resolve projectId BEFORE the soft-delete: `getProjectId` filters
+    // `deletedAt: null`, so a post-tx lookup would miss the row we just
+    // archived. The lookup is outside the tx but reads an immutable
+    // column (projectId never changes after creation).
+    const row = await this.prisma.projectDeliverable.findFirst({
+      where: { id, deletedAt: null },
+      select: { projectId: true },
+    });
+    if (!row) throw new NotFoundException('Deliverable not found');
+    const projectId = row.projectId;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.task.updateMany({
         where: { projectDeliverableId: id },
         data: { projectDeliverableId: null },
-      }),
-      this.prisma.projectDeliverable.update({
+      });
+      await tx.projectDeliverable.update({
         where: { id },
         data: { deletedAt: new Date(), status: 'archived' },
-      }),
-    ]);
+      });
+      // Re-materialize: any task we just unlinked that still carries a
+      // `deliverableTemplateId` (or a `[SERVICE:…]` description marker)
+      // gets a fresh ProjectDeliverable in-tx and its
+      // `projectDeliverableId` repointed. Tasks that carried neither
+      // (ad-hoc tasks the PM had attached to this PD) stay orphaned —
+      // correct, since there's no template link to resolve them by.
+      await this.materializeFromTasks(projectId, { tx });
+    });
     return { id, deleted: true };
   }
 
