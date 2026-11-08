@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
+import { useProjectTabState } from './use-project-tab-state';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Calendar, CalendarClock, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, Filter, Lock } from 'lucide-react';
 import client from '@/api/client';
@@ -112,23 +113,61 @@ const zoneTypeLabel = (type?: string | null): string =>
 export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   const queryClient = useQueryClient();
   const todayStr = new Date().toISOString().slice(0, 10);
-  const [baseDate, setBaseDate] = useState<string>(todayStr);
-  const [viewMode, setViewMode] = useState<'table' | 'gantt'>('table');
-  const [filterHasDue, setFilterHasDue] = useState<'' | 'yes' | 'no'>('');
+  // Persisted per-project so switching to the Planning tab (which
+  // unmounts this one — project-detail-page gates tab content with
+  // `{tab === … && <Tab/>}`) and back keeps the user's toolbar state
+  // (2026-11-08). baseDate ties the Gantt grid origin — losing it
+  // reset every row's preview months+date pair on tab return.
+  const [baseDate, setBaseDate] = useProjectTabState<string>(
+    projectId,
+    'dp-base-date',
+    todayStr,
+  );
+  const [viewMode, setViewMode] = useProjectTabState<'table' | 'gantt'>(
+    projectId,
+    'dp-view-mode',
+    'table',
+  );
+  const [filterHasDue, setFilterHasDue] = useProjectTabState<'' | 'yes' | 'no'>(
+    projectId,
+    'dp-filter-has-due',
+    '',
+  );
   // PR-012 · Service (aka Phase) multi-select filter for the Deliverable
   // view. Options are the unique service names present on the current
   // rows — sourced from `deliverable.service.name` (ProjectDeliverable →
   // Phase), same lookup the row's "Service" cell already renders.
   // Empty set = no filter (all rows). OR-within-filter; ANDs with the
   // due-date select above and the per-column text filters inside
-  // TableView. Local state (not URL-backed) to match the other filters
-  // on this tab. UI-only: the save/PERT/date-shift pipeline sees ALL
-  // rows (this filter never enters the save payload).
-  const [serviceFilter, setServiceFilter] = useState<Set<string>>(new Set());
+  // TableView. Persisted as an Array<string> (Sets don't JSON-serialise)
+  // and rehydrated into a Set at render-time so every call-site that
+  // reads it (`serviceFilter.has(name)`) is unchanged (2026-11-08).
+  // UI-only: the save/PERT/date-shift pipeline sees ALL rows (this
+  // filter never enters the save payload).
+  const [serviceFilterArr, setServiceFilterArr] = useProjectTabState<string[]>(
+    projectId,
+    'dp-service-filter',
+    [],
+  );
+  const serviceFilter = useMemo(() => new Set(serviceFilterArr), [serviceFilterArr]);
+  const setServiceFilter = (v: Set<string> | ((prev: Set<string>) => Set<string>)) => {
+    if (typeof v === 'function') {
+      setServiceFilterArr((prev) => Array.from(v(new Set(prev))));
+    } else {
+      setServiceFilterArr(Array.from(v));
+    }
+  };
   // Once at least one deliverable has a saved target, default to
-  // Gantt view (client feedback 2026-08-02, item 6). Only flips once
-  // per mount — the user can still switch back to Table manually.
-  const [defaultedToGantt, setDefaultedToGantt] = useState(false);
+  // Gantt view (client feedback 2026-08-02, item 6). Persisted per-
+  // project so the auto-flip only happens once per project — without
+  // it, a tab round-trip would re-fire the effect, undo the user's
+  // manual "back to Table" pick, and force-flip to Gantt again
+  // (2026-11-08).
+  const [defaultedToGantt, setDefaultedToGantt] = useProjectTabState<boolean>(
+    projectId,
+    'dp-defaulted-to-gantt',
+    false,
+  );
 
   // DP-6 · Deliverable-group collapse state, LIFTED here so Table and
   // Gantt share one source of truth (toggling in one view is reflected
@@ -1780,6 +1819,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         />
       ) : viewMode === 'table' ? (
         <TableView
+          projectId={projectId}
           rows={visibleRows}
           drafts={drafts}
           setDrafts={setDrafts}
@@ -1830,6 +1870,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
  * plain text (no chips/pills) per client 2026-08-02 revision.
  */
 function TableView({
+  projectId,
   rows,
   drafts,
   setDrafts,
@@ -1844,6 +1885,11 @@ function TableView({
   topLevelZoneTypeMap,
   topLevelZoneSortOrderMap,
 }: {
+  // Needed for `useProjectTabState` (per-project persistence of sort,
+  // per-column filters, open-filter popover). Without it a tab round-
+  // trip to Planning and back drops the user's sort + column filters
+  // (TableView unmounts with its parent DeliverablePlanningTab).
+  projectId: number;
   rows: any[];
   drafts: Record<string, string>;
   setDrafts: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
@@ -1880,12 +1926,22 @@ function TableView({
   // filters like every other numeric column.
   type ColKey = 'deliverable' | 'zone' | 'service' | 'months' | 'duration' | 'hours' | 'target';
   const ALL_COLS: ColKey[] = ['deliverable', 'zone', 'service', 'months', 'duration', 'hours', 'target'];
-  const [colFilters, setColFilters] = useState<Record<ColKey, string[]>>({
-    deliverable: [], zone: [], service: [], months: [], duration: [], hours: [], target: [],
-  });
+  // Persisted per-project so tab round-trips keep the sort + per-column
+  // filter picks (2026-11-08). `openFilter` is the popover-open flag and
+  // stays in-memory — a dropdown that re-opens on remount surprises the
+  // user more than it helps.
+  const [colFilters, setColFilters] = useProjectTabState<Record<ColKey, string[]>>(
+    projectId,
+    'dp-table-col-filters',
+    { deliverable: [], zone: [], service: [], months: [], duration: [], hours: [], target: [] },
+  );
   const [openFilter, setOpenFilter] = useState<null | ColKey>(null);
   // Sort state — one column at a time; asc/desc toggle.
-  const [sort, setSort] = useState<{ col: ColKey; dir: 'asc' | 'desc' }>({ col: 'deliverable', dir: 'asc' });
+  const [sort, setSort] = useProjectTabState<{ col: ColKey; dir: 'asc' | 'desc' }>(
+    projectId,
+    'dp-table-sort',
+    { col: 'deliverable', dir: 'asc' },
+  );
 
   // Effective raw values a row contributes to each column (for both
   // the filter matcher and the "available options" derivation).

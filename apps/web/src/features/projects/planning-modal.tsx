@@ -566,6 +566,47 @@ function useBulkCollapseSync(setCollapsed: (b: boolean) => void) {
   }, [version]);
 }
 
+// ─── Per-group collapse persistence (tab-switch survival, 2026-11-08) ────────
+//
+// Each collapsible card (ZoneGroup, HierarchicalZoneGroup,
+// ProjectRootDeliverableGroup) used to own its `collapsed` boolean via
+// `useState`. The Planning tab is rendered conditionally inside the
+// project-detail page (`{tab === 'planning' && <PlanningTab …>}`), so
+// switching to Deliverable Planning (or any other tab) unmounts the
+// whole subtree and destroys every local state. The user's "I expanded
+// Basement" intent evaporated with it.
+//
+// This context backs a single `Record<string, boolean>` of collapsed
+// group ids owned by `PlanningView` and persisted per-project via
+// `useProjectTabState`. Each card calls `usePersistedCollapse(id, …)`
+// instead of a bare `useState(false)` — the setter writes back into the
+// record, so toggling one card re-renders only that card (the record
+// change is observed through the context, and each card only reads its
+// own key). An absent key means "default" — brand-new groups don't
+// have to pre-register.
+//
+// The bulk Collapse all / Expand all signal still goes through
+// BulkCollapseContext + useBulkCollapseSync: because every card's
+// setter writes to the shared record, a bulk flip trivially persists
+// alongside manual toggles.
+interface PersistedCollapseCtx {
+  get: (id: string, defaultValue: boolean) => boolean;
+  set: (id: string, value: boolean) => void;
+}
+const PersistedCollapseContext = createContext<PersistedCollapseCtx | null>(null);
+
+function usePersistedCollapse(
+  id: string,
+  defaultValue = false,
+): [boolean, (v: boolean) => void] {
+  const ctx = useContext(PersistedCollapseContext);
+  // Fallback for sub-trees rendered outside the provider (e.g. standalone
+  // previews / tests) — degrade to the historical in-memory behaviour.
+  const [local, setLocal] = useState(defaultValue);
+  if (!ctx) return [local, setLocal];
+  return [ctx.get(id, defaultValue), (v: boolean) => ctx.set(id, v)];
+}
+
 // ─── Per-column task filters (Y1) ────────────────────────────────────────────
 //
 // Excel-style filter funnel on each column header of the planning grid.
@@ -3554,7 +3595,11 @@ function ZoneNameWithRename({
 
 function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, thClass, handleSort, sortIcon, selectedTaskIds, onToggleTask, onToggleMany }: any) {
   const confirm = useConfirm();
-  const [collapsed, setCollapsed] = useState(false);
+  // Persisted per-project so tab-switch away from Planning (and back)
+  // keeps the user's expand/collapse choice (2026-11-08). Keyed under
+  // `zone:<id>` — the id namespace is unique vs. the Hierarchical
+  // variant (`hzone:*`) and the sub-group buckets (`grp:*`).
+  const [collapsed, setCollapsed] = usePersistedCollapse(`zone:${zone.id}`, false);
   useBulkCollapseSync(setCollapsed);
   // Finance permission — controls visibility of the Amount + Actual ₪
   // columns on the flat task table inside this zone group. Headers
@@ -3827,7 +3872,12 @@ function SortableZone(props: any) {
 
 function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, onDeleteTask, onDeleteZone, onDuplicateZone, thClass, handleSort, sortIcon, depth, selectedTaskIds, onToggleTask, onToggleMany, zoneDragHandleProps }: any) {
   const confirm = useConfirm();
-  const [collapsed, setCollapsed] = useState(false);
+  // Per-project persistence — see ZoneGroup for the rationale. The
+  // Hierarchical variant uses its own `hzone:*` namespace so a zone id
+  // reused in both views can't collide (the flat ZoneGroup renders a
+  // top-level zone, HierarchicalZoneGroup renders the tree form; both
+  // can coexist in principle under different group-by picks).
+  const [collapsed, setCollapsed] = usePersistedCollapse(`hzone:${zone.id}`, false);
   useBulkCollapseSync(setCollapsed);
   const cols = usePlanningColumns();
   // Multi-level group-by — when a sub-dimension is selected (Deliverable
@@ -4292,7 +4342,14 @@ function ProjectRootDeliverableGroup({
   // (or when no sub-context is active) — fall through to leaves.
   const nestedDim: GroupDim | null = subCtx?.order[groupDepth + 1] ?? null;
   const renderNested = nestedDim != null && tasks.length > 0;
-  const [collapsed, setCollapsed] = useState(false);
+  // Persisted per-project — see ZoneGroup for the rationale. The id
+  // prefers `dndId` when the card is draggable (unique + stable across
+  // renames), else falls back to a composite of kind + label + depth
+  // (the orphan "No Deliverable" bucket + non-draggable sub-group cards
+  // need SOMETHING distinct-per-card, and these three happen to be
+  // their natural identity).
+  const persistedCollapseId = dndId ?? `grp:${kind ?? 'none'}:${label}:${groupDepth}`;
+  const [collapsed, setCollapsed] = usePersistedCollapse(persistedCollapseId, false);
   useBulkCollapseSync(setCollapsed);
   // useSortable is always called (hooks must be unconditional) but we
   // only attach listeners + transforms when dndId is provided.
@@ -5127,7 +5184,14 @@ function PlanningView({ projectId }: { projectId: number }) {
   // for backwards-compat with the (unchanged) hiddenByGrouping / kind /
   // rename-eligibility branches at the top-level render — the branch
   // predicates stayed the same; only the state shape changed.
-  const [groupOrder, setGroupOrder] = useState<GroupDim[]>(['zone']);
+  // Persisted per-project so switching to another project tab and back
+  // (or back from the Deliverable Planning tab, which unmounts this
+  // view) restores the user's grouping picks (2026-11-08).
+  const [groupOrder, setGroupOrder] = useProjectTabState<GroupDim[]>(
+    projectId,
+    'planning-group-order',
+    ['zone'],
+  );
   // Derived scalar alias — every consumer below reads `groupBy` the
   // same way the old scalar state was read (top-level render branches
   // on 'zone', kind switch on 'phase'/'service', etc.). Keeps the diff
@@ -5161,9 +5225,53 @@ function PlanningView({ projectId }: { projectId: number }) {
     setBulkCollapsed((v) => !v);
     setBulkVersion((v) => v + 1);
   };
-  const [search, setSearch] = useState('');
-  const [sortCol, setSortCol] = useState('');
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  // Search text + sort pair — persisted per-project so tab-switch
+  // round-trips keep them (2026-11-08). Sort is bundled into a single
+  // object so a single `useProjectTabState` slot survives both the
+  // column AND the direction atomically (a half-persisted sort would
+  // either mis-render the header arrows or dead-end the sort).
+  const [search, setSearch] = useProjectTabState<string>(
+    projectId,
+    'planning-search',
+    '',
+  );
+  const [sortState, setSortState] = useProjectTabState<{ col: string; dir: 'asc' | 'desc' }>(
+    projectId,
+    'planning-sort',
+    { col: '', dir: 'asc' },
+  );
+  const sortCol = sortState.col;
+  const sortDir = sortState.dir;
+  const setSortCol = useCallback(
+    (col: string) => setSortState((s) => ({ ...s, col })),
+    [setSortState],
+  );
+  const setSortDir = useCallback(
+    (updater: 'asc' | 'desc' | ((prev: 'asc' | 'desc') => 'asc' | 'desc')) =>
+      setSortState((s) => ({
+        ...s,
+        dir: typeof updater === 'function' ? updater(s.dir) : updater,
+      })),
+    [setSortState],
+  );
+  // Per-group collapse record — see `PersistedCollapseContext` for the
+  // rationale. Keyed by stable group id; absent = default (expanded).
+  const [collapsedMap, setCollapsedMap] = useProjectTabState<Record<string, boolean>>(
+    projectId,
+    'planning-group-collapse',
+    {},
+  );
+  const persistedCollapseCtx = useMemo<PersistedCollapseCtx>(
+    () => ({
+      get: (id, defaultValue) =>
+        Object.prototype.hasOwnProperty.call(collapsedMap, id) ? collapsedMap[id]! : defaultValue,
+      set: (id, value) =>
+        setCollapsedMap((prev) =>
+          prev[id] === value ? prev : { ...prev, [id]: value },
+        ),
+    }),
+    [collapsedMap, setCollapsedMap],
+  );
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   // Task filters — empty = no filter. Date filters compare against
   // task.startDate / task.endDate (stored ISO strings; we compare the
@@ -6272,6 +6380,7 @@ function PlanningView({ projectId }: { projectId: number }) {
 
   return (
     <PlanningColumnsContext.Provider value={planningColumnsCtx}>
+    <PersistedCollapseContext.Provider value={persistedCollapseCtx}>
     <BulkCollapseContext.Provider value={{ desired: bulkCollapsed, version: bulkVersion }}>
     <TaskMessageCountsContext.Provider value={messageCounts as Record<number, number>}>
     <OpenTaskDrawerContext.Provider value={openTaskDrawer}>
@@ -7020,6 +7129,7 @@ function PlanningView({ projectId }: { projectId: number }) {
     </OpenTaskDrawerContext.Provider>
     </TaskMessageCountsContext.Provider>
     </BulkCollapseContext.Provider>
+    </PersistedCollapseContext.Provider>
     </PlanningColumnsContext.Provider>
   );
 }
