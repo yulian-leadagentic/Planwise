@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef } from 'react';
 import { useProjectTabState } from './use-project-tab-state';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { Calendar, CalendarClock, Save, RefreshCcw, Layers, LayoutGrid, GanttChart, AlertTriangle, ArrowUpDown, ChevronUp, ChevronDown, ChevronRight, Filter, Lock } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
@@ -253,11 +253,20 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     staleTime: 30 * 1000,
   });
 
+  // DP empty-flip race (2026-11-09): without `placeholderData`, every
+  // Planning mutation invalidates this query and `planningData` momentarily
+  // becomes `undefined` during the refetch → `tasks=[]` →
+  // `connectionsByDeliverable={}` → `rows=[]` → the empty-state screen flashes
+  // for one render even though the deliverable row is still there. Keeping
+  // the previous payload (react-query v5 API) means `tasks` never empties
+  // mid-refetch. Paired with the belt-and-suspenders guard at the empty-screen
+  // gate below so neither failure mode alone can surface the false empty.
   const { data: planningData, isLoading: planningIsLoading } = useQuery<any>({
     queryKey: ['planning', projectId],
     queryFn: () => client.get(`/projects/${projectId}/planning-data`).then((r) => r.data?.data ?? r.data),
     enabled: !!projectId,
     staleTime: 60 * 1000,
+    placeholderData: keepPreviousData,
   });
   const tasks: any[] = Array.isArray(planningData?.tasks) ? planningData.tasks : [];
   // planningData.zones is a TREE of zone roots (see planning.service.ts).
@@ -1330,7 +1339,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   };
   const expandAll = () => setCollapsed(new Set());
 
-  if (isLoading) return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading deliverables...</div>;
+  // Belt-and-suspenders against the empty-flip race: gate on BOTH queries
+  // (not just `deliverables`) so "no deliverables yet" cannot render while
+  // planning is still loading / refetching and tasks are momentarily empty.
+  if (isLoading || planningIsLoading || planningData === undefined) return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading deliverables...</div>;
   if (rows.length === 0) {
     return (
       <div className="py-12 text-center">
