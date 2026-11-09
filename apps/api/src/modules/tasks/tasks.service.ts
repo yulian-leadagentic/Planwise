@@ -643,20 +643,44 @@ export class TasksService {
     // Pull date fields out so we can either set them, clear them, or leave
     // them untouched depending on whether the caller sent each key.
     // (Empty string / null → null; missing → leave alone.)
-    const { startDate, endDate, estimatedStartDate, ...rest } = dto;
+    //
+    // §B override hardening (2026-11-09) — `manualDueDate` is a transport-
+    // only signal (see UpdateTaskDto). It MUST be destructured out before
+    // the spread into `prisma.task.update(... data ...)` so Prisma never
+    // sees an unknown field. Carried into the shouldMarkOverride gate
+    // below as the explicit-user-intent requirement.
+    const { startDate, endDate, estimatedStartDate, manualDueDate, ...rest } = dto;
     const dateOrNull = (v: string | null | undefined) =>
       v === undefined ? undefined : (v ? new Date(v) : null);
 
-    // Detect manual due-date change so future Deliverable-target
-    // propagation doesn't silently clobber the user's edit. If endDate
-    // is present in the DTO AND different from the previous value,
-    // mark the task as user-overridden. Setting it back to the
-    // deliverable's target (or to null) via the API leaves the flag
-    // as-is; only the "Force apply target" path clears it.
-    // (Tier E #10 revision, 2026-08-02.)
+    // §B override hardening (2026-11-09, planwise-DP-predecessor-lag-
+    // scheduling-BUG). The prior rule fired `dueDateOverridden=true` on
+    // ANY endDate change — including automatic writes (deliverable-target
+    // propagation, Gantt drag auto-commit, scheduler save-and-update
+    // auto-commits). Three tasks on project 53 were "poisoned" this way,
+    // so the scheduler's `skippedByOverride` short-circuit kept them
+    // stuck on the same anchor date forever.
+    //
+    // New rule fires override ONLY when ALL three hold:
+    //   1. The DTO's new endDate differs from the existing value, AND
+    //   2. The new value is NOT null (clearing endDate must NEVER fire
+    //      override — the previous rule left tasks in the garbage state
+    //      `endDate=null AND dueDateOverridden=true`), AND
+    //   3. The DTO carries an explicit `manualDueDate: true` flag — the
+    //      per-task date editor the PM clicks on a single task row.
+    //
+    // Automatic callers (zones.materialize, project-deliverables target
+    // propagation, scheduler.saveAndUpdateDueDates auto-commits, Gantt-
+    // drag commits, clear-date affordances) must NOT send the flag so
+    // `shouldMarkOverride` stays false. PM-explicit review approval
+    // (SchedulerService.applyReviewed) still sets override via its own
+    // dedicated write path and is deliberately left as-is.
+    const newEndDate = dateOrNull(endDate as any);
     const shouldMarkOverride =
       endDate !== undefined &&
-      dateOrNull(endDate as any)?.getTime() !== (existing as any).endDate?.getTime();
+      newEndDate !== null &&
+      newEndDate?.getTime() !== (existing as any).endDate?.getTime() &&
+      manualDueDate === true;
 
     const updated = await this.prisma.task.update({
       where: { id },

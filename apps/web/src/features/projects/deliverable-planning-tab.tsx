@@ -372,8 +372,21 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       code: string | null;
       name: string;
       endDate: string | null;
+      // §5 (2026-11-09) — carry the scheduler's computed start so the
+      // chain tooltip can show per-task start→end and the duration edge.
+      estimatedStartDate?: string | null;
       status: string;
-      dependencies?: Array<{ dependsOn?: { id?: number; code?: string | null; name?: string | null; endDate?: string | null } | null }>;
+      // §5 (2026-11-09) — carry the FTS edge metadata too so the Gantt
+      // tooltip can render "pred → (N wd|cal) succ" for every link.
+      // `lag` + `lagUnit` live on the TaskDependency row itself, which
+      // Prisma's `dependencies: { include: { dependsOn: { select } } }`
+      // returns alongside the selected `dependsOn` sub-fields.
+      dependencies?: Array<{
+        dependsOnId?: number;
+        lag?: number;
+        lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+        dependsOn?: { id?: number; code?: string | null; name?: string | null; endDate?: string | null } | null;
+      }>;
       // D7-Float (2026-11-03) · Scheduler-computed, surfaces as CP chip
       // on the Gantt row and as a column in the DeliverableTasksModal.
       float?: number | null;
@@ -569,10 +582,16 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         code: t.code ?? null,
         name: t.name,
         endDate: t.endDate ? String(t.endDate).slice(0, 10) : null,
+        // §5 (2026-11-09) — forward estimatedStartDate so the Gantt
+        // tooltip's chain line can print per-task start→end.
+        estimatedStartDate: (t as any).estimatedStartDate ? String((t as any).estimatedStartDate).slice(0, 10) : null,
         status: t.status,
         // bm2 2026-10-21 — forward the task's dependencies so DP Gantt
         // can flag rows whose children have "endDate < predecessor's
         // endDate" (planning.service now exposes dependsOn.endDate).
+        // §5 (2026-11-09) — the same array also carries `lag` +
+        // `lagUnit` straight from the TaskDependency row (returned
+        // alongside the dependsOn select), used by the chain tooltip.
         dependencies: Array.isArray((t as any).dependencies) ? (t as any).dependencies : [],
         // D7-Float (2026-11-03) · Scheduler-computed, surfaces as CP chip
         // on the Gantt row and as a column in the DeliverableTasksModal.
@@ -1098,6 +1117,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     zoneName: string | null;
     currentEnd: string | null;
     proposedEnd: string | null;
+    // §4 (2026-11-09) — the review table now shows the scheduler's
+    // computed start alongside the Due (End) column to clarify that
+    // the target is the END (task finish = deliverable target), not
+    // the start. The BE may or may not populate these yet; the FE
+    // treats them as optional and falls back to "—" so the column
+    // renders cleanly either way.
+    proposedStart?: string | null;
+    currentStart?: string | null;
     reason: ReviewReason;
   }
   interface SaveAndUpdateResult {
@@ -1528,7 +1555,12 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                       <th className="px-2 py-1.5 w-[108px]">Code</th>
                       <th className="px-2 py-1.5">Task</th>
                       <th className="px-2 py-1.5 w-[96px]">Reason</th>
-                      <th className="px-2 py-1.5 w-[200px]">Date</th>
+                      {/* §4 (2026-11-09) · The target is the END of the
+                          chain (task finish = deliverable target), not
+                          the start. Show Start as context + rename the
+                          End column to spell out it is the Due date. */}
+                      <th className="px-2 py-1.5 w-[110px]">Start</th>
+                      <th className="px-2 py-1.5 w-[200px]">תאריך יעד (Due)</th>
                       <th className="px-2 py-1.5 w-[180px]">Action</th>
                     </tr>
                   </thead>
@@ -1561,6 +1593,26 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                             <span className={cn('rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5', pillClass)}>
                               {pillLabel}
                             </span>
+                          </td>
+                          {/* §4 (2026-11-09) · Start cell. The scheduler
+                              writes the computed `estimatedStartDate`
+                              into `proposedStart` when it has one; the
+                              current stored start is shown as the
+                              strike-through fallback. Both are optional
+                              on the wire today — when neither is
+                              populated we render "—" so the column
+                              still reads cleanly. */}
+                          <td className="px-2 py-2">
+                            <div className="flex items-center gap-1 text-[11px] font-mono tabular-nums">
+                              {r.currentStart ? (
+                                <span className="text-slate-400 line-through">{String(r.currentStart).slice(0, 10)}</span>
+                              ) : null}
+                              <span className={cn(
+                                r.proposedStart ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500',
+                              )}>
+                                {r.proposedStart ? String(r.proposedStart).slice(0, 10) : '—'}
+                              </span>
+                            </div>
                           </td>
                           <td className="px-2 py-2">
                             <div className="flex items-center gap-2">
@@ -3744,6 +3796,62 @@ function GanttView({
 }
 
 /**
+ * §5 (2026-11-09, planwise-DP-predecessor-lag-scheduling-BUG) —
+ * Build a human-readable chain summary of (predecessor → lag → successor)
+ * edges across the tasks in a DP Gantt row, for use in the roll-up bar's
+ * tooltip. The TaskDependency rows arrive on the wire with `lag` +
+ * `lagUnit` (WORKING_DAYS = "wd", CALENDAR_DAYS = "cal"), so this helper
+ * can render "CRD-002 → (7 wd) CRD-021 → (7 wd) CRD-036" with one line
+ * per edge.
+ *
+ * This is the TOOLTIP FALLBACK path (not full per-task sub-bars). Chosen
+ * for v1 because the current Gantt row is a single absolutely-positioned
+ * bar with no reserved track for child bars + arrow connectors; adding
+ * that would be a larger refactor of GanttView's geometry. The tooltip
+ * exposes the chain + lag so the PM can verify the predecessor/lag
+ * configuration without opening the task modal.
+ *
+ * The helper only considers edges whose predecessor is ALSO in the row's
+ * taskList — cross-row dependencies are skipped so the chain stays local
+ * to the (deliverable × zone) bucket the tooltip describes.
+ */
+function buildChainSummaryLines(taskList: any[] | null | undefined): string[] {
+  if (!Array.isArray(taskList) || taskList.length === 0) return [];
+  const byId = new Map<number, any>();
+  for (const t of taskList) {
+    if (t && typeof t.id === 'number') byId.set(t.id, t);
+  }
+  const taskLabel = (t: any): string => (t?.code || t?.name || `#${t?.id ?? '?'}`);
+  const unitSuffix = (u: string | undefined): string =>
+    u === 'CALENDAR_DAYS' ? 'cal' : 'wd';
+
+  // Emit one line per FTS edge whose predecessor is in-row (keeps the
+  // chain scoped to this bucket). A task with no in-row predecessor
+  // still gets a single "start" line so the chain's head is visible in
+  // the tooltip.
+  const lines: string[] = [];
+  for (const t of taskList) {
+    const deps = Array.isArray(t.dependencies) ? t.dependencies : [];
+    const inRowDeps = deps.filter((d: any) => {
+      const predId = d?.dependsOnId ?? d?.dependsOn?.id;
+      return typeof predId === 'number' && byId.has(predId);
+    });
+    if (inRowDeps.length === 0) {
+      lines.push(`• ${taskLabel(t)} (start)`);
+      continue;
+    }
+    for (const d of inRowDeps) {
+      const predId = d?.dependsOnId ?? d?.dependsOn?.id;
+      const pred = predId != null ? byId.get(predId) : null;
+      const lag = Number(d?.lag ?? 0);
+      const unit = unitSuffix(d?.lagUnit);
+      lines.push(`• ${taskLabel(pred)} → (${lag} ${unit}) → ${taskLabel(t)}`);
+    }
+  }
+  return lines;
+}
+
+/**
  * One Gantt row. Renders ONLY the bar (labels live in the fixed left
  * column of GanttView). Positions are absolute px based on `pxPerDay`
  * so the horizontal viewport can scroll independently.
@@ -3932,12 +4040,26 @@ function GanttRow({
     : false;
   const critHint = anyCritical ? 'outline outline-2 outline-red-600/70 dark:outline-red-500/70 outline-offset-[1px]' : '';
 
+  // §5 (2026-11-09) — tooltip fallback for the predecessor/lag chain.
+  // Each line is "• predCode → (N wd|cal) → succCode"; chain head
+  // tasks (no in-row predecessor) emit "• code (start)". Prepended to
+  // the existing summary line via embedded newlines so `<div title>`
+  // renders a stacked tooltip in modern browsers.
+  const chainLines = buildChainSummaryLines(r.taskList);
+  const chainHeader = chainLines.length > 0
+    ? `${r.deliverableName}${r.zoneName ? ` · ${r.zoneName}` : ''} — chain + lag:`
+    : null;
+  const summaryLine = `${r.deliverableName} — ${targetDate} · ${durationWeeks}w · ${barStatusLabel}${isPastTarget ? ' · target past' : ''}${anyCritical ? ' · critical path' : ''} · click to edit tasks`;
+  const tooltipTitle = chainHeader
+    ? `${summaryLine}\n\n${chainHeader}\n${chainLines.join('\n')}`
+    : summaryLine;
+
   return (
     <div className="relative h-8 select-none">
       <div
         className={cn('absolute top-2 h-4 rounded-md shadow-sm cursor-pointer flex items-center justify-between overflow-hidden', barColor, pastHint, critHint)}
         style={{ left: leftPx, width: widthPx }}
-        title={`${r.deliverableName} — ${targetDate} · ${durationWeeks}w · ${barStatusLabel}${isPastTarget ? ' · target past' : ''}${anyCritical ? ' · critical path' : ''} · click to edit tasks`}
+        title={tooltipTitle}
         onPointerDown={startDrag('middle')}
       >
         <div
@@ -4053,9 +4175,20 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
     try {
       const changed = (row.taskList ?? []).filter((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
       await Promise.all(
-        changed.map((t: any) =>
-          client.patch(`/tasks/${t.id}`, { endDate: drafts[t.id] || null }),
-        ),
+        changed.map((t: any) => {
+          const nextEnd = drafts[t.id] || null;
+          // §B override hardening (2026-11-09) — this modal is the
+          // per-task due-date editor opened by clicking a Gantt bar:
+          // the PM types a date into a single task's row and saves.
+          // That's explicit user intent, so the BE needs the
+          // `manualDueDate:true` signal to fire `dueDateOverridden`
+          // and stop the scheduler from reshuffling the task later.
+          // Clearing the date (nextEnd = null) stays silent — a null
+          // never fires override regardless of the flag.
+          const payload: Record<string, any> = { endDate: nextEnd };
+          if (nextEnd) payload.manualDueDate = true;
+          return client.patch(`/tasks/${t.id}`, payload);
+        }),
       );
       notify.success(`Updated ${changed.length} due date${changed.length === 1 ? '' : 's'}`);
       // Refresh planning data — the row will pick up the new dates.

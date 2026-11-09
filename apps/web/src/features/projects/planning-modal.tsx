@@ -1072,7 +1072,15 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
     else if (field === 'budgetAmount') payload.budgetAmount = value ? Number(value) : null;
     else if (field === 'estimatedStartDate') payload.estimatedStartDate = value || null;
     else if (field === 'startDate') payload.startDate = value || null;
-    else if (field === 'endDate') payload.endDate = value || null;
+    else if (field === 'endDate') {
+      payload.endDate = value || null;
+      // §B override hardening (2026-11-09) — the inline due-date cell
+      // in each Planning grid row is a per-task date editor the PM
+      // clicks on a single task; carry explicit intent so the BE fires
+      // `dueDateOverridden`. Only when a real date is set — clearing
+      // (null) deliberately does NOT fire override.
+      if (value) payload.manualDueDate = true;
+    }
     // FK refs — empty string means "clear", otherwise expect a numeric id.
     else if (field === 'serviceTypeId') payload.serviceTypeId = value ? Number(value) : null;
     else if (field === 'phaseId') payload.phaseId = value ? Number(value) : null;

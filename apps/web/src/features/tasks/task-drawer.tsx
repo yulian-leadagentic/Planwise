@@ -149,8 +149,20 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
   }, [taskId, onClose]);
 
   const updateTask = useMutation({
-    mutationFn: ({ field, value }: { field: string; value: any }) =>
-      tasksApi.update(taskId!, { [field]: value }),
+    mutationFn: ({ field, value }: { field: string; value: any }) => {
+      // §B override hardening (2026-11-09) — the drawer's Due Date
+      // editor (TaskDetailsTab) and the top-banner DueDateChip both
+      // route through this mutation. Those are the per-task date
+      // editor controls the PM clicks on a single task row, so an
+      // endDate write originating here carries explicit user intent
+      // and MUST send `manualDueDate: true` so the BE fires the
+      // `dueDateOverridden` flag. A null/empty value ("clear date"
+      // via the DueDateChip's ✕ button) is deliberately NOT marked —
+      // clearing never fires override regardless of the flag.
+      const payload: Record<string, any> = { [field]: value };
+      if (field === 'endDate' && value) payload.manualDueDate = true;
+      return tasksApi.update(taskId!, payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId!) });
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.mine() });

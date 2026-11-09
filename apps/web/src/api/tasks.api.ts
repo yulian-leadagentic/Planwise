@@ -45,6 +45,18 @@ export interface UpdateTaskPayload {
   startDate?: string | null;
   endDate?: string | null;
   isArchived?: boolean;
+  /**
+   * Explicit-user-intent signal for the per-task due-date editor
+   * (§B · override hardening, 2026-11-09). Send `true` ONLY from the
+   * controls the PM clicks on a single task row to set its own due
+   * date — the drawer's Due Date input, the health-banner DueDateChip,
+   * the Planning grid's inline date cell, and the Deliverable-Tasks
+   * modal's per-row date input. Every automatic caller (scheduler
+   * commits, Gantt drag, deliverable-target propagation, clear-date
+   * paths that send endDate:null) must leave this flag unset so the
+   * BE does NOT fire `dueDateOverridden`.
+   */
+  manualDueDate?: boolean;
 }
 
 export const tasksApi = {
