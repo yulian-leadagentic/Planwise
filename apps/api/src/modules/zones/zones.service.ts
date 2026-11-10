@@ -926,12 +926,83 @@ export class ZonesService {
         }
       };
 
+      // ─── #196 · pure slot detection (P1 §0b decision 1) ──────────────
+      // A "pure slot" is a `TemplateZone` that exists ONLY to anchor a
+      // referenced Deliverable template — it has a linkedTaskTemplateId
+      // but no own tasks and no own children. Compose-time refs (P1 §1)
+      // emit this shape; post-migration, root-level TemplateTasks grouped
+      // by deliverableTemplateId also convert to these. Rule: after apply
+      // the project tree stays "physical zone → tasks grouped by
+      // deliverableTemplateId", NOT "physical zone → sub-zone named after
+      // the deliverable". So for a pure slot we skip creating a project
+      // Zone and inline the linked tasks under the parent project zone
+      // (or project-root, i.e. zoneId=null, when the slot has no parent
+      // project zone).
+      //
+      // `referencedTemplateId` disqualifies — a referenced zone template
+      // is a different shape (spatial scaffolding) handled below and we
+      // keep today's behavior for it as a safety net.
+      const isPureSlot = (tz: any): boolean =>
+        tz.linkedTaskTemplateId != null
+        && !tz.referencedTemplateId
+        && (tz.templateZoneTasks?.length ?? 0) === 0
+        && (tz.children?.length ?? 0) === 0;
+
+      // Inline a pure slot's linkedTaskTemplate.templateTasks under the
+      // caller's parent project zone. Keeps deliverableTemplateId so the
+      // Deliverable Planning grid still groups by Service, and threads
+      // predecessors through `materializeDeps` like the in-zone path.
+      // Sort order: slot.sortOrder * 100 + tt.sortOrder — keeps the
+      // deliverable's tasks together and preserves inner order even when
+      // multiple slots inline under the same parent.
+      const materializeSlotTasksUnder = async (
+        tz: any,
+        parentProjectZoneId: number | null,
+      ): Promise<void> => {
+        if (!tz.linkedTaskTemplate?.templateTasks?.length) return;
+        const servicePhaseId = (tz.linkedTaskTemplate as any).phaseId;
+        const anchor = (Number(tz.sortOrder) || 0) * 100;
+        const createdInSlot: Array<{ tt: any; projectTaskId: number }> = [];
+        for (const tt of tz.linkedTaskTemplate.templateTasks) {
+          const resolved = resolveFromCatalog(tt as any);
+          const createdTask = await tx.task.create({
+            data: {
+              zoneId: parentProjectZoneId,
+              projectId,
+              serviceTypeId: tt.serviceTypeId,
+              // Per-templateTask FK wins over the slot's own link —
+              // matches the in-zone linked path above.
+              deliverableTemplateId: (tt as any).deliverableTemplateId ?? tz.linkedTaskTemplateId,
+              code: tt.code,
+              name: resolved.name,
+              description: resolved.description,
+              budgetHours: resolved.budgetHours,
+              budgetAmount: resolved.budgetAmount,
+              phaseId: servicePhaseId ?? tt.phaseId,
+              priority: tt.defaultPriority,
+              status: 'not_started',
+              createdBy: userId,
+              sortOrder: anchor + (Number(tt.sortOrder) || 0),
+            },
+          });
+          createdInSlot.push({ tt, projectTaskId: createdTask.id });
+        }
+        await materializeDeps(createdInSlot);
+      };
+
       // ─── Composition multiplicity ──────────────────────────────────────
       // If a template-zone has instanceCount > 1, instantiate it that many
       // times. Each instance is a separate, individually-renameable zone in
       // the project, with the same children/tasks underneath. Default 1 keeps
       // legacy templates' behaviour unchanged.
       const createZoneRecursive = async (tz: any, parentId: number | null, parentPath: string, depth: number) => {
+        // #196 — pure slot: inline parent-ward, skip Zone creation.
+        // Mixed zones (linked + own tasks/children) fall through to
+        // `createSingleZone` and keep today's behavior as a safety net.
+        if (isPureSlot(tz)) {
+          await materializeSlotTasksUnder(tz, parentId);
+          return;
+        }
         const rawCount = Number(tz.instanceCount);
         const instanceCount = Number.isFinite(rawCount) && rawCount > 1 ? Math.floor(rawCount) : 1;
         if (instanceCount === 1) {
