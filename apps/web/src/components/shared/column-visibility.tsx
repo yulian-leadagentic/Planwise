@@ -35,7 +35,17 @@ function loadPrefs(pageKey: string, columns: ColumnDef[]): Set<string> {
     const raw = localStorage.getItem(storageKeyFor(pageKey));
     if (raw) {
       const arr = JSON.parse(raw) as string[];
-      if (Array.isArray(arr)) return new Set(arr);
+      if (Array.isArray(arr)) {
+        // Merge in any columns that have since been added as `required`.
+        // A saved pref from before a required column existed must not
+        // leave the picker rendering that column as unchecked while the
+        // grid still renders the cell — the two would disagree. This
+        // also keeps future "promote column X to required" rollouts
+        // free of a localStorage migration step.
+        const set = new Set(arr);
+        for (const c of columns) if (c.required) set.add(c.key);
+        return set;
+      }
     }
   } catch { /* corrupt prefs — fall through to defaults */ }
   const defaults = columns.filter((c) => c.required || !c.hiddenByDefault).map((c) => c.key);

@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback, createContext, useContext, Fragment } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil, SlidersHorizontal, Archive, Undo2, Calendar } from 'lucide-react';
 import { notify, getErrorMessage } from '@/lib/notify';
@@ -954,7 +954,7 @@ function ColHeader({
  * When a caller IS wrapped in the provider, they should read
  * `ctx.gridClass` + `ctx.gridStyle` and skip hidden cells.
  */
-const TASK_GRID = 'grid grid-cols-[16px_16px_80px_minmax(180px,2fr)_140px_96px_80px_56px_64px_64px_72px_96px_96px_96px_96px_84px] gap-x-2 items-center min-w-[1280px]';
+const TASK_GRID = 'grid grid-cols-[16px_16px_80px_minmax(180px,2fr)_140px_96px_80px_56px_64px_64px_72px_160px_96px_80px_96px_56px_96px_96px_84px] gap-x-2 items-center min-w-[1480px]';
 
 /**
  * Ordered list of TOGGLEABLE columns on the planning grid. Fixed
@@ -966,20 +966,29 @@ const TASK_GRID = 'grid grid-cols-[16px_16px_80px_minmax(180px,2fr)_140px_96px_8
  *
  * Order MUST match the render order in every row/header helper so
  * the picker's "show/hide column N" flips the correct cell.
+ *
+ * §3 (2026-11-10) — scheduler columns (predecessors, estStart, float)
+ * are `required: true` so they always render alongside Task Name.
+ * Their widths feed the grid template via computePlanningGridStyle
+ * and they appear in the picker as disabled rows, matching the
+ * `name` pattern; this is NOT a new user-visibility toggle.
  */
 export const PLANNING_COLUMNS = [
-  { key: 'name',        label: 'Task Name',   width: 'minmax(180px,2fr)', required: true },
-  { key: 'zone',        label: 'Zone',        width: '140px' },
-  { key: 'deliverable', label: 'Deliverable', width: '96px' },
-  { key: 'service',     label: 'Service',     width: '80px' },
-  { key: 'estHours',    label: 'Est. Hours',  width: '56px' },
-  { key: 'loggedHours', label: 'Logged',      width: '64px' },
-  { key: 'estCost',     label: 'Amount',      width: '64px' },
-  { key: 'actualCost',  label: 'Actual ₪',   width: '72px' },
-  { key: 'delivDate',   label: 'Deliv. Date', width: '96px' },
-  { key: 'dueDate',     label: 'Due Date',    width: '96px' },
-  { key: 'assignees',   label: 'Assignees',   width: '96px' },
-  { key: 'status',      label: 'Status',      width: '96px' },
+  { key: 'name',         label: 'Task Name',    width: 'minmax(180px,2fr)', required: true },
+  { key: 'zone',         label: 'Zone',         width: '140px' },
+  { key: 'deliverable',  label: 'Deliverable',  width: '96px' },
+  { key: 'service',      label: 'Service',      width: '80px' },
+  { key: 'estHours',     label: 'Est. Hours',   width: '56px' },
+  { key: 'loggedHours',  label: 'Logged',       width: '64px' },
+  { key: 'estCost',      label: 'Amount',       width: '64px' },
+  { key: 'actualCost',   label: 'Actual ₪',    width: '72px' },
+  { key: 'predecessors', label: 'Predecessors', width: '160px', required: true },
+  { key: 'delivDate',    label: 'Deliv. Date',  width: '96px' },
+  { key: 'estStart',     label: 'Est. Start',   width: '80px',  required: true },
+  { key: 'dueDate',      label: 'Due Date',     width: '96px' },
+  { key: 'float',        label: 'Float',        width: '56px',  required: true },
+  { key: 'assignees',    label: 'Assignees',    width: '96px' },
+  { key: 'status',       label: 'Status',       width: '96px' },
 ] as const;
 
 interface PlanningColumnsCtx {
@@ -1000,7 +1009,9 @@ function usePlanningColumns(): PlanningColumnsCtx {
       isVisible: () => true,
       gridStyle: {
         gridTemplateColumns: `16px 16px ${PLANNING_COLUMNS.map((c) => c.width).join(' ')} 84px`,
-        minWidth: '1280px',
+        // §3 (2026-11-10) — 1480px covers the extra Predecessors
+        // (160) + Est. Start (80) + Float (56) columns.
+        minWidth: '1480px',
       },
     };
   }
@@ -1057,6 +1068,24 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   // clicked (bm2 fix #2). Set by PlanningView via OpenTaskDrawerContext;
   // no-op if unset (defensive — rendered outside the planning view).
   const openTaskDrawer = useContext(OpenTaskDrawerContext);
+
+  // §3 (2026-11-10) — direct URL writer used by the Predecessors cell
+  // to open the drawer AND request a scroll to #predecessors-section
+  // on the same click. Routed through useSearchParams so
+  // useDrawerRoute picks it up like a normal ?task=N open — no bespoke
+  // signal channel.
+  const [, setSearchParams] = useSearchParams();
+  const openDrawerAtPredecessors = useCallback(() => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set('task', String(task.id));
+        next.set('focus', 'predecessors');
+        return next;
+      },
+      { replace: false },
+    );
+  }, [setSearchParams, task.id]);
 
   // Dynamic grid columns (client feedback 2026-08-02 item 1). Reads
   // the current visibility set from the context; falls back to the
@@ -1207,13 +1236,29 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
             aria-label={conflictMsg ?? 'Predecessor conflict'}
           />
         );
+        // §3 (2026-11-10) — critical-path indicator. The row's left
+        // border already carries the zone color, so we surface CP as a
+        // small red dot inline with the task name rather than fighting
+        // the zone border. Rendered BEFORE the conflict icon so both
+        // markers stay visible when a task is both on the CP and has a
+        // predecessor conflict.
+        const cpDot = task.onCriticalPath === true && (
+          <span
+            className="mr-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-red-500 align-middle"
+            title="Critical path"
+            aria-label="Critical path"
+          />
+        );
+        const titleBase = conflict ? (getPredecessorConflictMessage(task) ?? task.name) : task.name;
+        const titleFull = task.onCriticalPath === true ? `${titleBase} · Critical path` : titleBase;
         return openTaskDrawer ? (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); openTaskDrawer(task.id); }}
-            title={conflict ? (getPredecessorConflictMessage(task) ?? task.name) : task.name}
+            title={titleFull}
             className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate text-left hover:text-blue-700 hover:underline focus:outline-none focus:text-blue-700 focus:underline cursor-pointer"
           >
+            {cpDot}
             {conflictIcon}
             {task.name}
             {depsBadge}
@@ -1221,8 +1266,9 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
         ) : (
           <span
             className="font-medium text-slate-900 dark:text-slate-100 min-w-0 truncate"
-            title={conflict ? (getPredecessorConflictMessage(task) ?? task.name) : task.name}
+            title={titleFull}
           >
+            {cpDot}
             {conflictIcon}
             {task.name}
             {depsBadge}
@@ -1362,13 +1408,82 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           <span className="text-right text-[11px] font-mono text-slate-300 dark:text-slate-600">—</span>
         )
       )}
+      {/* §3 (2026-11-10) — Predecessors chip list. Up to 2 chips + "+N"
+          overflow affordance; full list stays in the drawer. The whole
+          cell is clickable → opens the task drawer focused on the
+          Predecessors section (see openDrawerAtPredecessors). Empty
+          state renders a muted em-dash and is NOT clickable so the
+          cursor doesn't suggest an action there is nothing to reach. */}
+      {(() => {
+        const depList: any[] = Array.isArray(task.dependencies) ? task.dependencies : [];
+        if (depList.length === 0) {
+          return (
+            <span className="text-[13px] text-slate-300 dark:text-slate-600" title="No predecessors">
+              —
+            </span>
+          );
+        }
+        const abbrev = (lag: number, unit: string) =>
+          lag > 0
+            ? unit === 'CALENDAR_DAYS'
+              ? ` +${lag}ק`
+              : ` +${lag}ימ"ע`
+            : '';
+        const fullPhrase = (lag: number, unit: string) =>
+          lag > 0
+            ? unit === 'CALENDAR_DAYS'
+              ? `+${lag} ימים קלנדריים`
+              : `+${lag} ימי עבודה`
+            : 'ללא השהיה';
+        const shown = depList.slice(0, 2);
+        const overflow = depList.length - shown.length;
+        return (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openDrawerAtPredecessors(); }}
+            title={depList
+              .map((d: any) => {
+                const code = d.dependsOn?.code ?? `#${d.dependsOnId}`;
+                const phrase = fullPhrase(Number(d.lag ?? 0), String(d.lagUnit ?? 'WORKING_DAYS'));
+                const reason = d.reason ? ` · ${d.reason}` : '';
+                return `${code} ${phrase}${reason}`;
+              })
+              .join('\n')}
+            className="flex min-w-0 items-center gap-1 overflow-hidden text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 rounded"
+            aria-label={`Open predecessors (${depList.length})`}
+          >
+            {shown.map((d: any) => {
+              const code = d.dependsOn?.code ?? `#${d.dependsOnId}`;
+              const lag = Number(d.lag ?? 0);
+              const unit = String(d.lagUnit ?? 'WORKING_DAYS');
+              return (
+                <span
+                  key={d.id}
+                  className="inline-flex shrink-0 items-center gap-1 px-2 py-0.5 rounded-[5px] bg-blue-50 text-blue-600 text-[11px] font-mono font-medium hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50"
+                >
+                  <span className="truncate max-w-[72px]">{code}</span>
+                  {lag > 0 && (
+                    <span className="tabular-nums whitespace-nowrap">
+                      {abbrev(lag, unit)}
+                    </span>
+                  )}
+                </span>
+              );
+            })}
+            {overflow > 0 && (
+              <span className="shrink-0 text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                +{overflow}
+              </span>
+            )}
+          </button>
+        );
+      })()}
       {/* Deliverable date — read-only display of the Deliverable's
           target date resolved from the (zone × deliverable) pair (with
-          deliverable-level fallback). Est. Start was removed from the
-          project tasks view per client 2026-08-02; it stays as an
-          INTERNAL computation on the backend that decides when a task
-          bumps into "This Week" on My Tasks, but the PM doesn't need
-          to see it here. */}
+          deliverable-level fallback). (§3 2026-11-10 re-surfaced the
+          task's own scheduler-computed Est. Start one slot to the
+          right — that was removed in 2026-08-02 as a display pref but
+          is required now that the scheduler drives the planning grid.) */}
       {cols.isVisible('delivDate') && (
         <span
           className={cn(
@@ -1380,6 +1495,19 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           {task.deliverableTargetDate ? String(task.deliverableTargetDate).slice(0, 10) : '—'}
         </span>
       )}
+      {/* §3 (2026-11-10) — Est. Start (scheduler-computed). Read-only
+          here; the editable one lives on the drawer's Project Info tab.
+          Mono + short ISO yyyy-mm-dd to match the existing delivDate
+          cell beside it; muted when the scheduler hasn't filled it. */}
+      <span
+        className={cn(
+          'text-[11px] font-mono tabular-nums text-slate-600 dark:text-slate-300',
+          !task.estimatedStartDate && 'text-slate-300 dark:text-slate-600',
+        )}
+        title={task.estimatedStartDate ? `Estimated start: ${String(task.estimatedStartDate).slice(0, 10)}` : 'No estimated start yet'}
+      >
+        {task.estimatedStartDate ? String(task.estimatedStartDate).slice(0, 10) : '—'}
+      </span>
       {cols.isVisible('dueDate') && (
         <span>
           <input
@@ -1394,6 +1522,30 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           />
         </span>
       )}
+      {/* §3 (2026-11-10) — Float (slack days). 0d = red+bold = on
+          critical path. 1d = amber warning. 2d+ muted. Null while the
+          scheduler hasn't run. Read-only; mirrored on the drawer's
+          Project Info tab. */}
+      {(() => {
+        const f = task.float;
+        if (f == null) {
+          return <span className="text-right text-[11px] font-mono text-slate-300 dark:text-slate-600">—</span>;
+        }
+        const n = Number(f);
+        const cls = n === 0
+          ? 'text-red-600 font-semibold'
+          : n <= 1
+            ? 'text-amber-600'
+            : 'text-slate-500 dark:text-slate-400';
+        return (
+          <span
+            className={cn('text-right text-[11px] font-mono tabular-nums', cls)}
+            title={n === 0 ? 'Critical path — any slip delays delivery' : `Slack: ${n} working day${n === 1 ? '' : 's'}`}
+          >
+            {n}d
+          </span>
+        );
+      })()}
       {cols.isVisible('assignees') && (
         <span className="flex items-center">
           <AssigneePicker task={task} members={members} projectId={projectId} onUpdate={onUpdate} selectedTaskIds={selectedTaskIds} />
@@ -4184,8 +4336,11 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
                   {cols.isVisible('loggedHours') && <span className="text-right">Logged</span>}
                   {cols.isVisible('estCost') && <span className="text-right">Amount</span>}
                   {cols.isVisible('actualCost') && <span className="text-right">Actual ₪</span>}
+                  <span>Predecessors</span>
                   {cols.isVisible('delivDate') && <span>Deliv. Date</span>}
+                  <span>Est. Start</span>
                   {cols.isVisible('dueDate') && <span>Due Date</span>}
+                  <span className="text-right">Float</span>
                   {cols.isVisible('assignees') && <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />}
                   {cols.isVisible('status') && <ColHeader label="Status" filterKey="status" kind="select" />}
                   <span className="w-5 shrink-0" />
@@ -4797,8 +4952,11 @@ function ProjectRootDeliverableGroup({
             {cols.isVisible('loggedHours') && <span className="text-right">Logged</span>}
             {cols.isVisible('estCost') && <span className="text-right">Amount</span>}
             {cols.isVisible('actualCost') && <span className="text-right">Actual ₪</span>}
+            <span>Predecessors</span>
             {cols.isVisible('delivDate') && <span>Deliv. Date</span>}
+            <span>Est. Start</span>
             {cols.isVisible('dueDate') && <span>Due Date</span>}
+            <span className="text-right">Float</span>
             {cols.isVisible('assignees') && <ColHeader label="Assignees" filterKey="assignee" kind="assignee" />}
             {cols.isVisible('status') && <ColHeader label="Status" filterKey="status" kind="select" />}
             <span className="w-5 shrink-0" />
@@ -7152,10 +7310,11 @@ export function PlanningPage() {
   // first scrolling all the way down to find the native scrollbar.
   // (T2.fix2, 2026-06-28.)
   const scrollRef = useStickyHScroll();
-  // Allow horizontal scroll — TASK_GRID's min-width (1280px) forces a
-  // baseline column layout where the task name stays visible at ≥180px.
-  // On a wide monitor everything fits inside the viewport; on a 13" laptop
-  // the user scrolls horizontally rather than losing column data.
+  // Allow horizontal scroll — TASK_GRID's min-width (~1480px after §3
+  // added Predecessors/Est. Start/Float) forces a baseline column
+  // layout where the task name stays visible at ≥180px. On a wide
+  // monitor everything fits inside the viewport; on a 13" laptop the
+  // user scrolls horizontally rather than losing column data.
   return (
     <div ref={scrollRef} className="px-4 py-5 space-y-4 overflow-x-auto">
       <button onClick={() => navigate(`/projects/${Number(id)}`)} className="flex items-center gap-1.5 text-[13px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200"><ArrowLeft className="h-4 w-4" /> Back to Project</button>

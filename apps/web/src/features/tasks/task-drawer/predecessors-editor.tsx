@@ -36,6 +36,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { Pencil, Plus, Trash2, X } from 'lucide-react';
 import client from '@/api/client';
 import { tasksApi } from '@/api/tasks.api';
@@ -476,6 +477,34 @@ export function PredecessorsEditor({ task }: { task: PredecessorsEditorTask }) {
   const deps: DependencyRow[] = Array.isArray(task.dependencies) ? task.dependencies : [];
   const hasLoggedHours = Number(task.loggedMinutes ?? 0) > 0;
 
+  // §3 (2026-11-10) — drawer-focus scroll. When the Planning grid
+  // opens the drawer via the Predecessors cell it adds `?focus=predecessors`
+  // to the URL. On mount we scroll this section into view then strip the
+  // param so later renders (tab switch, task change) don't re-trigger
+  // the jump. `sectionRef` is preferred over `getElementById` so we
+  // tolerate multiple drawers in parallel (future).
+  const sectionRef = useRef<HTMLElement>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('focus') !== 'predecessors') return;
+    // Wait one frame so the drawer's own scroll container has laid out.
+    const raf = requestAnimationFrame(() => {
+      sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('focus');
+        return next;
+      },
+      { replace: true },
+    );
+    return () => cancelAnimationFrame(raf);
+    // Intentional: only run on mount + when the `focus` param lands.
+    // The setter is stable; depending on it would retrigger the effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editState, setEditState] = useState<LagFormState | null>(null);
 
@@ -675,7 +704,12 @@ export function PredecessorsEditor({ task }: { task: PredecessorsEditorTask }) {
   // Render -----------------------------------------------------------
 
   return (
-    <section aria-labelledby="preds-heading" className="space-y-2">
+    <section
+      ref={sectionRef}
+      id="predecessors-section"
+      aria-labelledby="preds-heading"
+      className="space-y-2 scroll-mt-4"
+    >
       <h3
         id="preds-heading"
         className="text-[15px] font-bold text-slate-900 dark:text-slate-100 mb-3"
