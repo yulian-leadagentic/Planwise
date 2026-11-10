@@ -2798,6 +2798,27 @@ function GanttView({
     try { localStorage.setItem(GRANULARITY_KEY, granularity); } catch { /* ignore */ }
   }, [granularity]);
 
+  // §4 (2026-11-10, planwise-DP-predecessor-lag-scheduling-BUG) — Task-bar
+  // overlay toggle. When ON (default), each Gantt row renders nested per-
+  // task bars positioned by (estimatedStartDate → endDate) plus chain
+  // arrows between in-row FTS edges; critical-path bars + arrows are red,
+  // non-CP ones blue/slate. When OFF the row collapses to just the
+  // deliverable backdrop bar (pre-§4 look) so the PM can hide the
+  // per-task layer when the Gantt feels busy. Persisted under
+  // `dp-gantt-show-task-bars` — non-per-project, matches the other Gantt
+  // display preferences above (user picks once, applies everywhere).
+  const SHOW_TASK_BARS_KEY = 'dp-gantt-show-task-bars';
+  const [showTaskBars, setShowTaskBars] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(SHOW_TASK_BARS_KEY);
+      // Default ON; only explicit "false" string flips it off.
+      return raw === null ? true : raw !== 'false';
+    } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(SHOW_TASK_BARS_KEY, String(showTaskBars)); } catch { /* ignore */ }
+  }, [showTaskBars]);
+
   // Ordered rows for display, matching rowOrder.
   const orderedRows = useMemo(() => {
     const byKey = new Map(rows.map((r) => [r.key, r]));
@@ -3434,6 +3455,27 @@ function GanttView({
             ))}
           </div>
         </div>
+        {/* §4 (2026-11-10) · Task-bar overlay toggle. Flips whether each
+            Gantt row renders per-task sub-bars + chain arrows (ON, default)
+            or collapses back to the single deliverable backdrop (OFF).
+            CP / non-CP bar + arrow palette documented in GanttRow. */}
+        <div className="ml-2 inline-flex items-center gap-1.5" role="group" aria-label="Task bars">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">משימות · Tasks</span>
+          <button
+            type="button"
+            onClick={() => setShowTaskBars((v) => !v)}
+            className={cn(
+              'rounded-md px-2.5 py-1 text-[12px] font-semibold transition-all duration-150 border',
+              showTaskBars
+                ? 'bg-white shadow-sm text-slate-900 border-slate-200 dark:bg-slate-700/80 dark:text-slate-100 dark:border-slate-600'
+                : 'bg-slate-100 text-slate-500 border-slate-200 hover:text-slate-700 dark:bg-slate-800/50 dark:text-slate-400 dark:border-slate-700',
+            )}
+            aria-pressed={showTaskBars}
+            title={showTaskBars ? 'Hide per-task sub-bars + chain arrows' : 'Show per-task sub-bars + chain arrows'}
+          >
+            {showTaskBars ? 'הצג · Show' : 'הסתר · Hide'}
+          </button>
+        </div>
         {/* Progress legend — client meeting 2026-08-04. Bars are
             colored by aggregate task status: blue = nothing started,
             amber = at least one in progress, emerald = all done.
@@ -3787,6 +3829,8 @@ function GanttView({
                   computePreview={computePreview}
                   startMs={startMs}
                   pxPerDay={PX_PER_DAY}
+                  totalWidth={totalTimelineWidth}
+                  showTaskBars={showTaskBars}
                   onRequestPastDate={(rowKey, newTargetMs, kind, apply) => setPastDateConfirm({ rowKey, newTargetMs, kind, apply })}
                   onBarClick={() => setTaskModalRow(slot.r)}
                 />
@@ -3890,6 +3934,8 @@ function GanttRow({
   computePreview,
   startMs,
   pxPerDay,
+  totalWidth,
+  showTaskBars,
   onRequestPastDate,
   onBarClick,
 }: {
@@ -3904,6 +3950,11 @@ function GanttRow({
   computePreview: (m: string) => string;
   startMs: number;
   pxPerDay: number;
+  // §4 (2026-11-10) — total timeline width in px (needed to size the
+  // per-row SVG overlay that draws task sub-bars + chain arrows) and the
+  // toolbar toggle that gates the whole layer.
+  totalWidth: number;
+  showTaskBars: boolean;
   onRequestPastDate: (rowKey: string, newTargetMs: number, kind: 'target' | 'duration' | 'move', apply: () => void) => void;
   onBarClick: () => void;
 }) {
@@ -3917,6 +3968,83 @@ function GanttRow({
   // 2026-08-02 item 4); items 2+3 preserve the classic table edit.
   const targetDate = targetDateDrafts[r.key] || computePreview(draft) || r.savedDate;
   const durationWeeks = Number(durDraft || r.savedDurationWeeks || 0);
+
+  // §4 (2026-11-10) · Hoisted ABOVE the early-return below so hook count
+  // stays stable when a row flips between "no target" and "has target"
+  // (React's rules-of-hooks would otherwise throw "rendered fewer hooks
+  // than expected"). The hook results are only consumed when targetDate
+  // is set — see the task-bar overlay further down.
+  type TaskBarItem = {
+    id: number;
+    code: string | null;
+    name: string;
+    hasSpan: boolean;
+    startMs: number;
+    endMs: number;
+    lane: number;
+    onCriticalPath: boolean;
+    deps: Array<{ predId: number; lag: number; lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS' }>;
+  };
+  const taskBarItems = useMemo<TaskBarItem[]>(() => {
+    if (!showTaskBars) return [];
+    const taskList: any[] = Array.isArray(r.taskList) ? r.taskList : [];
+    if (taskList.length === 0) return [];
+    const items: TaskBarItem[] = taskList.map((t: any) => {
+      const sIso = t.estimatedStartDate ?? null;
+      const eIso = t.endDate ?? null;
+      const sMs = sIso ? new Date(sIso).getTime() : NaN;
+      const eMs = eIso ? new Date(eIso).getTime() : NaN;
+      const hasSpan = Number.isFinite(sMs) && Number.isFinite(eMs) && eMs >= sMs;
+      return {
+        id: Number(t.id),
+        code: t.code ?? null,
+        name: t.name ?? `#${t.id}`,
+        hasSpan,
+        startMs: hasSpan ? sMs : NaN,
+        endMs: hasSpan ? eMs : NaN,
+        lane: -1,
+        onCriticalPath: Boolean(t.onCriticalPath),
+        deps: (Array.isArray(t.dependencies) ? t.dependencies : [])
+          .map((d: any) => ({
+            predId: Number(d?.dependsOnId ?? d?.dependsOn?.id ?? 0),
+            lag: Number(d?.lag ?? 0),
+            lagUnit: (d?.lagUnit === 'CALENDAR_DAYS' ? 'CALENDAR_DAYS' : 'WORKING_DAYS') as
+              | 'WORKING_DAYS'
+              | 'CALENDAR_DAYS',
+          }))
+          .filter((d: { predId: number }) => d.predId > 0),
+      };
+    });
+    // Greedy lane assignment on tasks with real date spans.
+    const sortable = items.filter((i) => i.hasSpan);
+    sortable.sort((a, b) => a.startMs - b.startMs);
+    const laneEnds: number[] = [];
+    for (const it of sortable) {
+      let placed = false;
+      for (let li = 0; li < laneEnds.length; li++) {
+        if (laneEnds[li] <= it.startMs) {
+          it.lane = li;
+          laneEnds[li] = it.endMs;
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        it.lane = laneEnds.length;
+        laneEnds.push(it.endMs);
+      }
+    }
+    return items;
+  }, [showTaskBars, r.taskList]);
+  const laneCount = useMemo(
+    () => taskBarItems.reduce((m, i) => Math.max(m, i.lane + 1), 0),
+    [taskBarItems],
+  );
+  const byId = useMemo(() => {
+    const m = new Map<number, TaskBarItem>();
+    for (const it of taskBarItems) m.set(it.id, it);
+    return m;
+  }, [taskBarItems]);
 
   if (!targetDate) {
     return (
@@ -4066,10 +4194,61 @@ function GanttRow({
     ? `${summaryLine}\n\n${chainHeader}\n${chainLines.join('\n')}`
     : summaryLine;
 
+  // §4 (2026-11-10) — Per-task sub-bars + chain arrows. Each task in the
+  // row's taskList that has BOTH estimatedStartDate + endDate renders as
+  // a thin bar on the same weekly scale the deliverable backdrop uses.
+  // Tasks on the scheduler's critical path (`onCriticalPath===true`) are
+  // red; the rest are blue. Arrows from predecessor's right edge to
+  // successor's left edge visualize in-row FTS dependencies (chain scoped
+  // to this (deliverable × zone) bucket — cross-row deps are skipped so
+  // the chain stays readable). CP arrows are red; non-CP are slate.
+  //
+  // The underlying `taskBarItems` / `laneCount` / `byId` are computed
+  // ABOVE (hoisted past the `!targetDate` early return so hook count
+  // stays constant across renders).
+  const hasTaskBars = showTaskBars && laneCount > 0;
+
+  // Vertical geometry. Deliverable backdrop keeps its top-2 h-4
+  // position (y=8..24); task lanes stack beneath it, 6px bars + 4px
+  // gaps, with 4px between the backdrop and the first lane.
+  const TASK_BAR_H = 6;
+  const TASK_LANE_GAP = 4;
+  const TASK_STRIP_TOP = 28; // 8 (top pad) + 16 (backdrop h) + 4 (gap)
+  const taskStripHeight = hasTaskBars
+    ? laneCount * (TASK_BAR_H + TASK_LANE_GAP) - TASK_LANE_GAP
+    : 0;
+  const rowHeightPx = hasTaskBars ? TASK_STRIP_TOP + taskStripHeight + 4 : 32;
+
+  // Helper: date-to-px on the ROW's local coordinate system (same scale
+  // the deliverable backdrop uses — `leftPx/rightPx` above). Not DRY'd
+  // further because the formula is a one-liner and extracting a helper
+  // forced an extra prop drill through the Gantt viewport math.
+  const msToPx = (ms: number): number => ((ms - startMs) / 86_400_000) * pxPerDay;
+  // Lag label — short, Hebrew-flavored suffix to keep the chain readable
+  // without ballooning: working-day lags → `+Nימ"ע`, calendar-day lags →
+  // `+Nק`. Only emitted when lag > 0; zero-lag arrows stay unlabeled.
+  const lagLabel = (lag: number, unit: 'WORKING_DAYS' | 'CALENDAR_DAYS'): string | null => {
+    if (!Number.isFinite(lag) || lag <= 0) return null;
+    return unit === 'WORKING_DAYS' ? `+${lag}ימ"ע` : `+${lag}ק`;
+  };
+  const CLIP_PAD = 2;
+
   return (
-    <div className="relative h-8 select-none">
+    <div
+      className="relative select-none"
+      style={{ height: rowHeightPx }}
+    >
       <div
-        className={cn('absolute top-2 h-4 rounded-md shadow-sm cursor-pointer flex items-center justify-between overflow-hidden', barColor, pastHint, critHint)}
+        className={cn(
+          'absolute top-2 h-4 rounded-md shadow-sm cursor-pointer flex items-center justify-between overflow-hidden',
+          barColor,
+          pastHint,
+          critHint,
+          // When task bars are visible, dim the backdrop so the per-task
+          // layer reads as the primary signal. The backdrop still shows
+          // aggregate status + past-target + CP outline at a glance.
+          hasTaskBars && 'opacity-60',
+        )}
         style={{ left: leftPx, width: widthPx }}
         title={tooltipTitle}
         onPointerDown={startDrag('middle')}
@@ -4096,6 +4275,235 @@ function GanttRow({
         >
           CP
         </span>
+      )}
+      {/* §4 (2026-11-10) · Task-bar + chain-arrow overlay. Rendered as a
+          single SVG so bars, arrows and lag labels share one coordinate
+          space (the row's local px, same scale `msToPx` uses above). The
+          SVG root is pointer-events-none so empty space passes through to
+          the deliverable backdrop; each bar + line opts back in via inline
+          `pointerEvents: auto` for its own hover tooltip. */}
+      {hasTaskBars && totalWidth > 0 && (
+        <svg
+          className="absolute left-0"
+          style={{ top: 0, width: totalWidth, height: rowHeightPx, pointerEvents: 'none' }}
+          width={totalWidth}
+          height={rowHeightPx}
+          aria-hidden="true"
+        >
+          <defs>
+            <marker
+              id={`dp-arrow-cp-${r.key}`}
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" className="fill-red-500" />
+            </marker>
+            <marker
+              id={`dp-arrow-nc-${r.key}`}
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" className="fill-slate-400" />
+            </marker>
+          </defs>
+          {/* Task bars first (under arrows) */}
+          {taskBarItems.map((it) => {
+            if (!it.hasSpan) return null;
+            const rawLeft = msToPx(it.startMs);
+            const rawRight = msToPx(it.endMs);
+            // Skip bars entirely outside the timeline viewport range;
+            // bars that straddle the edge are clamped and marked with a
+            // small overflow triangle (edge-case per the spec).
+            if (rawRight < 0 || rawLeft > totalWidth) return null;
+            const clampedLeft = Math.max(rawLeft, 0);
+            const clampedRight = Math.min(rawRight, totalWidth);
+            const w = Math.max(2, clampedRight - clampedLeft);
+            const y = TASK_STRIP_TOP + it.lane * (TASK_BAR_H + TASK_LANE_GAP);
+            const barClass = it.onCriticalPath
+              ? 'fill-red-100 stroke-red-500 dark:fill-red-500/20 dark:stroke-red-400'
+              : 'fill-blue-100 stroke-blue-500 dark:fill-blue-500/20 dark:stroke-blue-400';
+            const bodyTitle = `${it.code ? `${it.code} · ` : ''}${it.name}${it.onCriticalPath ? ' · critical path' : ''}`;
+            const clippedLeft = rawLeft < -CLIP_PAD;
+            const clippedRight = rawRight > totalWidth + CLIP_PAD;
+            return (
+              <g key={`bar-${it.id}`} style={{ pointerEvents: 'auto' }}>
+                <rect
+                  x={clampedLeft}
+                  y={y}
+                  width={w}
+                  height={TASK_BAR_H}
+                  rx={3}
+                  ry={3}
+                  strokeWidth={1}
+                  className={barClass}
+                >
+                  <title>{bodyTitle}</title>
+                </rect>
+                {/* Overflow markers — small triangle on the clipped edge
+                    so the PM knows the task extends past the visible
+                    timeline. Pointer-events off (visual only). */}
+                {clippedLeft && (
+                  <path
+                    d={`M ${clampedLeft} ${y + TASK_BAR_H / 2} l 4 -3 l 0 6 z`}
+                    className={it.onCriticalPath ? 'fill-red-500' : 'fill-blue-500'}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                )}
+                {clippedRight && (
+                  <path
+                    d={`M ${clampedRight} ${y + TASK_BAR_H / 2} l -4 -3 l 0 6 z`}
+                    className={it.onCriticalPath ? 'fill-red-500' : 'fill-blue-500'}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                )}
+              </g>
+            );
+          })}
+          {/* Chain arrows */}
+          {taskBarItems.flatMap((succ) => {
+            if (succ.deps.length === 0) return [];
+            return succ.deps.map((dep, di) => {
+              const pred = byId.get(dep.predId);
+              // Cross-row dep — out of scope for this row's chain;
+              // handled by the tooltip's `buildChainSummaryLines` list.
+              if (!pred) return null;
+              const isCP = succ.onCriticalPath && pred.onCriticalPath;
+              const strokeClass = isCP
+                ? 'stroke-red-500 dark:stroke-red-400'
+                : 'stroke-slate-300 dark:stroke-slate-500';
+              const strokeW = isCP ? 1.5 : 1;
+              const markerId = isCP ? `dp-arrow-cp-${r.key}` : `dp-arrow-nc-${r.key}`;
+              const label = lagLabel(dep.lag, dep.lagUnit);
+              const labelClass = cn(
+                'font-mono text-[10px]',
+                isCP ? 'fill-red-600 dark:fill-red-400' : 'fill-slate-500 dark:fill-slate-400',
+              );
+
+              // Case A: predecessor has no span — render dashed stub into
+              // the successor's left edge so the chain's incoming edge is
+              // still visible without inventing a position for the pred.
+              if (!pred.hasSpan) {
+                if (!succ.hasSpan) return null;
+                const sLeftRaw = msToPx(succ.startMs);
+                if (sLeftRaw < -CLIP_PAD || sLeftRaw > totalWidth + CLIP_PAD) return null;
+                const sLeft = Math.max(0, Math.min(totalWidth, sLeftRaw));
+                const sY = TASK_STRIP_TOP + succ.lane * (TASK_BAR_H + TASK_LANE_GAP) + TASK_BAR_H / 2;
+                const stubFromX = Math.max(0, sLeft - 14);
+                return (
+                  <g key={`arr-${succ.id}-${di}`}>
+                    <line
+                      x1={stubFromX}
+                      y1={sY}
+                      x2={sLeft - 2}
+                      y2={sY}
+                      strokeDasharray="2 2"
+                      strokeWidth={strokeW}
+                      className={strokeClass}
+                      markerEnd={`url(#${markerId})`}
+                    />
+                    {label && (
+                      <text
+                        x={(stubFromX + sLeft) / 2}
+                        y={sY - 2}
+                        textAnchor="middle"
+                        className={labelClass}
+                      >
+                        {label}
+                      </text>
+                    )}
+                  </g>
+                );
+              }
+              // Case B: successor has no span — nothing to anchor the
+              // arrow to on the right side; the dep is represented in
+              // the tooltip chain list only.
+              if (!succ.hasSpan) return null;
+
+              // Normal case: pred right edge → succ left edge. If the
+              // two bars overlap on X (succ starts before pred ends,
+              // which is legal when lag < 0 or in same-day chains), draw
+              // the arrow going UP-OVER the pred bar so it still reads as
+              // a chain edge rather than a hidden overlap.
+              const pRight = msToPx(pred.endMs);
+              const sLeft = msToPx(succ.startMs);
+              // Skip arrows whose BOTH endpoints are outside the timeline
+              // viewport — nothing to draw. One endpoint inside is still
+              // worth drawing (clamped) so the chain's edge is visible.
+              if (
+                (pRight < 0 && sLeft < 0) ||
+                (pRight > totalWidth && sLeft > totalWidth)
+              ) {
+                return null;
+              }
+              const pY = TASK_STRIP_TOP + pred.lane * (TASK_BAR_H + TASK_LANE_GAP) + TASK_BAR_H / 2;
+              const sY = TASK_STRIP_TOP + succ.lane * (TASK_BAR_H + TASK_LANE_GAP) + TASK_BAR_H / 2;
+              // Clamp endpoints so a far-off bar still draws its arrow
+              // stub at the viewport edge instead of blowing out the SVG.
+              const x1 = Math.max(0, Math.min(totalWidth, pRight));
+              const x2 = Math.max(0, Math.min(totalWidth, sLeft - 2));
+              const mx = (x1 + x2) / 2;
+              const my = (pY + sY) / 2;
+              // Same-lane straight line; cross-lane gets a simple L-shape
+              // via an SVG polyline (horizontal → vertical → horizontal).
+              if (pred.lane === succ.lane) {
+                return (
+                  <g key={`arr-${succ.id}-${di}`}>
+                    <line
+                      x1={x1}
+                      y1={pY}
+                      x2={x2}
+                      y2={sY}
+                      strokeWidth={strokeW}
+                      className={strokeClass}
+                      markerEnd={`url(#${markerId})`}
+                    />
+                    {label && (
+                      <text
+                        x={mx}
+                        y={my - 2}
+                        textAnchor="middle"
+                        className={labelClass}
+                      >
+                        {label}
+                      </text>
+                    )}
+                  </g>
+                );
+              }
+              // Cross-lane: pred's right → short horizontal → vertical → short horizontal into succ's left.
+              const elbowX = Math.max(x1 + 4, x2 - 4);
+              return (
+                <g key={`arr-${succ.id}-${di}`}>
+                  <polyline
+                    points={`${x1},${pY} ${elbowX},${pY} ${elbowX},${sY} ${x2},${sY}`}
+                    fill="none"
+                    strokeWidth={strokeW}
+                    className={strokeClass}
+                    markerEnd={`url(#${markerId})`}
+                  />
+                  {label && (
+                    <text
+                      x={elbowX}
+                      y={my - 2}
+                      textAnchor="middle"
+                      className={labelClass}
+                    >
+                      {label}
+                    </text>
+                  )}
+                </g>
+              );
+            });
+          })}
+        </svg>
       )}
       {/* DPG-2 (2026-10-20) — the 3-numbers badge (total · started · done)
           that used to render to the right of the bar was removed per
