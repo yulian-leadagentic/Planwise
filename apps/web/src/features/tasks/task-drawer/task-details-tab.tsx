@@ -11,6 +11,7 @@ import { TaskProjectInfoBlock } from './task-project-info-block';
 import { DeliverableTargetRow } from './deliverable-target-row';
 import { AssigneeManager } from './assignee-manager';
 import { EditableTextarea, EditableNumber, EditableDate, FieldRow } from './editable-fields';
+import { PredecessorsEditor } from './predecessors-editor';
 
 export function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field: string, value: any) => void }) {
   const dueDateValue = task.endDate ? String(task.endDate).slice(0, 10) : '';
@@ -98,6 +99,13 @@ export function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field
           <span>{getPredecessorConflictMessage(task)}</span>
         </div>
       )}
+
+      {/* §2 (2026-11-10) — Predecessors editor. Project-scoped tasks
+          only; personal tasks (projectId null) render it as a graceful
+          no-op. The read-only amber conflict banner above stays intact
+          — the editor only adds the write path and lives BELOW the
+          banner so the warning stays the first thing the PM sees. */}
+      {task.projectId != null && <PredecessorsEditor task={task} />}
 
       {/* Description — ported from task-detail-page. Click-to-edit
           textarea, autosaves on blur. Full-width so long descriptions
