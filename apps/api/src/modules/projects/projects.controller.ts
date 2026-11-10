@@ -279,6 +279,29 @@ export class ProjectsController {
     return this.projectsService.addDependency(taskId, body);
   }
 
+  // T1-Lag §1 (2026-11-10) — edit the Lag metadata on an existing
+  // edge without tearing the row down and re-creating it. Body:
+  //   { lag?, lagUnit?: 'WORKING_DAYS'|'CALENDAR_DAYS', reason?: string|null }
+  // At least one field must be present. Service re-runs the full
+  // cycle check (direct + transitive DFS) for symmetry with the add
+  // path and returns `{ dependency, needsReschedule: true }` so the
+  // FE can prompt "Save & update due dates".
+  @Patch('tasks/:taskId/dependencies/:dependsOnId')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({ summary: 'Patch task dependency (lag / lagUnit / reason)' })
+  patchDependency(
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Param('dependsOnId', ParseIntPipe) dependsOnId: number,
+    @Body()
+    body: {
+      lag?: number;
+      lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+      reason?: string | null;
+    },
+  ) {
+    return this.projectsService.patchDependency(taskId, dependsOnId, body);
+  }
+
   @Delete('tasks/:taskId/dependencies/:dependsOnId')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Remove task dependency' })

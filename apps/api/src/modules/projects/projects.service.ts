@@ -2139,6 +2139,117 @@ export class ProjectsService {
     });
   }
 
+  /**
+   * Transitive cycle guard for `TaskDependency` writes.
+   *
+   * We treat each row {taskId, dependsOnId} as a directed edge
+   *   taskId → dependsOnId
+   * meaning "`taskId` depends on `dependsOnId`" (so the predecessor
+   * must finish first — the predecessor is EARLIER in the schedule).
+   *
+   * To decide whether adding `fromTaskId → toTaskId` would create a
+   * cycle we DFS from `toTaskId` following outgoing dependency edges
+   * (what each visited task depends on). If that walk ever reaches
+   * `fromTaskId`, the proposed edge closes a loop — fromTaskId would
+   * have to run before itself.
+   *
+   * The walk is scoped to one project: we preload every TaskDependency
+   * whose owning task belongs to `projectId` and build the adjacency
+   * map from that snapshot, so edges that leak across projects (they
+   * shouldn't, but a defensive scope is cheap) are never followed.
+   * A visited Set guards against infinite loops in the pre-existing
+   * (already-cyclic) graph.
+   *
+   * Throws BadRequestException with both task codes when a cycle is
+   * detected so the FE can surface a readable Hebrew/English message.
+   * Callers should still run the cheaper direct-cycle fast check
+   * (A→B→A) first — it rejects the common case without a project-wide
+   * query.
+   *
+   * Accepts a Prisma client/tx handle so the caller can wrap the
+   * guard + write in a $transaction when it needs atomicity. Today
+   * `addDependency` / `patchDependency` pass `this.prisma` directly.
+   */
+  private async assertNoCycle(
+    tx: PrismaService | Prisma.TransactionClient,
+    projectId: number,
+    fromTaskId: number,
+    toTaskId: number,
+  ): Promise<void> {
+    // Preload the project's dependency graph in one round-trip. We
+    // join on Task.projectId (via a `where: { task: { projectId } }`
+    // filter) so cross-project edges — none in practice, but defend
+    // in depth — are excluded from the walk.
+    const edges = await tx.taskDependency.findMany({
+      where: { task: { projectId } },
+      select: { taskId: true, dependsOnId: true },
+    });
+    const adj = new Map<number, number[]>();
+    for (const e of edges) {
+      if (!adj.has(e.taskId)) adj.set(e.taskId, []);
+      adj.get(e.taskId)!.push(e.dependsOnId);
+    }
+    // Pretend the new edge is already in the graph. This way a single
+    // DFS answers "would this edge create a cycle?" without a separate
+    // in-place path check.
+    if (!adj.has(fromTaskId)) adj.set(fromTaskId, []);
+    adj.get(fromTaskId)!.push(toTaskId);
+
+    const visited = new Set<number>();
+    const stack: number[] = [toTaskId];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      if (current === fromTaskId) {
+        // Cycle — fetch codes for a readable error. Fallback to ids
+        // if either code is missing so the message always carries
+        // enough info for the PM to act.
+        const [a, b] = await Promise.all([
+          tx.task.findUnique({ where: { id: fromTaskId }, select: { code: true } }),
+          tx.task.findUnique({ where: { id: toTaskId }, select: { code: true } }),
+        ]);
+        const fromLabel = a?.code ?? `#${fromTaskId}`;
+        const toLabel = b?.code ?? `#${toTaskId}`;
+        throw new BadRequestException(
+          `Dependency cycle detected: ${fromLabel} → ${toLabel} would close a loop (זוהה מעגל תלויות)`,
+        );
+      }
+      if (visited.has(current)) continue;
+      visited.add(current);
+      const nexts = adj.get(current);
+      if (nexts) {
+        for (const n of nexts) {
+          if (!visited.has(n)) stack.push(n);
+        }
+      }
+    }
+  }
+
+  /**
+   * Shared validator for the per-edge Lag metadata used by add/patch.
+   * Keeps the bounds (lag ∈ [0..365], lagUnit enum, reason ≤ 255 chars)
+   * in one place so the two write paths can't drift.
+   */
+  private normalizeDependencyLagFields(body: {
+    lag?: number;
+    lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+    reason?: string | null;
+  }): { lag: number; lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS'; reason: string | null } {
+    const lag = Math.floor(Number(body?.lag ?? 0));
+    if (!Number.isFinite(lag) || lag < 0) {
+      throw new BadRequestException(`Lag must be a non-negative integer (got ${body?.lag})`);
+    }
+    if (lag > 365) {
+      throw new BadRequestException(`Lag must be <= 365 (got ${lag})`);
+    }
+    const lagUnit = body?.lagUnit ?? 'WORKING_DAYS';
+    if (lagUnit !== 'WORKING_DAYS' && lagUnit !== 'CALENDAR_DAYS') {
+      throw new BadRequestException(`Invalid lagUnit: ${lagUnit}`);
+    }
+    const rawReason = typeof body?.reason === 'string' ? body.reason.trim() : '';
+    const reason = rawReason ? rawReason.slice(0, 255) : null;
+    return { lag, lagUnit, reason };
+  }
+
   async addDependency(
     taskId: number,
     body: {
@@ -2154,7 +2265,8 @@ export class ProjectsService {
     // defers auto-wiring until the manual flow validates); when a
     // trigger is approved, call SchedulerService.saveAndUpdateDueDates
     // for the parent project after the write commits — mirror in
-    // `removeDependency` below.
+    // `removeDependency` below. The response already carries
+    // `needsReschedule: true` so the FE can prompt the PM.
 
     const dependsOnId = Number(body?.dependsOnId);
     if (!Number.isFinite(dependsOnId)) {
@@ -2163,35 +2275,133 @@ export class ProjectsService {
 
     // Prevent self-dependency
     if (taskId === dependsOnId) throw new BadRequestException('Task cannot depend on itself');
-    // Prevent circular (A→B→A)
+    // Prevent circular (A→B→A) — cheap direct-cycle fast check kept
+    // before the project-wide DFS below.
     const reverse = await this.prisma.taskDependency.findFirst({
       where: { taskId: dependsOnId, dependsOnId: taskId },
     });
     if (reverse) throw new BadRequestException('Circular dependency detected');
+
+    // Resolve the owning project once so `assertNoCycle` can scope
+    // its walk, and so we can refuse up-front when the two tasks
+    // don't live in the same project.
+    const [fromTask, toTask] = await Promise.all([
+      this.prisma.task.findUnique({ where: { id: taskId }, select: { projectId: true } }),
+      this.prisma.task.findUnique({ where: { id: dependsOnId }, select: { projectId: true } }),
+    ]);
+    if (!fromTask || !toTask) {
+      throw new NotFoundException('Task not found');
+    }
+    // Task.projectId is nullable in the schema (personal tasks have
+    // no project). Dependencies between personal tasks don't have a
+    // project graph to walk, so refuse them explicitly.
+    if (fromTask.projectId == null || toTask.projectId == null) {
+      throw new BadRequestException('Dependencies require both tasks to belong to a project');
+    }
+    if (fromTask.projectId !== toTask.projectId) {
+      throw new BadRequestException('Tasks must belong to the same project');
+    }
+
+    // Transitive cycle check — refuses A→B→…→A before we write.
+    await this.assertNoCycle(this.prisma, fromTask.projectId, taskId, dependsOnId);
 
     // T1-Lag (2026-11-03) — validate per-edge Lag metadata. Same bounds
     // as the template side: lag non-negative + <=365; lagUnit must be
     // one of the enum values; reason trimmed to 255 chars (null when
     // empty). All three default to the FS-sequence shape so legacy
     // callers that still send only `{dependsOnId}` keep working.
-    const lag = Math.floor(Number(body?.lag ?? 0));
-    if (!Number.isFinite(lag) || lag < 0) {
-      throw new BadRequestException(`Lag must be a non-negative integer (got ${body?.lag})`);
-    }
-    if (lag > 365) {
-      throw new BadRequestException(`Lag must be <= 365 (got ${lag})`);
-    }
-    const lagUnit = body?.lagUnit ?? 'WORKING_DAYS';
-    if (lagUnit !== 'WORKING_DAYS' && lagUnit !== 'CALENDAR_DAYS') {
-      throw new BadRequestException(`Invalid lagUnit: ${lagUnit}`);
-    }
-    const rawReason = typeof body?.reason === 'string' ? body.reason.trim() : '';
-    const reason = rawReason ? rawReason.slice(0, 255) : null;
+    const { lag, lagUnit, reason } = this.normalizeDependencyLagFields(body);
 
-    return this.prisma.taskDependency.create({
+    const dependency = await this.prisma.taskDependency.create({
       data: { taskId, dependsOnId, lag, lagUnit, reason },
       include: { dependsOn: { select: { id: true, code: true, name: true } } },
     });
+    // `needsReschedule: true` tells the FE "Save & update due dates"
+    // may now move dates; verified no internal consumer reads the
+    // old create() row directly — only ProjectsController wraps us.
+    return { ...dependency, needsReschedule: true };
+  }
+
+  async patchDependency(
+    taskId: number,
+    dependsOnId: number,
+    body: {
+      lag?: number;
+      lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+      reason?: string | null;
+    },
+  ) {
+    // At least one field must be present — PATCH with an empty body
+    // is almost certainly a FE bug, not a legitimate no-op. Reject
+    // early so the client gets a clear 400 instead of a silent
+    // "updated 0 fields" success.
+    const hasLag = body && body.lag !== undefined;
+    const hasLagUnit = body && body.lagUnit !== undefined;
+    const hasReason = body && body.reason !== undefined;
+    if (!hasLag && !hasLagUnit && !hasReason) {
+      throw new BadRequestException(
+        'At least one of lag, lagUnit, reason must be provided',
+      );
+    }
+
+    const existing = await this.prisma.taskDependency.findUnique({
+      where: { taskId_dependsOnId: { taskId, dependsOnId } },
+      include: { task: { select: { projectId: true } } },
+    });
+    if (!existing) {
+      throw new NotFoundException('Dependency not found');
+    }
+
+    // Re-run the transitive cycle guard. The edge already exists, so
+    // this is almost always a no-op — but it's cheap insurance in case
+    // a concurrent writer introduced new edges since the add, and it
+    // keeps the write-path symmetric with `addDependency`. `fromTaskId`
+    // / `toTaskId` match add (taskId=dependent, dependsOnId=predecessor).
+    // projectId is nullable in the schema; a dep row whose owning
+    // task went personal can't be in a graph we can walk — refuse.
+    if (existing.task.projectId == null) {
+      throw new BadRequestException('Dependency must belong to a project task');
+    }
+    await this.assertNoCycle(this.prisma, existing.task.projectId, taskId, dependsOnId);
+
+    // Validate only the fields that were actually sent; unspecified
+    // ones keep their current values.
+    const data: {
+      lag?: number;
+      lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
+      reason?: string | null;
+    } = {};
+    if (hasLag) {
+      const lag = Math.floor(Number(body.lag));
+      if (!Number.isFinite(lag) || lag < 0) {
+        throw new BadRequestException(`Lag must be a non-negative integer (got ${body.lag})`);
+      }
+      if (lag > 365) {
+        throw new BadRequestException(`Lag must be <= 365 (got ${lag})`);
+      }
+      data.lag = lag;
+    }
+    if (hasLagUnit) {
+      if (body.lagUnit !== 'WORKING_DAYS' && body.lagUnit !== 'CALENDAR_DAYS') {
+        throw new BadRequestException(`Invalid lagUnit: ${body.lagUnit}`);
+      }
+      data.lagUnit = body.lagUnit;
+    }
+    if (hasReason) {
+      if (body.reason === null) {
+        data.reason = null;
+      } else {
+        const rawReason = typeof body.reason === 'string' ? body.reason.trim() : '';
+        data.reason = rawReason ? rawReason.slice(0, 255) : null;
+      }
+    }
+
+    const dependency = await this.prisma.taskDependency.update({
+      where: { taskId_dependsOnId: { taskId, dependsOnId } },
+      data,
+      include: { dependsOn: { select: { id: true, code: true, name: true } } },
+    });
+    return { dependency, needsReschedule: true };
   }
 
   async removeDependency(taskId: number, dependsOnId: number) {
@@ -2200,7 +2410,7 @@ export class ProjectsService {
     await this.prisma.taskDependency.delete({
       where: { taskId_dependsOnId: { taskId, dependsOnId } },
     });
-    return { message: 'Dependency removed' };
+    return { message: 'Dependency removed', needsReschedule: true };
   }
 
   async getBudgetSummary(projectId: number) {
