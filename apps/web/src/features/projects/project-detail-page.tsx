@@ -41,6 +41,7 @@ import { TeamTab } from './project-detail/team-tab';
 import { ProjectStatusEditor } from './project-detail/project-status-editor';
 import { ProjectCategoryEditor } from './project-detail/project-category-editor';
 import { ProjectBriefTiles } from './project-detail/project-brief-tiles';
+import { ProjectTimelineSummary } from './project-detail/project-timeline-summary';
 import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 
 export function ProjectDetailPage() {
@@ -276,6 +277,16 @@ export function ProjectDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Project timeline summary (WORKORDER §5 · 2026-11-10).
+          Scheduler-derived project window, reduced from per-task
+          `estimatedStartDate` / `endDate` / `onCriticalPath` written
+          by the DAG forward pass. Placed between the header and the
+          tab bar so it reads as a project-level status strip sitting
+          above every tab. Shares the `['planning', projectId]` query
+          cache with ProjectBriefTiles / PlanningView — no extra
+          round-trip. */}
+      <ProjectTimelineSummary projectId={projectId} />
 
       {/* Tab bar */}
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
