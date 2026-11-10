@@ -210,6 +210,39 @@ export class TemplatesController {
     return this.templatesService.addZone(templateId, body);
   }
 
+  // P1 · Reference model (2026-11-10) — "+ Add Deliverable" in the
+  // composing template editors creates a reference-slot, not a row
+  // copy. The slot is a TemplateZone with `linkedTaskTemplateId` set;
+  // the apply pipeline (`zones.applyProjectTemplate`) materializes the
+  // deliverable's tasks + predecessors into project `Task` +
+  // `TaskDependency` rows at apply time — same path that already
+  // handles zones with a linked task template, so no apply-side wiring
+  // is needed.
+  //
+  // Response shape matches `addZone()` 1:1 (linkedTaskTemplate +
+  // referencedTemplate relations included), so the FE doesn't need
+  // special-casing. Permission is `templates/zone:write` — mirrors the
+  // surrounding zone routes, since a reference-slot is a zone row
+  // under the hood.
+  @Post(':id/deliverable-refs')
+  @RequirePermissions({ module: 'templates/zone', action: 'write' })
+  @ApiOperation({
+    summary:
+      'Add a deliverable reference-slot (TemplateZone with linkedTaskTemplateId) to a template',
+  })
+  addDeliverableRef(
+    @Param('id', ParseIntPipe) templateId: number,
+    @Body()
+    body: {
+      deliverableTemplateId: number;
+      parentZoneId?: number | null;
+      sortOrder?: number;
+      name?: string;
+    },
+  ) {
+    return this.templatesService.addDeliverableRef(templateId, body);
+  }
+
   @Patch('zones/:zoneId')
   @RequirePermissions({ module: 'templates/zone', action: 'write' })
   @ApiOperation({ summary: 'Update a template zone' })

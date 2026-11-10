@@ -1984,6 +1984,16 @@ model TemplateZone {
   referencedTemplate Template?          @relation("ReferencedZoneTemplate", fields: [referencedTemplateId], references: [id])
   templateZoneTasks  TemplateZoneTask[]
 
+  // P1 (2026-11-10) — Reference model: every Deliverable Template now
+  // resolves "Used by N templates" (and the inverse "which zone-slots
+  // reference me") through this FK. Backing index keeps both the
+  // `usedByTemplatesCount` lookup on template detail and the Phase-2
+  // migration's grouping scan O(n) instead of a sequential-scan over
+  // `template_zones` for every deliverable. `onDelete` stays at the
+  // schema default (NoAction) so a referenced deliverable template
+  // can't be deleted out from under a composing template — the
+  // Deliverable Templates editor surfaces the count as a guard.
+  @@index([linkedTaskTemplateId])
   @@map("template_zones")
 }
 

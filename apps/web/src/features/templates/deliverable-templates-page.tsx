@@ -1295,6 +1295,29 @@ function EditorView({
               <p className="mt-1 text-xs text-muted-foreground">
                 {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; Used {template.usageCount ?? 0} time{(template.usageCount ?? 0) !== 1 ? 's' : ''}
               </p>
+              {/* P1 · Reference model (2026-11-10) — "Used by N
+                  templates" counter. Counts every composing template
+                  that references THIS deliverable through a
+                  TemplateZone's `linkedTaskTemplateId`. Backed by the
+                  new `template_zones_linked_task_template_id_idx`
+                  index (2026-11-10 migration). The badge stays
+                  visually quiet (blue entity color on a 50-weight
+                  background, mono count) — it's an informational
+                  pill, not a call to action. Hidden when the count
+                  is 0 so unused deliverables don't carry a noisy
+                  "0 templates" chip. */}
+              {typeof template.usedByTemplatesCount === 'number'
+                && template.usedByTemplatesCount > 0 && (
+                <div className="mt-2">
+                  <span
+                    className="inline-flex items-center gap-1 rounded-[5px] bg-blue-50 px-2 py-0.5 text-[11px] font-bold tracking-wide text-blue-600"
+                    title="Composing templates that reference this deliverable via a zone-slot."
+                  >
+                    <span className="font-mono">{template.usedByTemplatesCount}</span>
+                    Used by {template.usedByTemplatesCount === 1 ? 'template' : 'templates'}
+                  </span>
+                </div>
+              )}
               {(() => {
                 // bm2 (2026-10-28, "more prominent") — surface fastest
                 // (critical-path, min completion with unlimited parallel)

@@ -41,30 +41,21 @@ export function ServicePickerModal({
     if (toAdd.length === 0) return;
     setAdding(true);
     try {
+      // P1 · Reference model (2026-11-10). Same pattern as the root
+      // picker: each selected Deliverable becomes ONE reference-slot
+      // (a child TemplateZone with `linkedTaskTemplateId=svc.id`)
+      // under the current zone — not N copied TemplateZoneTask rows.
+      // `parentZoneId=zoneId` nests the slot inside the current zone;
+      // the apply-side pipeline materializes the slot's linked tasks
+      // + predecessors at apply time.
       for (const svc of toAdd) {
-        // Fetch service detail to get its tasks
-        const detail = await client.get(`/templates/${svc.id}`).then((r) => r.data.data ?? r.data);
-        const tasks = detail?.templateTasks ?? [];
-        // Copy each task tagged with the service name.
-        // QA4 · B1 (2026-09-28): also write the FK
-        // `deliverableTemplateId = svc.id` so a later rename of the
-        // Deliverable template no longer breaks the exact-name JOIN in
-        // project-init. The `[SERVICE:<name>]` marker stays in the
-        // description for display back-compat.
-        for (const task of tasks) {
-          await client.post(`/templates/zones/${zoneId}/tasks`, {
-            code: task.code,
-            name: task.name,
-            description: `[SERVICE:${svc.name}]`,
-            defaultBudgetHours: task.defaultBudgetHours,
-            defaultBudgetAmount: task.defaultBudgetAmount,
-            deliverableTemplateId: svc.id,
-            phaseId: svc.phaseId ?? svc.phase?.id ?? undefined,
-          });
-        }
+        await client.post(`/templates/${templateId}/deliverable-refs`, {
+          deliverableTemplateId: svc.id,
+          parentZoneId: zoneId,
+        });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      notify.success(`Added ${toAdd.length} deliverable template${toAdd.length > 1 ? 's' : ''}`, { code: 'SVC-ADD-200' });
+      notify.success(`Added ${toAdd.length} deliverable${toAdd.length > 1 ? 's' : ''}`, { code: 'DELIVERABLE-REF-ADD-200' });
       onClose();
     } catch (err: any) {
       notify.apiError(err, 'Failed to add deliverable');

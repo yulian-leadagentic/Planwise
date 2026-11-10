@@ -35,23 +35,22 @@ export function RootServicePickerModal({
     if (toAdd.length === 0) return;
     setAdding(true);
     try {
+      // P1 · Reference model (2026-11-10). Each selected Deliverable
+      // is added as ONE reference-slot (a TemplateZone row with
+      // `linkedTaskTemplateId=svc.id`) — not as N copied TemplateTask
+      // rows. The apply-side pipeline already materializes the
+      // slot's linked tasks + predecessors into the project at apply
+      // time, so edits inside a Deliverable template keep
+      // propagating to every composing template that references it.
+      // One POST per selected deliverable — no per-task loop, no
+      // detail prefetch.
       for (const svc of toAdd) {
-        // Fetch service tasks and copy them as TemplateTask entries with service tag.
-        // QA4 · B1 (2026-09-28): mirror the zone-picker fix — also write
-        // `deliverableTemplateId = svc.id` (and phaseId when known) so the
-        // link survives a Deliverable rename. Marker stays for display.
-        const detail = await client.get(`/templates/${svc.id}`).then((r) => r.data.data ?? r.data);
-        for (const task of (detail?.templateTasks ?? [])) {
-          await client.post(`/templates/${templateId}/tasks`, {
-            code: task.code, name: task.name, description: `[SERVICE:${svc.name}]`,
-            defaultBudgetHours: task.defaultBudgetHours, defaultBudgetAmount: task.defaultBudgetAmount,
-            deliverableTemplateId: svc.id,
-            phaseId: svc.phaseId ?? svc.phase?.id ?? undefined,
-          });
-        }
+        await client.post(`/templates/${templateId}/deliverable-refs`, {
+          deliverableTemplateId: svc.id,
+        });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
-      notify.success(`Added ${toAdd.length} service${toAdd.length > 1 ? 's' : ''}`, { code: 'SVC-ADD-200' });
+      notify.success(`Added ${toAdd.length} deliverable${toAdd.length > 1 ? 's' : ''}`, { code: 'DELIVERABLE-REF-ADD-200' });
       onClose();
     } catch (err: any) {
       notify.apiError(err, 'Failed to add deliverable');

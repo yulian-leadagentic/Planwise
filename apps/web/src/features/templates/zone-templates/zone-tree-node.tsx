@@ -54,6 +54,17 @@ export function ZoneTreeNode({
 
   const children: any[] = zone.children ?? [];
 
+  // P1 · Reference model (2026-11-10) — "Linked" deliverable slot
+  // detection. A zone with `linkedTaskTemplateId` is a reference-slot
+  // for a deliverable template, not a hand-built zone. The findOne
+  // include now pulls the linked deliverable's `templateTasks` +
+  // their `predecessors`, so we render both as a read-only nested
+  // list — editing lives in the source deliverable, and changes to
+  // predecessors in that deliverable immediately reflect here.
+  const linkedDeliverable: any = zone.linkedTaskTemplate ?? null;
+  const linkedTasks: any[] = linkedDeliverable?.templateTasks ?? [];
+  const hasLinkedContent = !!linkedDeliverable;
+
   // Fetch referenced template content if this zone references another template
   const refTemplateId = zone.referencedTemplateId ?? zone.referencedTemplate?.id;
   const { data: refTemplateDetail, isLoading: refLoading } = useQuery({
@@ -170,6 +181,29 @@ export function ZoneTreeNode({
             <Link className="h-3 w-3" /> ref: {zone.referencedTemplate?.name || refTemplateDetail?.name || `#${refTemplateId}`}
           </span>
         )}
+        {/* P1 · Deliverable-slot header chrome (2026-11-10). A single
+            compact "Linked" badge + the referenced deliverable's
+            name/code reads the same way a chip on the Deliverable
+            Templates list row does — blue entity color, mono code,
+            no shadow. `title` carries the "edit in the source
+            deliverable" guidance so the editor's tasks beneath can
+            stay un-annotated (less visual noise per row). */}
+        {linkedDeliverable && (
+          <>
+            <span
+              className="inline-flex items-center gap-1 rounded-[5px] bg-blue-50 px-2 py-0.5 text-[11px] font-bold tracking-wide text-blue-600"
+              title="Deliverable reference. Edit the tasks in the source deliverable template."
+            >
+              <Link className="h-3 w-3" aria-hidden="true" /> Linked
+            </span>
+            <span className="text-[13px] text-slate-700">{linkedDeliverable.name}</span>
+            {linkedDeliverable.code && (
+              <span className="font-mono text-xs font-medium text-slate-500">
+                {linkedDeliverable.code}
+              </span>
+            )}
+          </>
+        )}
         {zone.isTypical && (
           <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
             Typical{zone.typicalCount ? ` x${zone.typicalCount}` : ''}
@@ -230,6 +264,77 @@ export function ZoneTreeNode({
       {/* Expanded: referenced content (view-only) + child zones */}
       {expanded && (
         <div className="ml-6 border-l-2 border-border pl-3 space-y-0.5 mb-2">
+          {/* P1 · Reference model (2026-11-10) — read-only linked
+              deliverable tasks + their predecessors. Renders the
+              deliverable's own task graph as a flat list under the
+              slot so DoD is observable: editing predecessors in the
+              source deliverable reflects here on the next load.
+              Tasks are NOT editable in this view — the edit surface
+              lives in the Deliverable Template editor (link via
+              `/templates/deliverables/<id>` is intentionally left
+              for the FE routing follow-up; the badge + tooltip
+              above already names where to go). */}
+          {hasLinkedContent && linkedTasks.length > 0 && (
+            <>
+              {linkedTasks.map((task: any) => {
+                // Build a compact "← PRED-001 (3wd), PRED-002 (0wd)"
+                // summary. `wd` = working days, `cal` = calendar days,
+                // matching the Deliverable Template editor's own
+                // predecessor chip language. Tasks with no
+                // predecessors render without the arrow block so the
+                // row stays scannable.
+                const preds: any[] = task.predecessors ?? [];
+                const predSummary = preds
+                  .map((p: any) => {
+                    const code =
+                      p.dependsOnTemplateTask?.code ??
+                      `#${p.dependsOnTemplateTaskId}`;
+                    const lagN = Number(p.lag ?? 0);
+                    const unit =
+                      p.lagUnit === 'CALENDAR_DAYS' ? 'cal' : 'wd';
+                    return lagN > 0 ? `${code} (${lagN}${unit})` : code;
+                  })
+                  .join(', ');
+                return (
+                  <div
+                    key={`linked-task-${task.id}`}
+                    className="flex items-center gap-2 rounded-md px-2 py-1.5 bg-slate-50/60"
+                    title="Read-only — edit in the source deliverable template"
+                  >
+                    <CheckSquare
+                      className="h-3.5 w-3.5 shrink-0 text-green-400"
+                      aria-hidden="true"
+                    />
+                    <span className="font-mono text-xs font-medium text-slate-500 w-20 truncate">
+                      {task.code || '-'}
+                    </span>
+                    <span className="text-[13px] text-slate-700 truncate">
+                      {task.name}
+                    </span>
+                    {task.defaultBudgetHours != null && (
+                      <span className="font-mono text-xs font-medium text-slate-400">
+                        {Number(task.defaultBudgetHours)}h
+                      </span>
+                    )}
+                    {predSummary && (
+                      <span
+                        className="ml-auto font-mono text-[11px] text-slate-500"
+                        title={`Predecessors: ${predSummary}`}
+                      >
+                        {'←'} {predSummary}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
+          {hasLinkedContent && linkedTasks.length === 0 && (
+            <p className="py-2 text-[11px] font-medium italic text-slate-400">
+              Linked deliverable has no tasks yet.
+            </p>
+          )}
+
           {/* View-only: services from referenced template */}
           {Array.from(refServiceGroups.entries()).map(([svcName, svcTasks]) => (
             <ServiceGroupItem key={`ref-svc-${svcName}`} serviceName={svcName} tasks={svcTasks} templateId={templateId} servicePhase={servicePhaseMap?.get(svcName) || null} onDeleteAll={() => {}} readOnly />
@@ -276,7 +381,7 @@ export function ZoneTreeNode({
             </div>
           )}
 
-          {children.length === 0 && !hasRefContent && !showAddChild && (
+          {children.length === 0 && !hasRefContent && !hasLinkedContent && !showAddChild && (
             refTemplateId && refLoading
               ? <p className="py-2 text-xs text-muted-foreground italic">Loading zone content...</p>
               : !refTemplateId

@@ -549,6 +549,47 @@ export class TemplatesService {
       defaultBudgetHours: true,
       defaultBudgetAmount: true,
     } as const;
+    // P1 · Reference model (2026-11-10) — every `TemplateZone` with a
+    // `linkedTaskTemplateId` (a deliverable-slot) now surfaces the
+    // linked deliverable's tasks + predecessor graph so the editor can
+    // render them as a read-only nested list under the slot. This is
+    // the FE affordance behind DoD "editing predecessors in 41
+    // reflects in every referencing template's editor" — the same
+    // include shape runs through every nesting level below (root
+    // zones, children, nested children). We keep this as `select` (not
+    // `include`) so the payload stays flat and we avoid pulling the
+    // deliverable's own zones through the ref (which would recurse
+    // uselessly for this read path). Nested `predecessors` carry the
+    // same `{id,code,name}` shape the composing template's own task
+    // predecessors use, so the FE renderer is identical.
+    const linkedTaskTemplateSelect = {
+      id: true,
+      name: true,
+      code: true,
+      templateTasks: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          sortOrder: true,
+          defaultBudgetHours: true,
+          defaultBudgetAmount: true,
+          predecessors: {
+            select: {
+              dependsOnTemplateTaskId: true,
+              lag: true,
+              lagUnit: true,
+              reason: true,
+              dependsOnTemplateTask: {
+                select: { id: true, code: true, name: true },
+              },
+            },
+            orderBy: { id: 'asc' as const },
+          },
+        },
+        orderBy: { sortOrder: 'asc' as const },
+      },
+    } as const;
     const template = await this.prisma.template.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -577,7 +618,7 @@ export class TemplatesService {
           include: {
             children: {
               include: {
-                linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+                linkedTaskTemplate: { select: linkedTaskTemplateSelect },
                 referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
                 templateZoneTasks: {
                   include: {
@@ -589,7 +630,7 @@ export class TemplatesService {
                 },
                 children: {
                   include: {
-                    linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+                    linkedTaskTemplate: { select: linkedTaskTemplateSelect },
                     referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
                     templateZoneTasks: {
                       include: {
@@ -603,7 +644,7 @@ export class TemplatesService {
                 },
               },
             },
-            linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+            linkedTaskTemplate: { select: linkedTaskTemplateSelect },
             referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
             templateZoneTasks: {
               include: {
@@ -659,7 +700,27 @@ export class TemplatesService {
       fastestWorkingDays = computeFastestWorkingDays(tasks, edges);
       slowestWorkingDays = computeSlowestWorkingDays(tasks);
     }
-    return { ...resolved, fastestWorkingDays, slowestWorkingDays };
+
+    // P1 · Reference model (2026-11-10) — "Used by N templates".
+    // Counts every `TemplateZone` that references THIS template as its
+    // `linkedTaskTemplateId` (i.e. every composing template that has
+    // this deliverable as a zone-slot). Only meaningful for
+    // `task_list` templates — composing templates aren't themselves
+    // referenced through `linkedTaskTemplateId`, so the field stays
+    // `undefined` for them to keep the response surface honest.
+    //
+    // Backed by the `template_zones_linked_task_template_id_idx`
+    // added in the 2026-11-10 migration — one bounded index seek per
+    // detail fetch. Kept outside the main include so we don't force
+    // Prisma into an N+1 shape on the detail response.
+    let usedByTemplatesCount: number | undefined;
+    if (resolved.type === 'task_list') {
+      usedByTemplatesCount = await this.prisma.templateZone.count({
+        where: { linkedTaskTemplateId: id },
+      });
+    }
+
+    return { ...resolved, fastestWorkingDays, slowestWorkingDays, usedByTemplatesCount };
   }
 
   async update(id: number, body: any) {
@@ -1156,6 +1217,140 @@ export class TemplatesService {
         sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
         linkedTaskTemplateId: body.linkedTaskTemplateId || null,
         referencedTemplateId: body.referencedTemplateId || null,
+      },
+      include: {
+        linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+        referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
+      },
+    });
+  }
+
+  // ─── P1 · Reference model (2026-11-10) ──────────────────────────────
+  //
+  // "+ Add Deliverable" in the composing template editors becomes a
+  // reference instead of a copy. One TemplateZone row with
+  // `linkedTaskTemplateId=<deliverable id>` ("deliverable slot") stands
+  // in for the deliverable's full task+predecessor graph — the
+  // apply-side pipeline (`zones.applyProjectTemplate` + `materializeDeps`)
+  // already materializes those tasks and their `TaskDependency` edges
+  // from `linkedTaskTemplate.templateTasks`.
+  //
+  // The underlying write is the same shape `addZone()` emits (so the
+  // FE doesn't need to special-case the response). The "slot" gets the
+  // most-neutral existing zoneType — `building`, matching `addZone()`'s
+  // default (templates.service.ts §addZone) — rather than introducing a
+  // new enum value for "slot".
+  //
+  // Validation:
+  //   • `deliverableTemplateId` must exist and have `type = 'task_list'`
+  //     (the deliverable-template convention, used throughout the
+  //     service for list/detail filtering). A non-task_list target is a
+  //     400, not a 404, so an FE drift can't silently drop the ref.
+  //   • `parentZoneId`, if given, must belong to the same templateId —
+  //     prevents a stale FE from attaching a slot to a sibling
+  //     template's zone.
+  //   • Name defaults to the referenced template's `name` so the slot
+  //     reads naturally in the composing template's tree; the caller
+  //     may override.
+  async addDeliverableRef(
+    templateId: number,
+    body: {
+      deliverableTemplateId?: number | string;
+      parentZoneId?: number | string | null;
+      sortOrder?: number | string;
+      name?: string;
+    },
+  ) {
+    await this.findOne(templateId); // verify composing template exists
+
+    const deliverableIdRaw = body?.deliverableTemplateId;
+    const deliverableId =
+      deliverableIdRaw == null || deliverableIdRaw === ''
+        ? NaN
+        : Number(deliverableIdRaw);
+    if (!Number.isFinite(deliverableId) || deliverableId <= 0) {
+      throw new BadRequestException({
+        code: 'DELIVERABLE_REF_ID_REQUIRED',
+        message: 'deliverableTemplateId is required and must be a positive integer.',
+      });
+    }
+
+    // Deliverable must exist AND be a `task_list`-type template. We
+    // check both in one `findFirst` so an FE that pointed at the wrong
+    // template type sees a specific 400 instead of a cryptic FK error.
+    const deliverable = await this.prisma.template.findFirst({
+      where: { id: deliverableId, deletedAt: null },
+      select: { id: true, name: true, code: true, type: true },
+    });
+    if (!deliverable) {
+      throw new BadRequestException({
+        code: 'DELIVERABLE_REF_NOT_FOUND',
+        message: `Deliverable template #${deliverableId} not found.`,
+      });
+    }
+    if (deliverable.type !== 'task_list') {
+      throw new BadRequestException({
+        code: 'DELIVERABLE_REF_WRONG_TYPE',
+        message:
+          `Template #${deliverableId} is of type "${deliverable.type}"; ` +
+          `only "task_list" deliverable templates may be referenced.`,
+      });
+    }
+
+    const parentZoneIdRaw = body?.parentZoneId;
+    const parentZoneId =
+      parentZoneIdRaw == null || parentZoneIdRaw === ''
+        ? null
+        : Number(parentZoneIdRaw);
+    if (parentZoneId != null) {
+      if (!Number.isFinite(parentZoneId) || parentZoneId <= 0) {
+        throw new BadRequestException({
+          code: 'DELIVERABLE_REF_BAD_PARENT',
+          message: 'parentZoneId, when given, must be a positive integer.',
+        });
+      }
+      const parent = await this.prisma.templateZone.findUnique({
+        where: { id: parentZoneId },
+        select: { id: true, templateId: true },
+      });
+      if (!parent || parent.templateId !== templateId) {
+        throw new BadRequestException({
+          code: 'DELIVERABLE_REF_PARENT_MISMATCH',
+          message:
+            `Parent zone #${parentZoneId} does not belong to template #${templateId}.`,
+        });
+      }
+    }
+
+    const maxOrder = await this.prisma.templateZone.aggregate({
+      where: { templateId, parentId: parentZoneId },
+      _max: { sortOrder: true },
+    });
+    const sortOrder =
+      body?.sortOrder != null && body.sortOrder !== ''
+        ? Number(body.sortOrder)
+        : (maxOrder._max.sortOrder ?? 0) + 1;
+
+    const slotName = (body?.name ?? deliverable.name).toString();
+
+    return this.prisma.templateZone.create({
+      data: {
+        templateId,
+        parentId: parentZoneId,
+        // Reuse the most-neutral existing zoneType (same default
+        // `addZone` writes above). We do NOT add a new enum value for
+        // "deliverable slot" — the FE recognises the slot by
+        // `linkedTaskTemplateId != null` and renders the "Linked" badge
+        // + nested read-only task list on top of the plain zone chrome.
+        zoneType: 'building',
+        name: slotName,
+        code: null,
+        isTypical: false,
+        typicalCount: 1,
+        instanceCount: 1,
+        sortOrder,
+        linkedTaskTemplateId: deliverable.id,
+        referencedTemplateId: null,
       },
       include: {
         linkedTaskTemplate: { select: { id: true, name: true, code: true } },
