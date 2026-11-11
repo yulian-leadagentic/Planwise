@@ -78,13 +78,38 @@ export class SchedulingController {
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({
     summary:
-      'D4 · Reschedule all deliverables in a project; auto-commit safe tasks, return the problematic ones for PM review',
+      'D4 · Reschedule all deliverables in a project; auto-commit safe tasks, return the problematic ones for PM review. Optional { taskIds } (§8a) limits the write to a PM-approved subset after a preview-reschedule round-trip.',
   })
   saveAndUpdateDueDates(
     @Param('projectId', ParseIntPipe) projectId: number,
     @CurrentUser() user: any,
+    @Body() body?: { taskIds?: number[] },
   ) {
-    return this.scheduler.saveAndUpdateDueDates(projectId, user?.id);
+    const taskIds =
+      Array.isArray(body?.taskIds)
+        ? body!.taskIds.filter((n): n is number => Number.isInteger(n))
+        : undefined;
+    return this.scheduler.saveAndUpdateDueDates(projectId, user?.id, { taskIds });
+  }
+
+  // ─── §8a · Preview reschedule ──────────────────────────────────────
+  //
+  // Dry-runs the project-wide reschedule and returns a per-task diff
+  // (before/after dates + markers for violatesTarget / hoursLogged /
+  // onCriticalPath). No DB side effects — the scheduler runs read-only
+  // and no writes are issued. The Review Modal opens on this payload,
+  // then calls `save-and-update-due-dates` with the approved
+  // `{ taskIds }` subset. Same `projects:write` guard as the live
+  // commit path (the preview still accesses project-level scheduling
+  // data a read-only viewer should not be able to drive from the UI).
+  @Post('scheduling/projects/:projectId/preview-reschedule')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({
+    summary:
+      '§8a · Dry-run the project-wide reschedule and return a per-task diff (no writes).',
+  })
+  previewReschedule(@Param('projectId', ParseIntPipe) projectId: number) {
+    return this.scheduler.previewReschedule(projectId);
   }
 
   @Post('scheduling/projects/:projectId/apply-reviewed')

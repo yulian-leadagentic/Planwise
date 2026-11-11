@@ -191,6 +191,46 @@ export interface SaveAndUpdateDueDatesResult {
 }
 
 /**
+ * §8a · Pre-commit reschedule preview.
+ *
+ * Returned by `previewReschedule(projectId)`: a per-task diff of
+ * `estimatedStartDate` / `endDate` BEFORE (stored) vs AFTER (what the
+ * scheduler would place), without touching the database. The Review
+ * Modal renders this list so the PM can see exactly which tasks will
+ * move and by how much before clicking "Apply approved".
+ *
+ * `willMove` is the simple "after != before" flag the FE uses to hide
+ * no-op rows. `violatesTarget` flags rows whose scheduler-proposed
+ * endDate lands AFTER the deliverable's ZDT `targetDate` (if set) —
+ * the amber "חורג מיעד" marker. `hoursLogged` mirrors the review
+ * classification used by `saveAndUpdateDueDates` (same TimeEntry
+ * groupBy).
+ */
+export interface ReschedulePreviewItem {
+  taskId: number;
+  code: string;
+  name: string;
+  beforeStart: string | null;
+  beforeEnd: string | null;
+  afterStart: string | null;
+  afterEnd: string | null;
+  delta: { startDays: number | null; endDays: number | null };
+  onCriticalPath: boolean;
+  willMove: boolean;
+  violatesTarget: boolean;
+  hoursLogged: boolean;
+}
+
+export interface ReschedulePreviewResult {
+  preview: ReschedulePreviewItem[];
+  projectSummary: {
+    earliestStart: string | null;
+    latestFinish: string | null;
+    movedTasks: number;
+  };
+}
+
+/**
  * Convention: `endDate` holds the deadline the deliverable promised.
  * If anchor lands on a non-working day (holiday / weekly rest) the
  * TERMINAL task's stored endDate stays the anchor so the customer-
@@ -450,9 +490,186 @@ export class SchedulerService {
   // instead of re-implementing the problematic-task filter — see the
   // `TODO(D6 · scheduling)` markers around the deliverable-target /
   // task-assignee / task-budgetHours write paths.
+  /**
+   * §8a · Preview the project-wide reschedule WITHOUT writing.
+   *
+   * Runs the same `scheduleDeliverableDryRun` per deliverable that
+   * `saveAndUpdateDueDates` runs, then diffs each task's stored
+   * `estimatedStartDate` / `endDate` against the scheduler's proposed
+   * dates. The Review Modal opens on this payload and only invokes
+   * `saveAndUpdateDueDates({ taskIds })` after the PM confirms per-row.
+   *
+   * Rollback guarantee: `scheduleDeliverableDryRun` is pure-read
+   * (`writeBack: false` short-circuits every write-path inside
+   * `scheduleDeliverable`). No emails, webhooks or event-bus writes
+   * live on the scheduler path, so we don't wrap this call in a
+   * rollback transaction — doing so would add contention for zero
+   * additional safety. The alternative "run commit under $transaction
+   * + throw a marker" was rejected because it would duplicate the
+   * commit path's write logic just to roll it back; this method
+   * instead reuses the existing dry-run, which the production commit
+   * also calls first. Zero drift: the preview IS the same scheduler
+   * output the subsequent commit will consume.
+   */
+  async previewReschedule(projectId: number): Promise<ReschedulePreviewResult> {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { id: true },
+    });
+    if (!project) {
+      throw new NotFoundException(`Project ${projectId} not found`);
+    }
+
+    const targets = await this.prisma.zoneDeliverableTarget.findMany({
+      where: { projectDeliverable: { projectId, deletedAt: null } },
+      select: {
+        id: true,
+        zoneId: true,
+        targetDate: true,
+        projectDeliverable: { select: { id: true, name: true } },
+        zone: { select: { id: true, name: true } },
+      },
+    });
+
+    if (targets.length === 0) {
+      return {
+        preview: [],
+        projectSummary: { earliestStart: null, latestFinish: null, movedTasks: 0 },
+      };
+    }
+
+    // Per-deliverable dry-run — collect scheduled rows + the
+    // deliverable's targetDate for the violatesTarget comparison.
+    const taskToScheduled = new Map<number, ScheduledTask>();
+    const taskToDeliverableTarget = new Map<number, Date | null>();
+    for (const t of targets) {
+      try {
+        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id });
+        for (const s of result.scheduled) {
+          taskToScheduled.set(s.taskId, s);
+          taskToDeliverableTarget.set(s.taskId, t.targetDate ?? null);
+        }
+      } catch (err) {
+        this.logger.warn(
+          `previewReschedule: dryRun failed for deliverableId=${t.id} — ${(err as Error).message}`,
+        );
+      }
+    }
+
+    if (taskToScheduled.size === 0) {
+      return {
+        preview: [],
+        projectSummary: { earliestStart: null, latestFinish: null, movedTasks: 0 },
+      };
+    }
+
+    const allTaskIds = [...taskToScheduled.keys()];
+
+    // Metadata — code/name + stored "before" dates. We never update
+    // these here; the commit path owns writes.
+    const taskRows = await this.prisma.task.findMany({
+      where: { id: { in: allTaskIds } },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        estimatedStartDate: true,
+        endDate: true,
+      },
+    });
+    const taskById = new Map(taskRows.map((t) => [t.id, t]));
+
+    // hoursLogged mirrors the `saveAndUpdateDueDates` check so the FE
+    // marker lines up with the BE's commit-side classification.
+    const timeEntries = await this.prisma.timeEntry.groupBy({
+      by: ['taskId'],
+      where: {
+        taskId: { in: allTaskIds },
+        minutes: { gt: 0 },
+        specialHourBucketId: null,
+        deletedAt: null,
+      },
+      _sum: { minutes: true },
+    });
+    const hasHoursLogged = new Set<number>();
+    for (const row of timeEntries) {
+      if (row.taskId != null && (row._sum.minutes ?? 0) > 0) {
+        hasHoursLogged.add(row.taskId);
+      }
+    }
+
+    const fmt = (d: Date | null | undefined): string | null =>
+      d ? d.toISOString().split('T')[0] : null;
+    const dayDiff = (
+      after: Date | null | undefined,
+      before: Date | null | undefined,
+    ): number | null => {
+      if (!after || !before) return null;
+      return Math.round((after.getTime() - before.getTime()) / DAY_MS);
+    };
+
+    const preview: ReschedulePreviewItem[] = [];
+    let earliestStart: Date | null = null;
+    let latestFinish: Date | null = null;
+    let movedTasks = 0;
+
+    for (const [taskId, s] of taskToScheduled) {
+      const meta = taskById.get(taskId);
+      if (!meta) continue;
+      const beforeStart = meta.estimatedStartDate ?? null;
+      const beforeEnd = meta.endDate ?? null;
+      const afterStart = s.startDate ?? null;
+      const afterEnd = s.endDate ?? null;
+
+      // Compare at the day granularity (Prisma @db.Date → midnight UTC).
+      const willMove =
+        fmt(beforeStart) !== fmt(afterStart) || fmt(beforeEnd) !== fmt(afterEnd);
+
+      const target = taskToDeliverableTarget.get(taskId) ?? null;
+      const violatesTarget =
+        !!(target && afterEnd && afterEnd.getTime() > target.getTime());
+
+      if (afterStart && (!earliestStart || afterStart.getTime() < earliestStart.getTime())) {
+        earliestStart = afterStart;
+      }
+      if (afterEnd && (!latestFinish || afterEnd.getTime() > latestFinish.getTime())) {
+        latestFinish = afterEnd;
+      }
+      if (willMove) movedTasks++;
+
+      preview.push({
+        taskId,
+        code: meta.code,
+        name: meta.name,
+        beforeStart: fmt(beforeStart),
+        beforeEnd: fmt(beforeEnd),
+        afterStart: fmt(afterStart),
+        afterEnd: fmt(afterEnd),
+        delta: {
+          startDays: dayDiff(afterStart, beforeStart),
+          endDays: dayDiff(afterEnd, beforeEnd),
+        },
+        onCriticalPath: s.onCriticalPath === true,
+        willMove,
+        violatesTarget,
+        hoursLogged: hasHoursLogged.has(taskId),
+      });
+    }
+
+    return {
+      preview,
+      projectSummary: {
+        earliestStart: fmt(earliestStart),
+        latestFinish: fmt(latestFinish),
+        movedTasks,
+      },
+    };
+  }
+
   async saveAndUpdateDueDates(
     projectId: number,
     actorId?: number,
+    options?: { taskIds?: number[] },
   ): Promise<SaveAndUpdateDueDatesResult> {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
@@ -566,8 +783,31 @@ export class SchedulerService {
       });
     };
 
+    // §8a · Optional preview-approved filter. When the FE has shown
+    // a per-task preview to the PM and collected approvals, it
+    // posts the approved task-id set here. For tasks IN the filter
+    // we WRITE the scheduler's proposed dates directly — the three
+    // review categories (manual / overload / hours-logged) are
+    // bypassed because the PM already saw the diff and approved it
+    // explicitly. Tasks NOT in the filter are left untouched (no
+    // auto-commit, no review row). When the filter is absent the
+    // original three-way partition runs unchanged.
+    const taskFilter: Set<number> | null = Array.isArray(options?.taskIds)
+      ? new Set(options!.taskIds)
+      : null;
+
     for (const { target, scheduled } of perDeliverable) {
       for (const s of scheduled) {
+        if (taskFilter) {
+          if (!taskFilter.has(s.taskId)) continue;
+          // Explicit PM approval via preview. Write proposed dates
+          // regardless of classification — skippedByOverride's
+          // "proposed" == "current" so that branch is a no-op write;
+          // we skip it to avoid pointless row touches.
+          if (s.skippedByOverride) continue;
+          taskToCommit.set(s.taskId, { newStart: s.startDate, newEnd: s.endDate });
+          continue;
+        }
         // (א) manual override — the scheduler short-circuits on
         // dueDateOverridden and returns the stored dates; the PM must
         // explicitly accept the overwrite. "proposed" ends up equal

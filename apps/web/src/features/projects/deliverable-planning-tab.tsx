@@ -1051,10 +1051,11 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
    * target. Force-apply reads the just-saved target on the server, so
    * the ordering is load-bearing.
    *
-   * D4 · When the originating button was "Save & update due dates",
-   * we SKIP the plain save here (saveAndUpdate's own mutation runs the
-   * batch save as step 1) and chain straight into saveAndUpdate after
-   * the force-apply pass clears any PM-requested per-task overwrites.
+   * §8a · When the originating button was "Save & update due dates",
+   * we SKIP the plain save here (`previewMutation`'s own mutation runs
+   * the batch save as step 1) and chain straight into the preview
+   * flow after the force-apply pass clears any PM-requested per-task
+   * overwrites.
    */
   const confirmExceed = async () => {
     if (!exceedPrompt) return;
@@ -1085,8 +1086,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       }
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
       if (exceedNextAction === 'saveAndUpdate') {
-        setRescheduling(true);
-        saveAndUpdate.mutate();
+        setPreviewing(true);
+        previewMutation.mutate();
       }
     } finally {
       setExceedApplying(false);
@@ -1107,50 +1108,60 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     onError: (err: any) => notify.apiError(err, 'Failed to overwrite task due date'),
   });
 
-  // D4 · "Save & update due dates" flow (scheduling spec).
+  // §8a · "Save & update due dates" — preview-before-commit flow.
   //
-  // Click sequence: (1) persist deliverable targets via the existing
-  // batch endpoint, (2) run the project-wide reschedule via the new
-  // scheduling endpoint, (3) show the review modal for problematic
-  // tasks (manual / overload / hours-logged), (4) on confirm, commit
-  // the PM-approved rows. The two-step BE split is intentional —
-  // Scheduling and ProjectDeliverables stay independent modules.
-  type ReviewReason = 'manual' | 'overload' | 'hours-logged';
-  interface ReviewItem {
+  // Click sequence:
+  //   (1) persist deliverable targets via the existing batch endpoint,
+  //   (2) call `preview-reschedule` — scheduler runs READ-ONLY and
+  //       returns a full per-task diff (before/after + markers), no
+  //       database writes,
+  //   (3) Review modal renders the diff; PM toggles Apply/Keep per row,
+  //   (4) on confirm, call `save-and-update-due-dates` with the
+  //       selected `{ taskIds }` filter — the scheduler re-runs under
+  //       its own transaction and writes those tasks only. The BE is
+  //       the single source of truth for the math; the FE never
+  //       simulates dates.
+  interface PreviewItem {
     taskId: number;
-    taskCode: string;
-    taskName: string;
-    deliverableId: number;
-    deliverableName: string;
-    zoneId: number | null;
-    zoneName: string | null;
-    currentEnd: string | null;
-    proposedEnd: string | null;
-    // §4 (2026-11-09) — the review table now shows the scheduler's
-    // computed start alongside the Due (End) column to clarify that
-    // the target is the END (task finish = deliverable target), not
-    // the start. The BE may or may not populate these yet; the FE
-    // treats them as optional and falls back to "—" so the column
-    // renders cleanly either way.
-    proposedStart?: string | null;
-    currentStart?: string | null;
-    reason: ReviewReason;
+    code: string;
+    name: string;
+    beforeStart: string | null;
+    beforeEnd: string | null;
+    afterStart: string | null;
+    afterEnd: string | null;
+    delta: { startDays: number | null; endDays: number | null };
+    onCriticalPath: boolean;
+    willMove: boolean;
+    violatesTarget: boolean;
+    hoursLogged: boolean;
+  }
+  interface PreviewResult {
+    preview: PreviewItem[];
+    projectSummary: {
+      earliestStart: string | null;
+      latestFinish: string | null;
+      movedTasks: number;
+    };
   }
   interface SaveAndUpdateResult {
     scannedDeliverables: number;
     autoApplied: Array<{ taskId: number; newStart: string; newEnd: string }>;
-    requiresReview: ReviewItem[];
+    // Always [] on the preview-approved path (the BE skips review
+    // classification for tasks in the explicit filter). Kept on the
+    // type so the raw BE response shape still typechecks.
+    requiresReview: unknown[];
   }
-  const [rescheduling, setRescheduling] = useState(false);
-  const [reviewPrompt, setReviewPrompt] = useState<ReviewItem[] | null>(null);
-  const [reviewAutoAppliedCount, setReviewAutoAppliedCount] = useState(0);
-  // Per-task PM choice. `apply` toggles whether this row gets written;
-  // `end` is the editable end-date input (pre-filled with the engine's
-  // proposed end OR current end when `proposedEnd` is null).
+
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<PreviewItem[] | null>(null);
+  // Per-task PM choice. `apply` toggles whether this row gets written.
+  // `end` is kept on the type for parity with the §7 `TasksEditorTable`
+  // 'review' mode, but the commit endpoint only consumes `taskIds` — a
+  // typed custom end date is ignored in the §8a flow.
   const [reviewChoices, setReviewChoices] = useState<Record<number, { apply: boolean; end: string }>>({});
 
-  const saveAndUpdate = useMutation({
-    mutationFn: async (): Promise<SaveAndUpdateResult> => {
+  const previewMutation = useMutation({
+    mutationFn: async (): Promise<PreviewResult> => {
       // Step 1: persist deliverable target changes via the existing
       // batch endpoint — same payload shape as the plain Save button.
       await client.post('/project-deliverables/targets/batch', {
@@ -1166,86 +1177,83 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             targetDate: targetDateDrafts[r.key] || undefined,
           })),
       });
-      // Step 2: run the project-wide reschedule.
-      const resp = await client.post(`/scheduling/projects/${projectId}/save-and-update-due-dates`);
-      return (resp.data?.data ?? resp.data) as SaveAndUpdateResult;
+      // Step 2 (§8a): dry-run the project reschedule WITHOUT writing.
+      const resp = await client.post(`/scheduling/projects/${projectId}/preview-reschedule`);
+      return (resp.data?.data ?? resp.data) as PreviewResult;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-      setReviewAutoAppliedCount(data.autoApplied.length);
-      if (data.requiresReview.length === 0) {
-        notify.success(
-          `Saved · ${data.autoApplied.length} task date${data.autoApplied.length === 1 ? '' : 's'} updated across ${data.scannedDeliverables} deliverable${data.scannedDeliverables === 1 ? '' : 's'}`,
-        );
-        setReviewPrompt(null);
-        setReviewChoices({});
-      } else {
-        // Pre-fill per-row choices from the proposed end (default:
-        // Apply). The PM can toggle to "Keep current" or type a
-        // different date before confirming.
-        const seed: Record<number, { apply: boolean; end: string }> = {};
-        for (const r of data.requiresReview) {
-          seed[r.taskId] = { apply: true, end: r.proposedEnd ?? r.currentEnd ?? '' };
-        }
-        setReviewChoices(seed);
-        setReviewPrompt(data.requiresReview);
+      // Seed per-row choices: default apply=true for rows that WILL
+      // move; non-moving rows start unselected so the "Apply approved
+      // (N)" count is accurate from the first render.
+      const seed: Record<number, { apply: boolean; end: string }> = {};
+      for (const r of data.preview) {
+        seed[r.taskId] = {
+          apply: r.willMove,
+          end: r.afterEnd ?? r.beforeEnd ?? '',
+        };
       }
+      setReviewChoices(seed);
+      setPreview(data.preview);
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to save and update due dates'),
-    onSettled: () => setRescheduling(false),
+    onError: (err: any) => notify.apiError(err, 'Failed to preview reschedule'),
+    onSettled: () => setPreviewing(false),
   });
 
-  const applyReviewed = useMutation({
-    mutationFn: async (approvals: Array<{ taskId: number; acceptedEnd: string }>) => {
-      const resp = await client.post(`/scheduling/projects/${projectId}/apply-reviewed`, { approvals });
-      return (resp.data?.data ?? resp.data) as { applied: number };
+  const applyMutation = useMutation({
+    mutationFn: async (taskIds: number[]): Promise<SaveAndUpdateResult> => {
+      const resp = await client.post(
+        `/scheduling/projects/${projectId}/save-and-update-due-dates`,
+        { taskIds },
+      );
+      return (resp.data?.data ?? resp.data) as SaveAndUpdateResult;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
       queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
       notify.success(
-        data.applied > 0
-          ? `Applied ${data.applied} task date${data.applied === 1 ? '' : 's'}`
+        data.autoApplied.length > 0
+          ? `Applied ${data.autoApplied.length} task date${data.autoApplied.length === 1 ? '' : 's'}`
           : 'Review closed · no task dates changed',
       );
-      setReviewPrompt(null);
+      setPreview(null);
       setReviewChoices({});
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to apply reviewed task dates'),
+    onError: (err: any) => notify.apiError(err, 'Failed to apply approved task dates'),
   });
 
   const confirmReview = () => {
-    if (!reviewPrompt) return;
-    const approvals = reviewPrompt
+    if (!preview) return;
+    const taskIds = preview
       .filter((r) => reviewChoices[r.taskId]?.apply)
-      .map((r) => ({
-        taskId: r.taskId,
-        acceptedEnd: reviewChoices[r.taskId]?.end?.slice(0, 10) ?? '',
-      }))
-      .filter((a) => !!a.acceptedEnd);
-    applyReviewed.mutate(approvals);
+      .map((r) => r.taskId);
+    if (taskIds.length === 0) {
+      // Nothing selected → close the modal without touching the DB.
+      setPreview(null);
+      setReviewChoices({});
+      return;
+    }
+    applyMutation.mutate(taskIds);
   };
 
   const attemptSaveAndUpdate = () => {
     // Preflight — same per-task conflict check that the plain Save
     // uses. If any task's current endDate is strictly past the new
-    // target, surface the Update/Keep prompt first; the scheduler
-    // runs afterwards (the FE calls `saveAndUpdate.mutate()` from the
-    // confirmExceed path).
+    // target, surface the Update/Keep prompt first; the preview
+    // runs afterwards (confirmExceed path chains into `previewMutation`).
     const offenders = findExceedingTasks();
     if (offenders) {
       const defaults: Record<number, 'update' | 'keep'> = {};
       for (const o of offenders) defaults[o.taskId] = 'update';
       setExceedChoices(defaults);
       setExceedPrompt(offenders);
-      // Mark intent so confirmExceed knows to chain into saveAndUpdate
-      // after the conflicts clear.
+      // Mark intent so confirmExceed knows to chain into the preview
+      // flow after the conflicts clear.
       setExceedNextAction('saveAndUpdate');
       return;
     }
-    setRescheduling(true);
-    saveAndUpdate.mutate();
+    setPreviewing(true);
+    previewMutation.mutate();
   };
 
   // When the per-task exceed-prompt confirms, we either stop (plain
@@ -1510,13 +1518,15 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         </div>
       )}
 
-      {/* D4 · Review modal (Save & update due dates). While the server
-          is computing we show an indeterminate pulse bar; once the
-          response arrives we switch to the table of problematic tasks
-          (manual override / overload / hours-logged) with per-row
-          Keep⟷Apply toggles and editable proposed-end inputs. Confirm
-          commits only the approved rows via `applyReviewed`. */}
-      {(rescheduling || reviewPrompt) && (
+      {/* §8a · Review modal (Save & update due dates). While the
+          preview-reschedule is in flight we show an indeterminate
+          pulse bar; once the diff arrives we render the moving tasks
+          in the shared `TasksEditorTable`. Each row carries a
+          violatesTarget amber dot and a hoursLogged chip when
+          relevant. Confirm POSTs the user-selected taskIds to
+          `save-and-update-due-dates`, which is the single commit
+          endpoint — the scheduler re-runs for those tasks only. */}
+      {(previewing || preview) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm animate-fade-in">
           <div
             className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[760px] max-w-[92vw] max-h-[85vh] flex flex-col animate-scale-in"
@@ -1527,15 +1537,17 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                 סקירת עדכון תאריכים
               </h3>
               <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5" dir="rtl">
-                {rescheduling && !reviewPrompt
-                  ? 'מריץ תזמון מחדש לכל המשימות בפרויקט…'
-                  : `${reviewPrompt?.length ?? 0} משימות דורשות אישור · השאר יתעדכנו אוטומטית`}
+                {previewing && !preview
+                  ? 'מחשב תצוגה מקדימה…'
+                  : (preview?.filter((p) => p.willMove).length ?? 0) === 0
+                    ? 'אין שינויים'
+                    : `${preview!.filter((p) => p.willMove).length} משימות יזוזו · אשר להחלה`}
               </p>
-              {/* Progress bar — indeterminate while rescheduling,
-                  deterministic (100%) once the review payload is in
-                  hand so the user can see the batch completed. */}
+              {/* Progress bar — indeterminate while previewing,
+                  deterministic (100%) once the diff is in hand so the
+                  user can see the dry-run completed. */}
               <div className="mt-3 w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                {rescheduling && !reviewPrompt ? (
+                {previewing && !preview ? (
                   <div className="h-full w-full bg-blue-600 rounded-full animate-pulse" />
                 ) : (
                   <div
@@ -1544,45 +1556,44 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                   />
                 )}
               </div>
-              {reviewPrompt && reviewAutoAppliedCount > 0 && (
-                <p className="mt-2 text-[11px] text-emerald-600 dark:text-emerald-400">
-                  {reviewAutoAppliedCount} task{reviewAutoAppliedCount === 1 ? '' : 's'} already updated automatically.
-                </p>
-              )}
             </div>
 
             <div className="p-5 overflow-auto">
-              {rescheduling && !reviewPrompt ? (
+              {previewing && !preview ? (
                 <div className="py-6 text-center text-[12px] text-slate-500 dark:text-slate-400">
-                  מתזמן… <span className="font-mono tabular-nums">{reviewAutoAppliedCount}</span> deliverables processed
+                  מחשב תצוגה מקדימה… no database writes yet.
                 </div>
-              ) : reviewPrompt && reviewPrompt.length === 0 ? (
-                <div className="py-6 text-center text-[12px] text-slate-500 dark:text-slate-400">
-                  No tasks require review.
+              ) : preview && preview.filter((p) => p.willMove).length === 0 ? (
+                <div className="py-6 text-center text-[12px] text-slate-500 dark:text-slate-400" dir="rtl">
+                  אין שינויים
                 </div>
               ) : (
-                /* §7.4 (2026-11-11) · Review table body delegated to
-                   `TasksEditorTable` (mode='review'). The modal still
-                   owns `reviewChoices` / `setReviewChoices` and the
-                   footer "Apply approved (N)" bulk action — only the
-                   per-row rendering is now shared with
-                   `DeliverableTasksModal`. Columns: CODE · TASK ·
-                   REASON · START · DUE · ACTION. */
+                /* §8a · Preview rows rendered via `TasksEditorTable`
+                   (mode='review'). We pass only the moving tasks
+                   (`willMove=true`) so the modal focuses the PM on
+                   actual changes; the extended row carries
+                   violatesTarget + hoursLogged markers in the REASON
+                   cell. Columns: CODE · TASK · MARKERS · START · DUE
+                   · ACTION. */
                 <TasksEditorTable
                   mode="review"
-                  tasks={(reviewPrompt ?? []).map((r) => ({
-                    taskId: r.taskId,
-                    taskCode: r.taskCode,
-                    taskName: r.taskName,
-                    context: [r.deliverableName, r.zoneName].filter(Boolean).join(' · ') || null,
-                    reason: r.reason,
-                    currentStart: r.currentStart ?? null,
-                    proposedStart: r.proposedStart ?? null,
-                    currentEnd: r.currentEnd ?? null,
-                    proposedEnd: r.proposedEnd ?? null,
-                  }))}
+                  tasks={(preview ?? [])
+                    .filter((p) => p.willMove)
+                    .map((p) => ({
+                      taskId: p.taskId,
+                      taskCode: p.code,
+                      taskName: p.name,
+                      context: null,
+                      reason: null,
+                      currentStart: p.beforeStart,
+                      proposedStart: p.afterStart,
+                      currentEnd: p.beforeEnd,
+                      proposedEnd: p.afterEnd,
+                      violatesTarget: p.violatesTarget,
+                      hoursLogged: p.hoursLogged,
+                    }))}
                   choices={reviewChoices}
-                  disabled={applyReviewed.isPending}
+                  disabled={applyMutation.isPending}
                   onEdit={(taskId, end) =>
                     setReviewChoices((s) => ({
                       ...s,
@@ -1614,11 +1625,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button
                 type="button"
-                disabled={rescheduling && !reviewPrompt}
+                disabled={(previewing && !preview) || applyMutation.isPending}
                 onClick={() => {
-                  setReviewPrompt(null);
+                  setPreview(null);
                   setReviewChoices({});
-                  setReviewAutoAppliedCount(0);
                 }}
                 className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
               >
@@ -1626,13 +1636,19 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               </button>
               <button
                 type="button"
-                disabled={!reviewPrompt || applyReviewed.isPending || (rescheduling && !reviewPrompt)}
+                disabled={
+                  !preview ||
+                  applyMutation.isPending ||
+                  (previewing && !preview) ||
+                  preview.filter((p) => p.willMove).length === 0 ||
+                  preview.filter((p) => reviewChoices[p.taskId]?.apply).length === 0
+                }
                 onClick={confirmReview}
                 className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50"
               >
-                {applyReviewed.isPending
+                {applyMutation.isPending
                   ? 'Applying…'
-                  : `החל מאושרים (${reviewPrompt?.filter((r) => reviewChoices[r.taskId]?.apply).length ?? 0})`}
+                  : `החל מאושרים (${preview?.filter((p) => reviewChoices[p.taskId]?.apply).length ?? 0})`}
               </button>
             </div>
           </div>
@@ -1768,9 +1784,9 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           <button
             type="button"
             onClick={attemptSave}
-            disabled={!hasUnsavedChanges || save.isPending || rescheduling}
+            disabled={!hasUnsavedChanges || save.isPending || previewing}
             className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
-            title="Save deliverable targets without rescheduling task dates"
+            title="Save deliverable targets without previewing a task reschedule"
           >
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
             {save.isPending ? 'Saving...' : 'Save'}
@@ -1781,12 +1797,12 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           <button
             type="button"
             onClick={attemptSaveAndUpdate}
-            disabled={save.isPending || rescheduling || saveAndUpdate.isPending}
+            disabled={save.isPending || previewing || previewMutation.isPending || applyMutation.isPending}
             className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50 whitespace-nowrap"
-            title="Save deliverable targets and reschedule every task in the project (manual / overload / hours-logged tasks go to a review step)"
+            title="Save deliverable targets and preview every task's proposed new dates before committing (§8a)"
           >
             <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
-            {rescheduling || saveAndUpdate.isPending ? 'Scheduling…' : 'Save & update due dates'}
+            {previewing || previewMutation.isPending ? 'Scheduling…' : 'Save & update due dates'}
           </button>
         </div>
       </div>
@@ -4672,6 +4688,14 @@ type TasksEditorRow = {
   proposedStart?: string | null;
   currentEnd?: string | null;
   proposedEnd?: string | null;
+  // §8a (2026-11-11) · Preview-mode markers rendered alongside the
+  // reason pill: amber dot when the scheduler's proposed endDate lands
+  // after the deliverable's ZDT target; violet "hours-logged" chip when
+  // this task already has reported hours. Both can co-exist. The flags
+  // are optional + default false so the tasks-list mode render is
+  // unchanged.
+  violatesTarget?: boolean;
+  hoursLogged?: boolean;
 };
 
 type TasksEditorTableProps = {
@@ -4701,7 +4725,7 @@ function TasksEditorTable({
   onClear,
 }: TasksEditorTableProps) {
   const reasonPill = (reason: TasksEditorRow['reason']) => {
-    if (!reason) return <span className="text-slate-300 dark:text-slate-600">—</span>;
+    if (!reason) return null;
     const cls =
       reason === 'manual'
         ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300'
@@ -4714,6 +4738,38 @@ function TasksEditorTable({
       <span className={cn('inline-flex rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5', cls)}>
         {label}
       </span>
+    );
+  };
+
+  // §8a (2026-11-11) · Preview-mode reason cell. Combines the
+  // violatesTarget amber-dot, the hours-logged chip (reused from the
+  // reasonPill palette) and any legacy `reason` pill. When nothing to
+  // show, renders the em-dash placeholder — this preserves the cell's
+  // visual density across rows.
+  const reasonCell = (t: TasksEditorRow) => {
+    const pill = reasonPill(t.reason);
+    const hoursChip =
+      t.hoursLogged && t.reason !== 'hours-logged' ? (
+        <span className="inline-flex rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5 bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300">
+          שעות דווחו
+        </span>
+      ) : null;
+    const violatesDot = t.violatesTarget ? (
+      <span
+        className="inline-block h-2.5 w-2.5 rounded-full bg-amber-500 shadow-[0_0_0_2px_rgba(251,191,36,0.2)]"
+        title="חורג מיעד"
+        aria-label="חורג מיעד"
+      />
+    ) : null;
+    if (!pill && !hoursChip && !violatesDot) {
+      return <span className="text-slate-300 dark:text-slate-600">—</span>;
+    }
+    return (
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {violatesDot}
+        {pill}
+        {hoursChip}
+      </div>
     );
   };
 
@@ -4763,7 +4819,7 @@ function TasksEditorTable({
                 ) : null}
               </td>
               <td className="px-3 py-2">
-                {mode === 'review' ? reasonPill(t.reason) : statusPill(t.status)}
+                {mode === 'review' ? reasonCell(t) : statusPill(t.status)}
               </td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-1 text-[11px] font-mono tabular-nums">
