@@ -1561,135 +1561,53 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                   No tasks require review.
                 </div>
               ) : (
-                <table className="w-full text-[13px]">
-                  <thead>
-                    <tr className="text-left text-[11px] uppercase tracking-[0.05em] text-slate-400 dark:text-slate-500">
-                      <th className="px-2 py-1.5 w-[108px]">Code</th>
-                      <th className="px-2 py-1.5">Task</th>
-                      <th className="px-2 py-1.5 w-[96px]">Reason</th>
-                      {/* §4 (2026-11-09) · The target is the END of the
-                          chain (task finish = deliverable target), not
-                          the start. Show Start as context + rename the
-                          End column to spell out it is the Due date. */}
-                      <th className="px-2 py-1.5 w-[110px]">Start</th>
-                      <th className="px-2 py-1.5 w-[200px]">תאריך יעד (Due)</th>
-                      <th className="px-2 py-1.5 w-[180px]">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {reviewPrompt?.map((r) => {
-                      const choice = reviewChoices[r.taskId] ?? { apply: true, end: r.proposedEnd ?? r.currentEnd ?? '' };
-                      const pillClass =
-                        r.reason === 'manual'
-                          ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300'
-                          : r.reason === 'overload'
-                            ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300'
-                            : 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300';
-                      const pillLabel =
-                        r.reason === 'manual' ? 'ידני' : r.reason === 'overload' ? 'עומס' : 'שעות דווחו';
-                      return (
-                        <tr key={r.taskId} className="align-top">
-                          <td className="px-2 py-2 font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
-                            {r.taskCode || '—'}
-                          </td>
-                          <td className="px-2 py-2">
-                            <div className="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate" title={r.taskName}>
-                              {r.taskName}
-                            </div>
-                            <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate">
-                              {r.deliverableName}
-                              {r.zoneName ? ` · ${r.zoneName}` : ''}
-                            </div>
-                          </td>
-                          <td className="px-2 py-2">
-                            <span className={cn('rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5', pillClass)}>
-                              {pillLabel}
-                            </span>
-                          </td>
-                          {/* §4 (2026-11-09) · Start cell. The scheduler
-                              writes the computed `estimatedStartDate`
-                              into `proposedStart` when it has one; the
-                              current stored start is shown as the
-                              strike-through fallback. Both are optional
-                              on the wire today — when neither is
-                              populated we render "—" so the column
-                              still reads cleanly. */}
-                          <td className="px-2 py-2">
-                            <div className="flex items-center gap-1 text-[11px] font-mono tabular-nums">
-                              {r.currentStart ? (
-                                <span className="text-slate-400 line-through">{String(r.currentStart).slice(0, 10)}</span>
-                              ) : null}
-                              <span className={cn(
-                                r.proposedStart ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500',
-                              )}>
-                                {r.proposedStart ? String(r.proposedStart).slice(0, 10) : '—'}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-2 py-2">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-xs text-slate-400 line-through tabular-nums">
-                                {r.currentEnd ?? '—'}
-                              </span>
-                              <input
-                                type="date"
-                                value={choice.end}
-                                disabled={!choice.apply || applyReviewed.isPending}
-                                onChange={(e) =>
-                                  setReviewChoices((s) => ({
-                                    ...s,
-                                    [r.taskId]: { apply: s[r.taskId]?.apply ?? true, end: e.target.value },
-                                  }))
-                                }
-                                className="px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-blue-500 focus:outline-none text-sm font-mono disabled:opacity-50"
-                              />
-                            </div>
-                          </td>
-                          <td className="px-2 py-2">
-                            <div className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
-                              <button
-                                type="button"
-                                disabled={applyReviewed.isPending}
-                                onClick={() =>
-                                  setReviewChoices((s) => ({
-                                    ...s,
-                                    [r.taskId]: { apply: false, end: s[r.taskId]?.end ?? choice.end },
-                                  }))
-                                }
-                                className={cn(
-                                  'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50',
-                                  !choice.apply
-                                    ? 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
-                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
-                                )}
-                              >
-                                Keep current
-                              </button>
-                              <button
-                                type="button"
-                                disabled={applyReviewed.isPending}
-                                onClick={() =>
-                                  setReviewChoices((s) => ({
-                                    ...s,
-                                    [r.taskId]: { apply: true, end: s[r.taskId]?.end ?? choice.end },
-                                  }))
-                                }
-                                className={cn(
-                                  'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50',
-                                  choice.apply
-                                    ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400'
-                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
-                                )}
-                              >
-                                Apply proposed
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                /* §7.4 (2026-11-11) · Review table body delegated to
+                   `TasksEditorTable` (mode='review'). The modal still
+                   owns `reviewChoices` / `setReviewChoices` and the
+                   footer "Apply approved (N)" bulk action — only the
+                   per-row rendering is now shared with
+                   `DeliverableTasksModal`. Columns: CODE · TASK ·
+                   REASON · START · DUE · ACTION. */
+                <TasksEditorTable
+                  mode="review"
+                  tasks={(reviewPrompt ?? []).map((r) => ({
+                    taskId: r.taskId,
+                    taskCode: r.taskCode,
+                    taskName: r.taskName,
+                    context: [r.deliverableName, r.zoneName].filter(Boolean).join(' · ') || null,
+                    reason: r.reason,
+                    currentStart: r.currentStart ?? null,
+                    proposedStart: r.proposedStart ?? null,
+                    currentEnd: r.currentEnd ?? null,
+                    proposedEnd: r.proposedEnd ?? null,
+                  }))}
+                  choices={reviewChoices}
+                  disabled={applyReviewed.isPending}
+                  onEdit={(taskId, end) =>
+                    setReviewChoices((s) => ({
+                      ...s,
+                      [Number(taskId)]: { apply: s[Number(taskId)]?.apply ?? true, end },
+                    }))
+                  }
+                  onKeepCurrent={(taskId) =>
+                    setReviewChoices((s) => ({
+                      ...s,
+                      [Number(taskId)]: {
+                        apply: false,
+                        end: s[Number(taskId)]?.end ?? '',
+                      },
+                    }))
+                  }
+                  onApplyProposed={(taskId) =>
+                    setReviewChoices((s) => ({
+                      ...s,
+                      [Number(taskId)]: {
+                        apply: true,
+                        end: s[Number(taskId)]?.end ?? '',
+                      },
+                    }))
+                  }
+                />
               )}
             </div>
 
@@ -1857,11 +1775,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             <Save className="h-3.5 w-3.5" aria-hidden="true" />
             {save.isPending ? 'Saving...' : 'Save'}
           </button>
+          {/* §7.2 (2026-11-11) · `whitespace-nowrap` keeps the Hebrew
+              label on a single line when the toolbar gets crowded with
+              filters open. The label itself stays untouched. */}
           <button
             type="button"
             onClick={attemptSaveAndUpdate}
             disabled={save.isPending || rescheduling || saveAndUpdate.isPending}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50"
+            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50 whitespace-nowrap"
             title="Save deliverable targets and reschedule every task in the project (manual / overload / hours-logged tasks go to a review step)"
           >
             <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
@@ -2211,7 +2132,14 @@ function TableView({
   };
 
   return (
-    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
+    // §7.1 (2026-11-11) · Removed the `overflow-x-auto` that used to wrap
+    // the Table view. Per the CSS spec, `overflow-x: auto` promotes
+    // `overflow-y: visible` to `auto`, which produced a nested vertical
+    // scrollbar the moment the inner <table> grew tall — stacking with
+    // the window's own scrollbar. The <table> is `w-full` and its column
+    // widths all fit the page gutter at the design baseline (~1280px),
+    // so any overflow now bubbles up to the one page-level scrollbar.
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
       <table className="w-full text-sm">
         <thead className="bg-[#FAFBFC] border-b border-slate-100 dark:border-slate-800">
           <tr className="text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500">
@@ -3481,13 +3409,19 @@ function GanttView({
             amber = at least one in progress, emerald = all done.
             No percentages (misleading on small totals). Past-target
             bars additionally get a red ring — kept subtle so status
-            stays the primary signal. */}
-        <div className="ml-4 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-          <span className="font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Bar:</span>
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500" />Not started</span>
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500" />In progress</span>
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />Done</span>
-          <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm ring-2 ring-red-300 ring-inset bg-white dark:bg-slate-900" />Past target</span>
+            stays the primary signal.
+            §7.3 (2026-11-11) · Chips now sit in a 2×2 grid so the
+            toolbar stays one row even when the §4 task-bar toggle +
+            granularity selector + years selector share the line. Each
+            chip keeps its original glyph + label. */}
+        <div className="ml-4 flex items-start gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+          <span className="font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 shrink-0 pt-0.5">Bar:</span>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-blue-500" />Not started</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-amber-500" />In progress</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />Done</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm ring-2 ring-red-300 ring-inset bg-white dark:bg-slate-900" />Past target</span>
+          </div>
         </div>
         <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">
           Showing ~{visibleYears} {visibleYears === 1 ? 'year' : 'years'} at a time · drag rows to reorder
@@ -4643,55 +4577,31 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
           {(row.taskList ?? []).length === 0 ? (
             <div className="p-8 text-center text-sm text-slate-400 dark:text-slate-500 italic">No tasks under this deliverable.</div>
           ) : (
-            <table className="w-full text-[12px]">
-              <thead className="bg-[#FAFBFC] sticky top-0 z-10">
-                <tr className="text-left text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  <th className="px-4 py-2 w-[110px]">Code</th>
-                  <th className="px-4 py-2">Name</th>
-                  <th className="px-4 py-2 w-[110px]">Status</th>
-                  {/* D7-Float (2026-11-03) · Scheduler-computed slack + CP flag. */}
-                  <th className="px-4 py-2 w-[80px]">Float</th>
-                  <th className="px-4 py-2 w-[60px]">CP</th>
-                  <th className="px-4 py-2 w-[160px]">Due date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {(row.taskList ?? []).map((t: any) => (
-                  <tr key={t.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
-                    <td className="px-4 py-2 text-slate-500 dark:text-slate-400 tabular-nums">{t.code ?? '—'}</td>
-                    <td className="px-4 py-2 text-slate-800 dark:text-slate-100 truncate">{t.name}</td>
-                    <td className="px-4 py-2">
-                      <span className={cn(
-                        'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold',
-                        t.status === 'done' ? 'bg-emerald-100 text-emerald-700' :
-                        t.status === 'in_progress' ? 'bg-blue-100 text-blue-700' :
-                        t.status === 'in_review' ? 'bg-amber-100 text-amber-700' :
-                        t.status === 'blocked' ? 'bg-red-100 text-red-700' :
-                        'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
-                      )}>{t.status}</span>
-                    </td>
-                    <td className="px-4 py-2 text-slate-700 dark:text-slate-200 tabular-nums text-[11px]">
-                      {t.float != null ? `${t.float}d` : '—'}
-                    </td>
-                    <td className="px-4 py-2">
-                      {t.onCriticalPath ? (
-                        <span className="inline-flex items-center rounded-[4px] bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[9px] font-bold tracking-wide px-1.5 py-0.5">CP</span>
-                      ) : (
-                        <span className="text-slate-300 dark:text-slate-600">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2">
-                      <input
-                        type="date"
-                        value={drafts[t.id] ?? ''}
-                        onChange={(e) => setDrafts((s) => ({ ...s, [t.id]: e.target.value }))}
-                        className="rounded border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            /* §7.4 (2026-11-11) · Table body delegated to the shared
+               `TasksEditorTable` (mode='tasks-list'). The modal still
+               owns `drafts` / `setDrafts` + the footer Save button;
+               only the per-row rendering lives in the shared renderer
+               so this and the Review modal share columns + styling.
+               The `Status` + `CP`/`Float` cells collapse into the
+               shared REASON slot (status pill) — the critical-path /
+               float breakdown still shows on the Gantt row itself. */
+            <TasksEditorTable
+              mode="tasks-list"
+              tasks={(row.taskList ?? []).map((t: any) => ({
+                taskId: t.id,
+                taskCode: t.code ?? null,
+                taskName: t.name,
+                status: t.status ?? null,
+                currentStart: null,
+                proposedStart: t.estimatedStartDate ?? t.startDate ?? null,
+                currentEnd: null,
+                proposedEnd: t.endDate ?? null,
+              }))}
+              drafts={drafts}
+              disabled={saving}
+              onEdit={(taskId, end) => setDrafts((s) => ({ ...s, [Number(taskId)]: end }))}
+              onClear={(taskId) => setDrafts((s) => ({ ...s, [Number(taskId)]: '' }))}
+            />
           )}
         </div>
 
@@ -4719,5 +4629,224 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * §7.4 (2026-11-11) · Shared task-list table used by BOTH the DP
+ * reschedule Review modal and the per-deliverable Tasks modal. Lives
+ * below the two modals so the colocation stays obvious — the modals
+ * themselves keep their own state + footer actions (the point was to
+ * unify the per-row renderer, not merge the modals).
+ *
+ * Column order is identical in both modes:
+ *   CODE · TASK · REASON/STATUS · START · DUE · ACTION
+ *
+ * The only per-mode differences live inside the cell renderers:
+ *   - mode='review'       — strikethrough currentStart / currentEnd
+ *                           alongside proposed values; the Action cell
+ *                           is a Keep-current / Apply-proposed toggle
+ *                           (bulk "Apply approved (N)" stays in the
+ *                           modal footer). REASON cell shows the
+ *                           scheduler's manual/overload/hoursLogged
+ *                           pill.
+ *   - mode='tasks-list'   — plain Start/Due, editable Due input, a
+ *                           per-row Clear button in Action. REASON
+ *                           cell shows the task's status pill.
+ *
+ * Styling follows planwise-design tokens: codes + dates render in
+ * `font-mono`, body at `text-[13px]`, header at `text-[11px] uppercase
+ * font-semibold text-slate-400`.
+ */
+type TasksEditorRow = {
+  taskId: number | string;
+  taskCode: string | null;
+  taskName: string;
+  // Optional second line under the task name (review: deliverable · zone).
+  context?: string | null;
+  // Review mode — scheduler reason pill.
+  reason?: 'manual' | 'overload' | 'hours-logged' | null;
+  // Tasks-list mode — status pill.
+  status?: string | null;
+  currentStart?: string | null;
+  proposedStart?: string | null;
+  currentEnd?: string | null;
+  proposedEnd?: string | null;
+};
+
+type TasksEditorTableProps = {
+  tasks: TasksEditorRow[];
+  mode: 'review' | 'tasks-list';
+  disabled?: boolean;
+  // Edit the Due/End input. Fires in both modes.
+  onEdit?: (taskId: number | string, end: string) => void;
+  // Review mode — per-row choice state + Keep/Apply handlers.
+  choices?: Record<number | string, { apply: boolean; end: string }>;
+  onKeepCurrent?: (taskId: number | string) => void;
+  onApplyProposed?: (taskId: number | string) => void;
+  // Tasks-list mode — draft map drives the Due input value.
+  drafts?: Record<number | string, string>;
+  onClear?: (taskId: number | string) => void;
+};
+
+function TasksEditorTable({
+  tasks,
+  mode,
+  disabled,
+  onEdit,
+  choices,
+  onKeepCurrent,
+  onApplyProposed,
+  drafts,
+  onClear,
+}: TasksEditorTableProps) {
+  const reasonPill = (reason: TasksEditorRow['reason']) => {
+    if (!reason) return <span className="text-slate-300 dark:text-slate-600">—</span>;
+    const cls =
+      reason === 'manual'
+        ? 'bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-300'
+        : reason === 'overload'
+          ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300'
+          : 'bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300';
+    const label =
+      reason === 'manual' ? 'ידני' : reason === 'overload' ? 'עומס' : 'שעות דווחו';
+    return (
+      <span className={cn('inline-flex rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5', cls)}>
+        {label}
+      </span>
+    );
+  };
+
+  const statusPill = (status: TasksEditorRow['status']) => {
+    if (!status) return <span className="text-slate-300 dark:text-slate-600">—</span>;
+    const cls =
+      status === 'done' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
+      status === 'in_progress' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
+      status === 'in_review' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' :
+      status === 'blocked' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
+      'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300';
+    return (
+      <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold', cls)}>
+        {status}
+      </span>
+    );
+  };
+
+  return (
+    <table className="w-full text-[13px]">
+      <thead className="bg-[#FAFBFC] sticky top-0 z-10">
+        <tr className="text-left text-[11px] uppercase font-semibold tracking-wider text-slate-400 dark:text-slate-500">
+          <th className="px-3 py-2 w-[108px]">Code</th>
+          <th className="px-3 py-2">Task</th>
+          <th className="px-3 py-2 w-[110px]">{mode === 'review' ? 'Reason' : 'Status'}</th>
+          <th className="px-3 py-2 w-[110px]">Start</th>
+          <th className="px-3 py-2 w-[200px]">{mode === 'review' ? 'תאריך יעד (Due)' : 'Due'}</th>
+          <th className="px-3 py-2 w-[180px]">Action</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+        {tasks.map((t) => {
+          const seedEnd = t.proposedEnd ?? t.currentEnd ?? '';
+          const choice = choices?.[t.taskId] ?? { apply: true, end: seedEnd };
+          const draftEnd = drafts?.[t.taskId] ?? '';
+          return (
+            <tr key={t.taskId} className="align-top hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
+              <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+                {t.taskCode || '—'}
+              </td>
+              <td className="px-3 py-2">
+                <div className="text-[13px] font-semibold text-slate-800 dark:text-slate-100 truncate" title={t.taskName}>
+                  {t.taskName}
+                </div>
+                {t.context ? (
+                  <div className="text-[11px] text-slate-400 dark:text-slate-500 truncate">{t.context}</div>
+                ) : null}
+              </td>
+              <td className="px-3 py-2">
+                {mode === 'review' ? reasonPill(t.reason) : statusPill(t.status)}
+              </td>
+              <td className="px-3 py-2">
+                <div className="flex items-center gap-1 text-[11px] font-mono tabular-nums">
+                  {mode === 'review' && t.currentStart ? (
+                    <span className="text-slate-400 line-through">{String(t.currentStart).slice(0, 10)}</span>
+                  ) : null}
+                  <span className={cn(
+                    t.proposedStart ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500',
+                  )}>
+                    {t.proposedStart ? String(t.proposedStart).slice(0, 10) : '—'}
+                  </span>
+                </div>
+              </td>
+              <td className="px-3 py-2">
+                {mode === 'review' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-slate-400 line-through tabular-nums">
+                      {t.currentEnd ? String(t.currentEnd).slice(0, 10) : '—'}
+                    </span>
+                    <input
+                      type="date"
+                      value={choice.end}
+                      disabled={!choice.apply || disabled}
+                      onChange={(e) => onEdit?.(t.taskId, e.target.value)}
+                      className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-blue-500 focus:outline-none text-[13px] font-mono disabled:opacity-50"
+                    />
+                  </div>
+                ) : (
+                  <input
+                    type="date"
+                    value={draftEnd}
+                    disabled={disabled}
+                    onChange={(e) => onEdit?.(t.taskId, e.target.value)}
+                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1 text-[13px] font-mono tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                  />
+                )}
+              </td>
+              <td className="px-3 py-2">
+                {mode === 'review' ? (
+                  <div className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => onKeepCurrent?.(t.taskId)}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50',
+                        !choice.apply
+                          ? 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
+                      )}
+                    >
+                      Keep current
+                    </button>
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => onApplyProposed?.(t.taskId)}
+                      className={cn(
+                        'px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors disabled:opacity-50',
+                        choice.apply
+                          ? 'bg-white dark:bg-slate-900 text-blue-700 dark:text-blue-400'
+                          : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100',
+                      )}
+                    >
+                      Apply proposed
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={disabled || !draftEnd}
+                    onClick={() => onClear?.(t.taskId)}
+                    className="rounded-md border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-1 disabled:opacity-40"
+                    title="Clear this task's due date"
+                  >
+                    Clear
+                  </button>
+                )}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
