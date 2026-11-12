@@ -92,6 +92,24 @@ const zoneTypeLabel = (type?: string | null): string =>
   (type && ZONE_TYPE_LABELS[type]) || ZONE_TYPE_LABELS.zone;
 
 /**
+ * §8e (2026-11-12) · Pure calendar-day shift on an ISO yyyy-mm-dd string.
+ * Used by `DeliverableTasksModal` to cascade a single-row Due edit across
+ * every sibling task AND the preview target picker (shift-whole-chain
+ * semantic). Working-day / holiday arithmetic still happens server-side
+ * via the dry-run — this helper only moves the user's typed anchor by
+ * Δ calendar days so the shape of the chain follows the drag.
+ *
+ * Returns the input unchanged on empty/invalid dates so callers can
+ * safely map over `drafts[t.id] ?? ''` without guarding each cell.
+ */
+function addDaysIso(iso: string, days: number): string {
+  if (!iso) return iso;
+  const ms = new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return iso;
+  return new Date(ms + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
  * §8b.1 (2026-11-11) · Mount/unmount animation helper for the two
  * ad-hoc Dialogs in this file (Review modal + DeliverableTasksModal).
  * The DP tab doesn't use shadcn Dialog — modals here are plain
@@ -4785,6 +4803,103 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
     });
   }, [previewQuery.data, manualEdits]);
 
+  // §8e (2026-11-12) · Shift-whole-chain semantic for per-task Due edits.
+  // When the user types a new Due into any single row, compute the
+  // calendar-day delta against that row's prior draft (fallback: the
+  // task's stored endDate) and shift every OTHER row's draft AND the
+  // `previewTarget` picker by the same Δ. This matches the user's
+  // mental model that the chain moves as one block — if CRD-036 slides
+  // +3 days, CRD-037, CRD-038, … and the deliverable target all slide
+  // +3 days too. The real working-day scheduling still happens on the
+  // server via the debounced dry-run that the `previewTarget` shift
+  // triggers; this helper only moves the user's anchor so the shape
+  // follows.
+  //
+  // All rows are marked as manually edited after the shift so the
+  // dry-run auto-seed useEffect (above) does NOT clobber the shifted
+  // drafts when the preview response lands. The dry-run response still
+  // populates `previewByTaskId` for the amber "pendingShift" visual
+  // cue on each row.
+  const shiftChainBy = (taskId: number | string, newEnd: string) => {
+    const id = Number(taskId);
+    const tasks: any[] = row.taskList ?? [];
+    const edited = tasks.find((t) => Number(t.id) === id);
+    const oldDraft =
+      (drafts[id] ?? '') ||
+      String(edited?.endDate ?? '').slice(0, 10);
+
+    // Row with no prior draft AND no stored endDate: treat as a plain
+    // single-row set (nothing to compute Δ against). This is the
+    // edge-case path for a brand-new task with no scheduled Due yet.
+    if (!oldDraft || !newEnd) {
+      setManualEdits((s) => {
+        const next = new Set(s);
+        next.add(id);
+        return next;
+      });
+      setDrafts((s) => ({ ...s, [id]: newEnd }));
+      return;
+    }
+
+    const oldMs = new Date(oldDraft).getTime();
+    const newMs = new Date(newEnd).getTime();
+    if (!Number.isFinite(oldMs) || !Number.isFinite(newMs)) {
+      setManualEdits((s) => {
+        const next = new Set(s);
+        next.add(id);
+        return next;
+      });
+      setDrafts((s) => ({ ...s, [id]: newEnd }));
+      return;
+    }
+    const deltaDays = Math.round((newMs - oldMs) / 86_400_000);
+
+    if (deltaDays === 0) {
+      // User typed back the same date — just mark the row as touched.
+      setManualEdits((s) => {
+        const next = new Set(s);
+        next.add(id);
+        return next;
+      });
+      setDrafts((s) => ({ ...s, [id]: newEnd }));
+      return;
+    }
+
+    // Shift every row's draft by Δ. The edited row itself lands on the
+    // user's exact typed value (no accumulated rounding error).
+    setDrafts((prev) => {
+      const next = { ...prev };
+      for (const t of tasks) {
+        const tid = Number(t.id);
+        if (tid === id) {
+          next[tid] = newEnd;
+          continue;
+        }
+        const currentDraft =
+          (prev[tid] ?? '') || String(t.endDate ?? '').slice(0, 10);
+        if (!currentDraft) continue;
+        next[tid] = addDaysIso(currentDraft, deltaDays);
+      }
+      return next;
+    });
+
+    // Shift the deliverable's preview target by the same Δ so the
+    // dry-run that follows anchors to the moved deliverable date, not
+    // the original one. Skip when there's no saved target to shift.
+    if (row.savedDate) {
+      setPreviewTarget((prev) => {
+        const base = prev || String(row.savedDate);
+        return addDaysIso(base, deltaDays);
+      });
+    }
+
+    // Flag EVERY row as manually edited so the dry-run auto-seed
+    // useEffect leaves the shifted drafts alone when the preview
+    // response arrives (the amber per-row preview cue still renders
+    // from `previewByTaskId`, independent of `drafts`).
+    setManualEdits(new Set(tasks.map((t) => Number(t.id))));
+  };
+
   const dirty = (row.taskList ?? []).some((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
 
   const save = async () => {
@@ -4933,15 +5048,7 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
               })}
               drafts={drafts}
               disabled={saving}
-              onEdit={(taskId, end) => {
-                const id = Number(taskId);
-                setManualEdits((s) => {
-                  const next = new Set(s);
-                  next.add(id);
-                  return next;
-                });
-                setDrafts((s) => ({ ...s, [id]: end }));
-              }}
+              onEdit={(taskId, end) => shiftChainBy(taskId, end)}
               onClear={(taskId) => {
                 const id = Number(taskId);
                 setManualEdits((s) => {
