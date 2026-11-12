@@ -1862,44 +1862,52 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               <ChevronDown className="h-3.5 w-3.5" /> Expand all
             </button>
           </div>
-          {hasUnsavedChanges && (
+          {/* §8d (2026-11-12) · Action cluster stays glued together on
+              the right edge even when filter chips wrap. The outer
+              toolbar is `flex-wrap`, so without this inner `flex-nowrap`
+              wrapper the primary "Save & update due dates" button (the
+              widest) drops to its own row the moment the toolbar fills
+              up. `ml-auto` pushes the whole cluster right. */}
+          <div className="ml-auto flex items-end gap-2 flex-nowrap">
+            {hasUnsavedChanges && (
+              <button
+                type="button"
+                onClick={resetDrafts}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 text-[13px] font-semibold"
+                title="Discard unsaved changes"
+              >
+                <RefreshCcw className="h-3.5 w-3.5" /> Reset
+              </button>
+            )}
+            {/* D4 · Two save buttons side-by-side (replacing the single
+                "Save all" primary). Secondary Save persists deliverable
+                targets without touching task dates; primary Save & update
+                due dates runs the project-wide reschedule and surfaces
+                problematic tasks for PM review. */}
             <button
               type="button"
-              onClick={resetDrafts}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 text-[13px] font-semibold"
-              title="Discard unsaved changes"
+              onClick={attemptSave}
+              disabled={!hasUnsavedChanges || save.isPending || previewing}
+              className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
+              title="Save deliverable targets without previewing a task reschedule"
             >
-              <RefreshCcw className="h-3.5 w-3.5" /> Reset
+              <Save className="h-3.5 w-3.5" aria-hidden="true" />
+              {save.isPending ? 'Saving...' : 'Save'}
             </button>
-          )}
-          {/* D4 · Two save buttons side-by-side (replacing the single
-              "Save all" primary). Secondary Save persists deliverable
-              targets without touching task dates; primary Save & update
-              due dates runs the project-wide reschedule and surfaces
-              problematic tasks for PM review. */}
-          <button
-            type="button"
-            onClick={attemptSave}
-            disabled={!hasUnsavedChanges || save.isPending || previewing}
-            className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
-            title="Save deliverable targets without previewing a task reschedule"
-          >
-            <Save className="h-3.5 w-3.5" aria-hidden="true" />
-            {save.isPending ? 'Saving...' : 'Save'}
-          </button>
-          {/* §7.2 (2026-11-11) · `whitespace-nowrap` keeps the Hebrew
-              label on a single line when the toolbar gets crowded with
-              filters open. The label itself stays untouched. */}
-          <button
-            type="button"
-            onClick={attemptSaveAndUpdate}
-            disabled={save.isPending || previewing || previewMutation.isPending || applyMutation.isPending}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50 whitespace-nowrap"
-            title="Save deliverable targets and preview every task's proposed new dates before committing (§8a)"
-          >
-            <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
-            {previewing || previewMutation.isPending ? 'Scheduling…' : 'Save & update due dates'}
-          </button>
+            {/* §7.2 (2026-11-11) · `whitespace-nowrap` keeps the Hebrew
+                label on a single line when the toolbar gets crowded with
+                filters open. The label itself stays untouched. */}
+            <button
+              type="button"
+              onClick={attemptSaveAndUpdate}
+              disabled={save.isPending || previewing || previewMutation.isPending || applyMutation.isPending}
+              className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50 whitespace-nowrap"
+              title="Save deliverable targets and preview every task's proposed new dates before committing (§8a)"
+            >
+              <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />
+              {previewing || previewMutation.isPending ? 'Scheduling…' : 'Save & update due dates'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -3252,7 +3260,7 @@ function GanttView({
   }, [totalTimelineWidth]);
 
   // Past-date confirmation state (client feedback 2026-08-02).
-  const [pastDateConfirm, setPastDateConfirm] = useState<null | { rowKey: string; newTargetMs: number; kind: 'target' | 'duration' | 'move'; apply: () => void }>(null);
+  const [pastDateConfirm, setPastDateConfirm] = useState<null | { rowKey: string; newTargetMs: number; kind: 'target' | 'duration' | 'move' | 'resize'; apply: () => void }>(null);
   // Task-list modal for a clicked Gantt bar (items 2+3). Shows every
   // task under that (zone × deliverable) with an editable due date.
   const [taskModalRow, setTaskModalRow] = useState<any | null>(null);
@@ -3887,7 +3895,7 @@ function GanttView({
       </div>
 
       <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 italic flex items-center gap-4 flex-wrap">
-        <span>* Bar length reflects <span className="font-semibold">calendar weeks</span> (not working time). Drag the left edge to change duration, the right edge (or middle) to change the target date. Scrolling backwards past today triggers a confirmation.</span>
+        <span>* Bar length reflects <span className="font-semibold">calendar weeks</span> (not working time). Drag either edge to resize (duration changes). Drag the middle to move (target shifts; duration held). Scrolling backwards past today triggers a confirmation.</span>
         <span className="inline-flex items-center gap-1.5 not-italic">
           <span className="inline-block w-3 h-3 rounded border-2 border-red-600 dark:border-red-500 bg-transparent" />
           <span>Critical path (float = 0d)</span>
@@ -3959,9 +3967,10 @@ function buildChainSummaryLines(taskList: any[] | null | undefined): string[] {
  * so the horizontal viewport can scroll independently.
  *
  * Drag handles:
- *   - LEFT edge → change duration (target held).
- *   - RIGHT edge → change target date (duration held).
- *   - MIDDLE → move whole bar (target shifts, duration held).
+ *   - LEFT edge  → resize (duration grows leftward; target held).
+ *   - RIGHT edge → resize (duration grows rightward; target shifts
+ *                   so the left edge stays anchored — §8d).
+ *   - MIDDLE     → move whole bar (target shifts; duration held).
  *
  * If the drag ends with the target in the past, we open a
  * confirmation modal (via onRequestPastDate); user can approve or
@@ -4001,7 +4010,7 @@ function GanttRow({
   // toolbar toggle that gates the whole layer.
   totalWidth: number;
   showTaskBars: boolean;
-  onRequestPastDate: (rowKey: string, newTargetMs: number, kind: 'target' | 'duration' | 'move', apply: () => void) => void;
+  onRequestPastDate: (rowKey: string, newTargetMs: number, kind: 'target' | 'duration' | 'move' | 'resize', apply: () => void) => void;
   onBarClick: () => void;
 }) {
   const draft = drafts[r.key] ?? '';
@@ -4138,16 +4147,32 @@ function GanttRow({
     const onMove = (ev: PointerEvent) => {
       const dxPx = ev.clientX - initClientX;
       const dxMs = dxPx * msPerPx;
-      if (mode === 'right' || mode === 'middle') {
-        // Target drags (right edge OR middle-move) now write an
-        // explicit ISO date — no more month-rounding round-trip
+      if (mode === 'middle') {
+        // MIDDLE drag → move (target shifts; duration held). Writes
+        // an explicit ISO date — no more month-rounding round-trip
         // through the months+baseDate hack. Week-level precision
         // survives the save (client feedback 2026-08-02 item 4).
         finalTargetMs = Math.max(0, initTargetMs + dxMs);
         lastTargetIso = isoDayOf(finalTargetMs);
         setTargetDateDrafts((s) => ({ ...s, [r.key]: lastTargetIso }));
+      } else if (mode === 'right') {
+        // §8d (2026-11-12) · RIGHT edge drag now = resize (duration
+        // AND target grow together), so the bar's left edge stays
+        // anchored and the right edge follows the cursor. This
+        // matches the user's model "both edges resize; middle moves"
+        // and symmetrises with left-edge drag. Previously right-edge
+        // was aliased to middle-move, which made the bar slide
+        // sideways instead of stretching.
+        const dxWeeks = dxMs / (7 * 86_400_000);
+        const newDur = Math.max(0, Math.round(initDurationWeeks + dxWeeks));
+        finalTargetMs = Math.max(0, initTargetMs + dxMs);
+        lastTargetIso = isoDayOf(finalTargetMs);
+        lastDurWeeks = String(newDur);
+        setTargetDateDrafts((s) => ({ ...s, [r.key]: lastTargetIso }));
+        setDurationDrafts((s) => ({ ...s, [r.key]: lastDurWeeks }));
       } else {
-        // Left edge → change duration (target held).
+        // LEFT edge drag → change duration (target held). Negative
+        // dx grows the bar leftward.
         const newDur = Math.max(0, Math.round(initDurationWeeks - dxMs / (7 * 86_400_000)));
         lastDurWeeks = String(newDur);
         setDurationDrafts((s) => ({ ...s, [r.key]: lastDurWeeks }));
@@ -4168,7 +4193,10 @@ function GanttRow({
         return;
       }
 
-      const kind: 'target' | 'duration' | 'move' = mode === 'right' ? 'target' : mode === 'left' ? 'duration' : 'move';
+      const kind: 'target' | 'duration' | 'move' | 'resize' =
+        mode === 'right' ? 'resize' :
+        mode === 'middle' ? 'move' :
+        'duration';
       if (mode !== 'left' && finalTargetMs < todayMs && finalTargetMs !== initTargetMs) {
         // Revert the explicit-date draft, then let the modal's
         // Apply callback re-apply. Server-side audit-logging fires
