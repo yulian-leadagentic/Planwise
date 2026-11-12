@@ -91,6 +91,98 @@ const zoneTypeLabel = (type?: string | null): string =>
   (type && ZONE_TYPE_LABELS[type]) || ZONE_TYPE_LABELS.zone;
 
 /**
+ * §8b.1 (2026-11-11) · Mount/unmount animation helper for the two
+ * ad-hoc Dialogs in this file (Review modal + DeliverableTasksModal).
+ * The DP tab doesn't use shadcn Dialog — modals here are plain
+ * `fixed inset-0` overlays that conditionally render — so we drive
+ * open/close animation via a `data-state` flip + a deferred unmount.
+ *
+ * On mount we render with state='closed' then flip to 'open' on the
+ * next animation frame so the CSS transition fires; on close we flip
+ * back to 'closed' and defer unmount by `exitMs`. OS-flagged users
+ * (`prefers-reduced-motion`) get instant transitions via the
+ * `motion-reduce:*` modifiers on the elements that consume the state.
+ */
+function useModalTransition(isOpen: boolean, exitMs = 150) {
+  const [shouldRender, setShouldRender] = useState<boolean>(isOpen);
+  const [dataState, setDataState] = useState<'open' | 'closed'>('closed');
+
+  useEffect(() => {
+    if (isOpen) {
+      setShouldRender(true);
+      // rAF so the DOM first paints with data-state=closed (opacity-0,
+      // scale-98); the flip to 'open' on the next frame triggers the
+      // CSS transition. Without the frame delay the element mounts
+      // already-open and the animation is skipped.
+      const id = requestAnimationFrame(() => setDataState('open'));
+      return () => cancelAnimationFrame(id);
+    }
+    setDataState('closed');
+    const t = setTimeout(() => setShouldRender(false), exitMs);
+    return () => clearTimeout(t);
+  }, [isOpen, exitMs]);
+
+  return { shouldRender, dataState };
+}
+
+/**
+ * §8b.1 (2026-11-11) · Shared Dialog shell — renders the overlay +
+ * card scaffold, drives both via `useModalTransition`, and stops
+ * propagation on the card so a backdrop click only fires for clicks
+ * that actually land on the backdrop.
+ *
+ * Open  — 150ms ease-out: overlay fades in; card fades in + scales
+ *          from 0.98 → 1.0.
+ * Close — 100ms ease-in:  overlay fades out; card fades out + scales
+ *          down to 0.98. After the transition the shell unmounts.
+ * Reduced-motion — both layers carry `motion-reduce:transition-none`
+ *          (and the card also drops its transform), so the modal
+ *          snaps open/closed for users with the OS flag.
+ */
+function AnimatedModalShell({
+  open,
+  onBackdropClick,
+  overlayClassName,
+  cardClassName,
+  children,
+}: {
+  open: boolean;
+  onBackdropClick?: () => void;
+  overlayClassName?: string;
+  cardClassName?: string;
+  children: React.ReactNode;
+}) {
+  const { shouldRender, dataState } = useModalTransition(open, 150);
+  if (!shouldRender) return null;
+  return (
+    <div
+      data-state={dataState}
+      className={cn(
+        'fixed inset-0 z-50 flex items-center justify-center',
+        'transition-opacity ease-out duration-150 motion-reduce:transition-none',
+        'data-[state=open]:opacity-100',
+        'data-[state=closed]:opacity-0 data-[state=closed]:duration-100 data-[state=closed]:ease-in',
+        overlayClassName ?? 'bg-slate-900/35 backdrop-blur-sm',
+      )}
+      onClick={onBackdropClick}
+    >
+      <div
+        data-state={dataState}
+        onClick={(e) => e.stopPropagation()}
+        className={cn(
+          'transition-all ease-out duration-150 motion-reduce:transition-none motion-reduce:transform-none',
+          'data-[state=open]:opacity-100 data-[state=open]:scale-100',
+          'data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.98] data-[state=closed]:duration-100 data-[state=closed]:ease-in',
+          cardClassName,
+        )}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Deliverable Planning tab (Tier E #10, revised 2026-08-02).
  *
  * Second phase of project setup — set a target date per
@@ -1526,13 +1618,17 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           relevant. Confirm POSTs the user-selected taskIds to
           `save-and-update-due-dates`, which is the single commit
           endpoint — the scheduler re-runs for those tasks only. */}
-      {(previewing || preview) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm animate-fade-in">
-          <div
-            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[760px] max-w-[92vw] max-h-[85vh] flex flex-col animate-scale-in"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+      {/* §8b.1 (2026-11-11) · Mount/unmount animation now routed
+          through `AnimatedModalShell` (overlay fade + card
+          fade+scale, reduced-motion aware). The previous
+          `animate-fade-in` / `animate-scale-in` classes didn't exist
+          as utilities — the modal popped in with no transition. */}
+      <AnimatedModalShell
+        open={Boolean(previewing || preview)}
+        cardClassName="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[760px] max-w-[92vw] max-h-[85vh] flex flex-col"
+      >
+        <>
+          <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
               <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
                 סקירת עדכון תאריכים
               </h3>
@@ -1651,9 +1747,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                   : `החל מאושרים (${preview?.filter((p) => reviewChoices[p.taskId]?.apply).length ?? 0})`}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        </AnimatedModalShell>
 
       {/* Header controls — UI-16 · title/description on top, toolbar
           starts at the page's left gutter on its own row (same left
@@ -4109,11 +4204,11 @@ function GanttRow({
     : barStatus === 'in_progress'? 'bg-amber-500/85 hover:bg-amber-600'
     : barStatus === 'not_started'? 'bg-blue-500/85 hover:bg-blue-600'
     :                              'bg-slate-300 dark:bg-slate-600 hover:bg-slate-400';
-  const handleColor =
-    barStatus === 'done'         ? 'bg-emerald-700/40 hover:bg-emerald-800'
-    : barStatus === 'in_progress'? 'bg-amber-700/40 hover:bg-amber-800'
-    : barStatus === 'not_started'? 'bg-blue-700/40 hover:bg-blue-800'
-    :                              'bg-slate-500/40 hover:bg-slate-600';
+  // §8b.4 (2026-11-11) · Legacy darker-tint handle color is no
+  // longer used — the two 12px edge hit zones below are invisible
+  // until hover (then a neutral amber pill shows), so we no longer
+  // need a per-status darker handle tint. Kept here as a comment so
+  // the next pass can see the decision instead of hunting for it.
   const barStatusLabel =
     barStatus === 'done' ? 'All tasks done'
     : barStatus === 'in_progress' ? 'In progress'
@@ -4188,9 +4283,23 @@ function GanttRow({
       className="relative select-none"
       style={{ height: rowHeightPx }}
     >
+      {/* §8b.3 (2026-11-11) · Tri-mode drag strip. The outer bar
+          owns the MIDDLE hit region (cursor-grab → grabbing, shifts
+          both ends preserving duration). Two 12px-wide absolute hit
+          zones sit over the left and right edges: left → w-resize,
+          changes start (duration grows/shrinks from the left); right
+          → e-resize, changes end only. Zones are positioned so they
+          overlap the outer bar's pointerdown; stopPropagation inside
+          `startDrag` keeps the middle handler from firing when an
+          edge is grabbed. Day-snap stays in the scheduler path.
+          §8b.4 (2026-11-11) · Hover affordances — three subtle
+          handles revealed via `group-hover`: 6px pill at each edge
+          + a 24×4 center grip. Colors are amber tokens (amber-500/60
+          and /50) so they read as drag handles regardless of the
+          bar's status color. */}
       <div
         className={cn(
-          'absolute top-2 h-4 rounded-md shadow-sm cursor-pointer flex items-center justify-between overflow-hidden',
+          'group absolute top-2 h-4 rounded-md shadow-sm cursor-grab active:cursor-grabbing flex items-center justify-between overflow-hidden',
           barColor,
           pastHint,
           critHint,
@@ -4203,19 +4312,37 @@ function GanttRow({
         title={tooltipTitle}
         onPointerDown={startDrag('middle')}
       >
-        <div
-          className={cn('w-1.5 h-full cursor-ew-resize shrink-0', handleColor)}
-          onPointerDown={startDrag('left')}
-          title="Drag to change duration"
-        />
-        <span className="text-white text-[10px] font-bold tabular-nums whitespace-nowrap px-1 truncate">
+        <span className="text-white text-[10px] font-bold tabular-nums whitespace-nowrap px-3 truncate pointer-events-none mx-auto">
           {durationWeeks > 0 ? `${durationWeeks}w · ` : ''}{targetDate}
         </span>
+        {/* Center grip (hover-only). pointer-events-none so the
+            middle drag still catches clicks over it. */}
+        <span
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-1 w-6 rounded bg-amber-500/50 opacity-0 group-hover:opacity-100 transition-opacity motion-reduce:transition-none pointer-events-none"
+          aria-hidden="true"
+        />
+        {/* Left 12px hit zone + hover pill. */}
         <div
-          className={cn('w-1.5 h-full cursor-ew-resize shrink-0', handleColor)}
+          className="absolute left-0 top-0 h-full w-3 cursor-w-resize"
+          onPointerDown={startDrag('left')}
+          title="Drag to change start (duration)"
+        >
+          <span
+            className="absolute left-[2px] top-1/2 -translate-y-1/2 h-3 w-1.5 rounded-full bg-amber-500/60 opacity-0 group-hover:opacity-100 transition-opacity motion-reduce:transition-none pointer-events-none"
+            aria-hidden="true"
+          />
+        </div>
+        {/* Right 12px hit zone + hover pill. */}
+        <div
+          className="absolute right-0 top-0 h-full w-3 cursor-e-resize"
           onPointerDown={startDrag('right')}
           title="Drag to change target date"
-        />
+        >
+          <span
+            className="absolute right-[2px] top-1/2 -translate-y-1/2 h-3 w-1.5 rounded-full bg-amber-500/60 opacity-0 group-hover:opacity-100 transition-opacity motion-reduce:transition-none pointer-events-none"
+            aria-hidden="true"
+          />
+        </div>
       </div>
       {anyCritical && (
         <span
@@ -4538,6 +4665,54 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
   });
   const [saving, setSaving] = useState(false);
 
+  // §8b.1 (2026-11-11) · Open/close animation state. The parent still
+  // owns whether the modal is in the tree (`taskModalRow !== null`);
+  // this state drives the `AnimatedModalShell` transition. `open`
+  // starts false and flips true on mount so the CSS transition fires;
+  // `requestClose` defers the parent's `onClose` by 100ms so the exit
+  // animation plays before the modal unmounts.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    // rAF so the closed→open transition can trigger on the shell. We
+    // also keep a mount flag so repeated renders don't restart the
+    // animation (StrictMode double-invokes effects in dev).
+    const id = requestAnimationFrame(() => setOpen(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const closingRef = useRef(false);
+  const requestClose = () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setOpen(false);
+    setTimeout(onClose, 120);
+  };
+
+  // §8b.2 (2026-11-11) · Deliverable-date-pushes-tasks (preview only).
+  // When the PM edits the deliverable's preview target in the header
+  // date picker, every owning task's start/end shifts by the same day
+  // delta in LOCAL state so they can eyeball the chain move with the
+  // parent. Nothing is persisted here — committing still goes through
+  // the Save & update preview-reschedule flow (§8a). The server
+  // scheduler has final say when the user eventually commits. The
+  // picker seeds from the row's current savedDate; clearing it (empty
+  // string) resets the delta to 0 so the original scheduler values
+  // render.
+  const [previewTarget, setPreviewTarget] = useState<string>(row.savedDate ?? '');
+  const deltaDays = useMemo(() => {
+    if (!row.savedDate || !previewTarget || previewTarget === row.savedDate) return 0;
+    const base = new Date(row.savedDate).getTime();
+    const next = new Date(previewTarget).getTime();
+    if (!Number.isFinite(base) || !Number.isFinite(next)) return 0;
+    return Math.round((next - base) / 86_400_000);
+  }, [previewTarget, row.savedDate]);
+  const shiftIso = (iso: string | null | undefined): string | null => {
+    if (!iso) return null;
+    if (!deltaDays) return String(iso).slice(0, 10);
+    const ms = new Date(iso).getTime();
+    if (!Number.isFinite(ms)) return String(iso).slice(0, 10);
+    return new Date(ms + deltaDays * 86_400_000).toISOString().slice(0, 10);
+  };
+
   const dirty = (row.taskList ?? []).some((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
 
   const save = async () => {
@@ -4563,7 +4738,7 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
       notify.success(`Updated ${changed.length} due date${changed.length === 1 ? '' : 's'}`);
       // Refresh planning data — the row will pick up the new dates.
       queryClient.invalidateQueries({ queryKey: ['planning'] });
-      onClose();
+      requestClose();
     } catch (err: any) {
       notify.error(err?.response?.data?.message ?? 'Failed to save due dates');
     } finally {
@@ -4572,11 +4747,13 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div
-        className="w-[720px] max-w-[92vw] max-h-[80vh] flex flex-col rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <AnimatedModalShell
+      open={open}
+      onBackdropClick={requestClose}
+      overlayClassName="bg-black/40"
+      cardClassName="w-[720px] max-w-[92vw] max-h-[80vh] flex flex-col rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700"
+    >
+      <>
         <div className="flex items-start justify-between border-b border-slate-100 dark:border-slate-800 p-5">
           <div className="min-w-0">
             <h3 className="text-[15px] font-bold text-slate-800 dark:text-slate-100 truncate">{row.deliverableName}</h3>
@@ -4585,8 +4762,41 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
               {row.serviceName ? <span> · {row.serviceName}</span> : null}
               {row.savedDate ? <span> · target {row.savedDate}</span> : null}
             </p>
+            {/* §8b.2 (2026-11-11) · Preview target picker. Local only:
+                shifts every task's start/end by the same day delta so
+                the PM can see the chain move before committing. The
+                reschedule flow (Save & update) still owns the commit. */}
+            {row.savedDate ? (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Preview target
+                </label>
+                <input
+                  type="date"
+                  value={previewTarget}
+                  onChange={(e) => setPreviewTarget(e.target.value)}
+                  disabled={saving}
+                  className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] font-mono tabular-nums bg-white dark:bg-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                />
+                {deltaDays !== 0 ? (
+                  <span className="text-[11px] text-amber-700 dark:text-amber-400">
+                    shift {deltaDays > 0 ? '+' : ''}{deltaDays}d · preview only — Save &amp; update to commit
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewTarget(row.savedDate ?? '')}
+                    disabled={saving || previewTarget === (row.savedDate ?? '')}
+                    className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-40"
+                    title="Reset to saved target"
+                  >
+                    reset
+                  </button>
+                )}
+              </div>
+            ) : null}
           </div>
-          <button type="button" onClick={onClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 text-[18px] leading-none px-1">×</button>
+          <button type="button" onClick={requestClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 text-[18px] leading-none px-1">×</button>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -4609,9 +4819,14 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                 taskName: t.name,
                 status: t.status ?? null,
                 currentStart: null,
-                proposedStart: t.estimatedStartDate ?? t.startDate ?? null,
+                // §8b.2 (2026-11-11) · Shift by the deliverable's
+                // preview-target delta so the chain visibly moves with
+                // the parent before commit. `shiftIso` is a no-op when
+                // deltaDays === 0.
+                proposedStart: shiftIso(t.estimatedStartDate ?? t.startDate ?? null),
                 currentEnd: null,
-                proposedEnd: t.endDate ?? null,
+                proposedEnd: shiftIso(t.endDate ?? null),
+                pendingShift: deltaDays !== 0,
               }))}
               drafts={drafts}
               disabled={saving}
@@ -4628,7 +4843,7 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               className="px-3.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900"
             >
               Cancel
@@ -4643,8 +4858,8 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </>
+    </AnimatedModalShell>
   );
 }
 
@@ -4696,6 +4911,12 @@ type TasksEditorRow = {
   // unchanged.
   violatesTarget?: boolean;
   hoursLogged?: boolean;
+  // §8b.2 (2026-11-11) · Local-only preview shift. When true, the
+  // row renders a small amber "pending" caption below the start/due
+  // cells so the PM sees the shift is unsaved — committing still
+  // goes through the Save & update flow. Kept optional so the review
+  // modal's rows stay untouched.
+  pendingShift?: boolean;
 };
 
 type TasksEditorTableProps = {
@@ -4828,10 +5049,19 @@ function TasksEditorTable({
                   ) : null}
                   <span className={cn(
                     t.proposedStart ? 'text-slate-700 dark:text-slate-200' : 'text-slate-400 dark:text-slate-500',
+                    t.pendingShift && 'text-amber-700 dark:text-amber-400',
                   )}>
                     {t.proposedStart ? String(t.proposedStart).slice(0, 10) : '—'}
                   </span>
                 </div>
+                {/* §8b.2 (2026-11-11) · Pending preview caption. Fires
+                    when the DeliverableTasksModal's preview target has
+                    shifted this task; the Save & update flow commits. */}
+                {t.pendingShift ? (
+                  <div className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
+                    pending — Save &amp; update to commit
+                  </div>
+                ) : null}
               </td>
               <td className="px-3 py-2">
                 {mode === 'review' ? (
@@ -4848,13 +5078,29 @@ function TasksEditorTable({
                     />
                   </div>
                 ) : (
-                  <input
-                    type="date"
-                    value={draftEnd}
-                    disabled={disabled}
-                    onChange={(e) => onEdit?.(t.taskId, e.target.value)}
-                    className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1 text-[13px] font-mono tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
-                  />
+                  <>
+                    <input
+                      type="date"
+                      value={draftEnd}
+                      disabled={disabled}
+                      onChange={(e) => onEdit?.(t.taskId, e.target.value)}
+                      className={cn(
+                        'rounded-lg border px-2 py-1 text-[13px] font-mono tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50',
+                        t.pendingShift
+                          ? 'border-amber-300 dark:border-amber-700'
+                          : 'border-slate-200 dark:border-slate-700',
+                      )}
+                    />
+                    {/* §8b.2 (2026-11-11) · When the deliverable's
+                        preview target has shifted, show the shifted
+                        proposed-end beside the input so the PM sees
+                        where the chain would land once committed. */}
+                    {t.pendingShift && t.proposedEnd ? (
+                      <div className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
+                        pending {String(t.proposedEnd).slice(0, 10)} — Save &amp; update to commit
+                      </div>
+                    ) : null}
+                  </>
                 )}
               </td>
               <td className="px-3 py-2">
