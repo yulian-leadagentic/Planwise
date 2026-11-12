@@ -25,9 +25,16 @@ export class SchedulingController {
 
   @Post('deliverables/:id/schedule/dry-run')
   @RequirePermissions({ module: 'projects', action: 'write' })
-  @ApiOperation({ summary: 'Compute a working-day schedule for a ZoneDeliverableTarget without writing' })
-  dryRun(@Param('id', ParseIntPipe) id: number) {
-    return this.scheduler.scheduleDeliverableDryRun({ deliverableId: id });
+  @ApiOperation({
+    summary:
+      'Compute a working-day schedule for a ZoneDeliverableTarget without writing. Optional { anchorDate } simulates the deliverable at a different target date (§8c · preview target picker) — the scheduler treats it as the effective targetDate for the dry-run only.',
+  })
+  dryRun(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body?: { anchorDate?: string },
+  ) {
+    const anchorDate = body?.anchorDate ? new Date(body.anchorDate) : undefined;
+    return this.scheduler.scheduleDeliverableDryRun({ deliverableId: id, anchorDate });
   }
 
   @Post('deliverables/:id/schedule/commit')

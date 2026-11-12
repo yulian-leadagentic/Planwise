@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { resolveTaskDeliverableDetailed } from '@/features/planning/resolve-task-deliverable';
 import { GroupControl, dpGroupDimLabel, type DPGroupDim } from '@/features/planning/group-control';
 import { ZONE_DISPLAY } from '@/features/templates/zone-templates/constants';
+import { useDebounce } from '@/hooks/use-debounce';
 import {
   hasPredecessorConflict,
   getPredecessorConflictMessage,
@@ -1625,7 +1626,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           as utilities — the modal popped in with no transition. */}
       <AnimatedModalShell
         open={Boolean(previewing || preview)}
-        cardClassName="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[760px] max-w-[92vw] max-h-[85vh] flex flex-col"
+        cardClassName="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[1040px] max-w-[92vw] max-h-[85vh] flex flex-col"
       >
         <>
           <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800">
@@ -1654,7 +1655,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               </div>
             </div>
 
-            <div className="p-5 overflow-auto">
+            <div className="p-5 overflow-y-auto">
               {previewing && !preview ? (
                 <div className="py-6 text-center text-[12px] text-slate-500 dark:text-slate-400">
                   מחשב תצוגה מקדימה… no database writes yet.
@@ -4664,6 +4665,13 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
     return seed;
   });
   const [saving, setSaving] = useState(false);
+  // §8c (2026-11-12) · Track which task rows the user has typed into
+  // manually. Preview-driven draft auto-seeds skip rows in this set so
+  // the user's typed value is preserved. Also controls whether the
+  // commit payload sets `manualDueDate:true` — only true for rows the
+  // user actually edited, since preview-driven dates come from the
+  // scheduler and shouldn't fire `dueDateOverridden`.
+  const [manualEdits, setManualEdits] = useState<Set<number>>(() => new Set());
 
   // §8b.1 (2026-11-11) · Open/close animation state. The parent still
   // owns whether the modal is in the tree (`taskModalRow !== null`);
@@ -4687,31 +4695,67 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
     setTimeout(onClose, 120);
   };
 
-  // §8b.2 (2026-11-11) · Deliverable-date-pushes-tasks (preview only).
-  // When the PM edits the deliverable's preview target in the header
-  // date picker, every owning task's start/end shifts by the same day
-  // delta in LOCAL state so they can eyeball the chain move with the
-  // parent. Nothing is persisted here — committing still goes through
-  // the Save & update preview-reschedule flow (§8a). The server
-  // scheduler has final say when the user eventually commits. The
-  // picker seeds from the row's current savedDate; clearing it (empty
-  // string) resets the delta to 0 so the original scheduler values
-  // render.
+  // §8c (2026-11-12) · Preview target picker now routes through the
+  // server's working-day scheduler. The §8 spec requires a single
+  // source of truth for working-day / holiday arithmetic — it must
+  // NOT be duplicated in the FE. Previously this used a naive
+  // calendar-day shift, which produced different dates than the
+  // actual scheduler and ignored weekends / holidays / dependency
+  // lag. We now POST to `/deliverables/:id/schedule/dry-run` with
+  // `{ anchorDate }` (debounced), map results by taskId, and render
+  // those dates directly.
   const [previewTarget, setPreviewTarget] = useState<string>(row.savedDate ?? '');
-  const deltaDays = useMemo(() => {
-    if (!row.savedDate || !previewTarget || previewTarget === row.savedDate) return 0;
-    const base = new Date(row.savedDate).getTime();
-    const next = new Date(previewTarget).getTime();
-    if (!Number.isFinite(base) || !Number.isFinite(next)) return 0;
-    return Math.round((next - base) / 86_400_000);
-  }, [previewTarget, row.savedDate]);
-  const shiftIso = (iso: string | null | undefined): string | null => {
-    if (!iso) return null;
-    if (!deltaDays) return String(iso).slice(0, 10);
-    const ms = new Date(iso).getTime();
-    if (!Number.isFinite(ms)) return String(iso).slice(0, 10);
-    return new Date(ms + deltaDays * 86_400_000).toISOString().slice(0, 10);
-  };
+  const debouncedTarget = useDebounce(previewTarget, 300);
+  const previewQuery = useQuery({
+    queryKey: ['deliv-preview', row.deliverableId, debouncedTarget],
+    enabled: Boolean(row.deliverableId) && Boolean(debouncedTarget) && debouncedTarget !== row.savedDate,
+    queryFn: async () => {
+      const r = await client.post(`/deliverables/${row.deliverableId}/schedule/dry-run`, {
+        anchorDate: debouncedTarget,
+      });
+      return r.data as {
+        scheduled: Array<{
+          taskId: number;
+          startDate: string;
+          endDate: string;
+          infeasible?: boolean;
+          infeasibleReason?: string;
+        }>;
+      };
+    },
+  });
+  const previewByTaskId = useMemo(() => {
+    const m = new Map<number, { startDate: string; endDate: string; infeasible?: boolean; infeasibleReason?: string }>();
+    if (!previewQuery.data) return m;
+    for (const s of previewQuery.data.scheduled ?? []) {
+      m.set(Number(s.taskId), {
+        startDate: String(s.startDate).slice(0, 10),
+        endDate: String(s.endDate).slice(0, 10),
+        infeasible: s.infeasible,
+        infeasibleReason: s.infeasibleReason,
+      });
+    }
+    return m;
+  }, [previewQuery.data]);
+  const previewing = previewQuery.isFetching;
+  const previewActive = previewTarget !== (row.savedDate ?? '') && Boolean(previewTarget);
+
+  // §8c (2026-11-12) · When the dry-run returns, auto-seed any drafts
+  // the user hasn't typed into. The input then shows the preview
+  // endDate directly (BUG 2 — users thought "preview only" meant
+  // nothing changed because the input was still at the saved value).
+  useEffect(() => {
+    if (!previewQuery.data) return;
+    setDrafts((prev) => {
+      const next = { ...prev };
+      for (const s of previewQuery.data!.scheduled ?? []) {
+        const id = Number(s.taskId);
+        if (manualEdits.has(id)) continue;
+        next[id] = String(s.endDate).slice(0, 10);
+      }
+      return next;
+    });
+  }, [previewQuery.data, manualEdits]);
 
   const dirty = (row.taskList ?? []).some((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
 
@@ -4730,8 +4774,15 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
           // and stop the scheduler from reshuffling the task later.
           // Clearing the date (nextEnd = null) stays silent — a null
           // never fires override regardless of the flag.
+          //
+          // §8c (2026-11-12) — Only fire `manualDueDate:true` for rows
+          // the user actually typed into. Preview-driven draft values
+          // come from the scheduler's own dry-run, so they must NOT
+          // force `dueDateOverridden` (that would freeze the task
+          // against future reschedules even though the user never
+          // typed a value).
           const payload: Record<string, any> = { endDate: nextEnd };
-          if (nextEnd) payload.manualDueDate = true;
+          if (nextEnd && manualEdits.has(Number(t.id))) payload.manualDueDate = true;
           return client.patch(`/tasks/${t.id}`, payload);
         }),
       );
@@ -4762,10 +4813,12 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
               {row.serviceName ? <span> · {row.serviceName}</span> : null}
               {row.savedDate ? <span> · target {row.savedDate}</span> : null}
             </p>
-            {/* §8b.2 (2026-11-11) · Preview target picker. Local only:
-                shifts every task's start/end by the same day delta so
-                the PM can see the chain move before committing. The
-                reschedule flow (Save & update) still owns the commit. */}
+            {/* §8c (2026-11-12) · Preview target picker. Routes
+                through the server scheduler dry-run — the FE no longer
+                does calendar-day math (§8 spec: one source of truth for
+                working days / holidays). Debounced ~300ms to avoid a
+                round-trip per keystroke. Save & update still owns the
+                commit. */}
             {row.savedDate ? (
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
@@ -4778,14 +4831,26 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                   disabled={saving}
                   className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] font-mono tabular-nums bg-white dark:bg-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
                 />
-                {deltaDays !== 0 ? (
+                {previewing ? (
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                    previewing…
+                  </span>
+                ) : previewActive ? (
                   <span className="text-[11px] text-amber-700 dark:text-amber-400">
-                    shift {deltaDays > 0 ? '+' : ''}{deltaDays}d · preview only — Save &amp; update to commit
+                    preview only — Save &amp; update to commit
                   </span>
                 ) : (
                   <button
                     type="button"
-                    onClick={() => setPreviewTarget(row.savedDate ?? '')}
+                    onClick={() => {
+                      setPreviewTarget(row.savedDate ?? '');
+                      setManualEdits(new Set());
+                      setDrafts(() => {
+                        const seed: Record<number, string> = {};
+                        for (const t of row.taskList ?? []) seed[t.id] = t.endDate ?? '';
+                        return seed;
+                      });
+                    }}
                     disabled={saving || previewTarget === (row.savedDate ?? '')}
                     className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-40"
                     title="Reset to saved target"
@@ -4813,25 +4878,51 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                float breakdown still shows on the Gantt row itself. */
             <TasksEditorTable
               mode="tasks-list"
-              tasks={(row.taskList ?? []).map((t: any) => ({
-                taskId: t.id,
-                taskCode: t.code ?? null,
-                taskName: t.name,
-                status: t.status ?? null,
-                currentStart: null,
-                // §8b.2 (2026-11-11) · Shift by the deliverable's
-                // preview-target delta so the chain visibly moves with
-                // the parent before commit. `shiftIso` is a no-op when
-                // deltaDays === 0.
-                proposedStart: shiftIso(t.estimatedStartDate ?? t.startDate ?? null),
-                currentEnd: null,
-                proposedEnd: shiftIso(t.endDate ?? null),
-                pendingShift: deltaDays !== 0,
-              }))}
+              tasks={(row.taskList ?? []).map((t: any) => {
+                // §8c (2026-11-12) · Preview rows come from the server
+                // scheduler dry-run (working-day aware). When no
+                // preview is active, fall back to the task's stored
+                // scheduler values.
+                const pv = previewByTaskId.get(Number(t.id));
+                const proposedStart = pv?.startDate ?? (t.estimatedStartDate ?? t.startDate ?? null);
+                const proposedEnd = pv?.endDate ?? (t.endDate ?? null);
+                const pendingShift = Boolean(
+                  pv &&
+                    String(pv.endDate).slice(0, 10) !==
+                      String(t.endDate ?? '').slice(0, 10),
+                );
+                return {
+                  taskId: t.id,
+                  taskCode: t.code ?? null,
+                  taskName: t.name,
+                  status: t.status ?? null,
+                  currentStart: null,
+                  proposedStart: proposedStart ? String(proposedStart).slice(0, 10) : null,
+                  currentEnd: null,
+                  proposedEnd: proposedEnd ? String(proposedEnd).slice(0, 10) : null,
+                  pendingShift,
+                };
+              })}
               drafts={drafts}
               disabled={saving}
-              onEdit={(taskId, end) => setDrafts((s) => ({ ...s, [Number(taskId)]: end }))}
-              onClear={(taskId) => setDrafts((s) => ({ ...s, [Number(taskId)]: '' }))}
+              onEdit={(taskId, end) => {
+                const id = Number(taskId);
+                setManualEdits((s) => {
+                  const next = new Set(s);
+                  next.add(id);
+                  return next;
+                });
+                setDrafts((s) => ({ ...s, [id]: end }));
+              }}
+              onClear={(taskId) => {
+                const id = Number(taskId);
+                setManualEdits((s) => {
+                  const next = new Set(s);
+                  next.add(id);
+                  return next;
+                });
+                setDrafts((s) => ({ ...s, [id]: '' }));
+              }}
             />
           )}
         </div>
@@ -5017,7 +5108,7 @@ function TasksEditorTable({
           <th className="px-3 py-2">Task</th>
           <th className="px-3 py-2 w-[110px]">{mode === 'review' ? 'Reason' : 'Status'}</th>
           <th className="px-3 py-2 w-[110px]">Start</th>
-          <th className="px-3 py-2 w-[200px]">{mode === 'review' ? 'תאריך יעד (Due)' : 'Due'}</th>
+          <th className={cn('px-3 py-2', mode === 'review' ? 'w-[170px]' : 'w-[200px]')}>{mode === 'review' ? 'תאריך יעד (Due)' : 'Due'}</th>
           <th className="px-3 py-2 w-[180px]">Action</th>
         </tr>
       </thead>
@@ -5065,7 +5156,13 @@ function TasksEditorTable({
               </td>
               <td className="px-3 py-2">
                 {mode === 'review' ? (
-                  <div className="flex items-center gap-2">
+                  /* §8c (2026-11-12) · BUG 3 — stacked vertically so
+                     the strikethrough current date + the input fit
+                     inside the 170px DUE column. Previously the
+                     side-by-side `flex items-center` pushed the cell
+                     past 200px, which combined with the ACTION
+                     column's 180px overflowed the 760px modal. */
+                  <div className="flex flex-col gap-1">
                     <span className="font-mono text-xs text-slate-400 line-through tabular-nums">
                       {t.currentEnd ? String(t.currentEnd).slice(0, 10) : '—'}
                     </span>
@@ -5074,33 +5171,29 @@ function TasksEditorTable({
                       value={choice.end}
                       disabled={!choice.apply || disabled}
                       onChange={(e) => onEdit?.(t.taskId, e.target.value)}
-                      className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-blue-500 focus:outline-none text-[13px] font-mono disabled:opacity-50"
+                      className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:border-blue-500 focus:outline-none text-[13px] font-mono w-full disabled:opacity-50"
                     />
                   </div>
                 ) : (
-                  <>
-                    <input
-                      type="date"
-                      value={draftEnd}
-                      disabled={disabled}
-                      onChange={(e) => onEdit?.(t.taskId, e.target.value)}
-                      className={cn(
-                        'rounded-lg border px-2 py-1 text-[13px] font-mono tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50',
-                        t.pendingShift
-                          ? 'border-amber-300 dark:border-amber-700'
-                          : 'border-slate-200 dark:border-slate-700',
-                      )}
-                    />
-                    {/* §8b.2 (2026-11-11) · When the deliverable's
-                        preview target has shifted, show the shifted
-                        proposed-end beside the input so the PM sees
-                        where the chain would land once committed. */}
-                    {t.pendingShift && t.proposedEnd ? (
-                      <div className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-                        pending {String(t.proposedEnd).slice(0, 10)} — Save &amp; update to commit
-                      </div>
-                    ) : null}
-                  </>
+                  /* §8c (2026-11-12) · The date input now auto-seeds
+                     from the server dry-run (see
+                     DeliverableTasksModal's preview effect) so the
+                     user sees the preview value directly. The amber
+                     border remains as the visual cue "this was
+                     auto-filled by preview" — the ghost caption
+                     below the input has been removed. */
+                  <input
+                    type="date"
+                    value={draftEnd}
+                    disabled={disabled}
+                    onChange={(e) => onEdit?.(t.taskId, e.target.value)}
+                    className={cn(
+                      'rounded-lg border px-2 py-1 text-[13px] font-mono tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50',
+                      t.pendingShift
+                        ? 'border-amber-300 dark:border-amber-700'
+                        : 'border-slate-200 dark:border-slate-700',
+                    )}
+                  />
                 )}
               </td>
               <td className="px-3 py-2">
