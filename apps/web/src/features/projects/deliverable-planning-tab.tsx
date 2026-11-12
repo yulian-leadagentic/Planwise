@@ -1783,15 +1783,23 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             Set a target date per (zone × deliverable) as "N months from the base date". Dates snap forward to the next Sunday.
           </p>
         </div>
-        <div className="flex items-end gap-2 flex-wrap">
+        {/* §8f (2026-11-12) · Compact filter row. Stacked uppercase
+            labels above each control were converted to tooltips so the
+            whole bar fits on one line down to ~1200px viewports and the
+            right-aligned action cluster (Reset / Save / Save & update)
+            stops wrapping at 1440px. `items-center` reads better now
+            that no child carries a vertical label stack; `flex-wrap`
+            stays as a safety net for narrow viewports. */}
+        <div className="flex items-center gap-2 flex-wrap">
           {/* UI-14 · Group + sub-group — same control the Planning tab
               uses. Default primary=Deliverable, sub=Zone preserves the
               DP-DISP-1 ordering (Gantt label column reads "Deliverable
               · Zone"); flipping either dim regroups the Table rows
               AND relabels the Gantt row-label header. State is per-
-              project in localStorage (see `groupingKey`). */}
-          <div className="pb-1">
-            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Grouping</label>
+              project in localStorage (see `groupingKey`). §8f: external
+              "Grouping" label dropped — GroupControl ships its own
+              inline "Group" prefix; wrapper carries the tooltip. */}
+          <div className="shrink-0" title="Grouping">
             <GroupControl
               primary={grouping.primary}
               secondary={grouping.secondary}
@@ -1808,36 +1816,35 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               service names appearing on the current rows so options
               never surface something with zero matches. Composes with
               the Due-date select on the right and the per-column text
-              filters inside the table. */}
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Service</label>
+              filters inside the table. §8f: trigger narrowed w-52 → w-40. */}
+          <div className="shrink-0">
             <MultiSelectFilter
               options={availableServices}
               selected={serviceFilter}
               onChange={setServiceFilter}
               placeholder="Services"
-              title="Filter by service"
-              triggerClassName="w-52"
+              title="Service — filter by service"
+              triggerClassName="w-40"
             />
           </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Due date</label>
+          <div className="shrink-0">
             <select
               value={filterHasDue}
               onChange={(e) => setFilterHasDue(e.target.value as any)}
-              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+              title="Due date"
+              className="w-24 px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             >
               <option value="">All</option>
               <option value="yes">With target</option>
               <option value="no">Missing target</option>
             </select>
           </div>
-          <div>
-            <label className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Base date</label>
+          <div className="shrink-0">
             <input
               type="date"
               value={baseDate}
               onChange={(e) => setBaseDate(e.target.value)}
+              title="Base date"
               className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
             />
           </div>
@@ -1861,23 +1868,27 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           </div>
           {/* DP-6 · Collapse / Expand all deliverable groups. Shared
               across the Table + Gantt views because the underlying set
-              is lifted to this parent (and persisted per project). */}
-          <div className="flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
+              is lifted to this parent (and persisted per project).
+              §8f: icon-only buttons — labels moved into `title` for
+              a11y. Saves ~100px so the action cluster stays inline. */}
+          <div className="shrink-0 flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
             <button
               type="button"
               onClick={collapseAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
-              title="Collapse every deliverable group"
+              aria-label="Collapse all"
+              className="w-8 h-8 flex items-center justify-center rounded-md text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
+              title="Collapse all — collapse every deliverable group"
             >
-              <ChevronRight className="h-3.5 w-3.5" /> Collapse all
+              <ChevronRight className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               onClick={expandAll}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
-              title="Expand every deliverable group"
+              aria-label="Expand all"
+              className="w-8 h-8 flex items-center justify-center rounded-md text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
+              title="Expand all — expand every deliverable group"
             >
-              <ChevronDown className="h-3.5 w-3.5" /> Expand all
+              <ChevronDown className="h-3.5 w-3.5" />
             </button>
           </div>
           {/* §8d (2026-11-12) · Action cluster stays glued together on
