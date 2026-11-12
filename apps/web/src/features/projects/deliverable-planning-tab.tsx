@@ -145,15 +145,14 @@ function useModalTransition(isOpen: boolean, exitMs = 150) {
 }
 
 /**
- * §8b.1 (2026-11-11) · Shared Dialog shell — renders the overlay +
- * card scaffold, drives both via `useModalTransition`, and stops
- * propagation on the card so a backdrop click only fires for clicks
- * that actually land on the backdrop.
+ * §9 (2026-11-12) · Open/close animation tuned to feel "springy but
+ * not playful" — expo-out entry, decisive ease-in exit, slight lift.
  *
- * Open  — 150ms ease-out: overlay fades in; card fades in + scales
- *          from 0.98 → 1.0.
- * Close — 100ms ease-in:  overlay fades out; card fades out + scales
- *          down to 0.98. After the transition the shell unmounts.
+ * Open  — 220ms expo-out cubic-bezier(0.16, 1, 0.3, 1): overlay fades in;
+ *          card fades in + scales 0.96 → 1.0 + lifts 8px → 0 (translate-y).
+ * Close — 140ms ease-in cubic-bezier(0.4, 0, 1, 1): overlay fades out;
+ *          card fades out + scales to 0.96 + drops 8px. After the
+ *          transition the shell unmounts.
  * Reduced-motion — both layers carry `motion-reduce:transition-none`
  *          (and the card also drops its transform), so the modal
  *          snaps open/closed for users with the OS flag.
@@ -171,16 +170,16 @@ function AnimatedModalShell({
   cardClassName?: string;
   children: React.ReactNode;
 }) {
-  const { shouldRender, dataState } = useModalTransition(open, 150);
+  const { shouldRender, dataState } = useModalTransition(open, 140);
   if (!shouldRender) return null;
   return (
     <div
       data-state={dataState}
       className={cn(
         'fixed inset-0 z-50 flex items-center justify-center',
-        'transition-opacity ease-out duration-150 motion-reduce:transition-none',
+        'transition-opacity duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         'data-[state=open]:opacity-100',
-        'data-[state=closed]:opacity-0 data-[state=closed]:duration-100 data-[state=closed]:ease-in',
+        'data-[state=closed]:opacity-0 data-[state=closed]:duration-[140ms] data-[state=closed]:ease-[cubic-bezier(0.4,0,1,1)]',
         overlayClassName ?? 'bg-slate-900/35 backdrop-blur-sm',
       )}
       onClick={onBackdropClick}
@@ -189,9 +188,9 @@ function AnimatedModalShell({
         data-state={dataState}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          'transition-all ease-out duration-150 motion-reduce:transition-none motion-reduce:transform-none',
-          'data-[state=open]:opacity-100 data-[state=open]:scale-100',
-          'data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.98] data-[state=closed]:duration-100 data-[state=closed]:ease-in',
+          'transition-all duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:transform-none',
+          'data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=open]:translate-y-0',
+          'data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.96] data-[state=closed]:translate-y-2 data-[state=closed]:duration-[140ms] data-[state=closed]:ease-[cubic-bezier(0.4,0,1,1)]',
           cardClassName,
         )}
       >
@@ -4189,12 +4188,14 @@ function GanttRow({
         // AND target grow together), so the bar's left edge stays
         // anchored and the right edge follows the cursor. This
         // matches the user's model "both edges resize; middle moves"
-        // and symmetrises with left-edge drag. Previously right-edge
-        // was aliased to middle-move, which made the bar slide
-        // sideways instead of stretching.
-        const dxWeeks = dxMs / (7 * 86_400_000);
-        const newDur = Math.max(0, Math.round(initDurationWeeks + dxWeeks));
-        finalTargetMs = Math.max(0, initTargetMs + dxMs);
+        // and symmetrises with left-edge drag.
+        // §8g (2026-11-12) · snap dxMs to whole weeks BEFORE computing
+        // target, so duration (rounded to weeks) and target (shifted
+        // in days) stay in lock-step and the left edge doesn't drift.
+        const dxWeeks = Math.round(dxMs / (7 * 86_400_000));
+        const snappedDxMs = dxWeeks * 7 * 86_400_000;
+        const newDur = Math.max(0, initDurationWeeks + dxWeeks);
+        finalTargetMs = Math.max(0, initTargetMs + snappedDxMs);
         lastTargetIso = isoDayOf(finalTargetMs);
         lastDurWeeks = String(newDur);
         setTargetDateDrafts((s) => ({ ...s, [r.key]: lastTargetIso }));
