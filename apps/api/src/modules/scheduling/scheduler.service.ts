@@ -11,6 +11,8 @@ import { ExecutionPlanningService } from '../execution-planning/execution-planni
  *
  * Public API:
  *   - scheduleDeliverableDryRun(inputs)         — compute, no writes
+ *   - scheduleProjectDeliverableDryRun(args)    — same, keyed by
+ *                                                 (ProjectDeliverable × Zone) (§10)
  *   - scheduleDeliverableAndCommit(inputs, uid) — compute + persist
  *
  * Algorithm overview:
@@ -265,6 +267,59 @@ export class SchedulerService {
 
   async scheduleDeliverableDryRun(inputs: ScheduleInputs): Promise<ScheduleResult> {
     return this.scheduleDeliverable(inputs, { writeBack: false });
+  }
+
+  /**
+   * §10 (2026-11-13) · Dry-run keyed by (ProjectDeliverable × Zone) — the
+   * identifiers the Deliverable Planning UI actually holds. Resolves the
+   * ZoneDeliverableTarget via its composite unique key and delegates to
+   * `scheduleDeliverableDryRun`. Read-only.
+   *
+   * Two "nothing to schedule" outcomes come back as an empty result
+   * (never a 404) so the preview picker can render a hint instead of
+   * an error:
+   *   - 'no-zone'       : deliverable-level targets are not ZDT-backed;
+   *                       the engine cannot schedule them.
+   *   - 'no-target-row' : the (zone × deliverable) pair has never had a
+   *                       target saved — nothing to anchor a schedule to.
+   */
+  async scheduleProjectDeliverableDryRun(args: {
+    projectDeliverableId: number;
+    zoneId: number | null | undefined;
+    anchorDate?: Date;
+  }): Promise<ScheduleResult> {
+    if (args.zoneId == null) {
+      return this.emptyResult('no-zone');
+    }
+    const zdt = await this.prisma.zoneDeliverableTarget.findUnique({
+      where: {
+        zoneId_projectDeliverableId: {
+          zoneId: args.zoneId,
+          projectDeliverableId: args.projectDeliverableId,
+        },
+      },
+      select: { id: true },
+    });
+    if (!zdt) {
+      return this.emptyResult('no-target-row');
+    }
+    return this.scheduleDeliverableDryRun({ deliverableId: zdt.id, anchorDate: args.anchorDate });
+  }
+
+  /**
+   * §10 (2026-11-13) · Resolve a ProjectDeliverable → its projectId so
+   * the controller can run the project-access check before the dry-run.
+   * Same contract as `ProjectDeliverablesService.getProjectId` (soft-
+   * deleted rows read as missing); duplicated here as a two-line lookup
+   * rather than importing that module into the scheduling module.
+   */
+  async getProjectIdForProjectDeliverable(projectDeliverableId: number): Promise<number> {
+    const row = await this.prisma.projectDeliverable.findFirst({
+      where: { id: projectDeliverableId, deletedAt: null },
+      select: { projectId: true },
+    });
+    if (!row) throw new NotFoundException('Deliverable not found');
+    return row.projectId;
   }
 
   async scheduleDeliverableAndCommit(

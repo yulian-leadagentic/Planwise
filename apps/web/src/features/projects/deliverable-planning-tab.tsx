@@ -16,6 +16,15 @@ import {
   hasPredecessorConflict,
   getPredecessorConflictMessage,
 } from '@/features/projects/predecessor-conflict';
+import {
+  resolveTargetIso,
+  rowDirtyFlags,
+  buildTargetItems,
+  mergeDraftsOnRefresh,
+  seedFromRows,
+  sameDraftMap,
+  type DraftSeedMap,
+} from './deliverable-planning.util';
 
 /**
  * DP-4 parity (2026-10-21) · Zone-type → badge-style map, mirroring the
@@ -156,6 +165,16 @@ function useModalTransition(isOpen: boolean, exitMs = 150) {
  * Reduced-motion — both layers carry `motion-reduce:transition-none`
  *          (and the card also drops its transform), so the modal
  *          snaps open/closed for users with the OS flag.
+ *
+ * §10 (2026-11-13) · The timings are written as arbitrary PROPERTIES
+ * (transition-duration / transition-timing-function in square brackets),
+ * not as arbitrary VALUES of the duration / ease utilities. The
+ * `tailwindcss-animate` plugin registers utilities under those same two
+ * prefixes, so Tailwind reported the arbitrary-value forms as "ambiguous
+ * and matches multiple utilities" and emitted NO CSS for them — the
+ * shell silently animated on the 150ms default. (Deliberately not
+ * quoting the old class names here: Tailwind scans comments too, and
+ * the literal strings would bring the warning straight back.)
  */
 function AnimatedModalShell({
   open,
@@ -177,9 +196,9 @@ function AnimatedModalShell({
       data-state={dataState}
       className={cn(
         'fixed inset-0 z-50 flex items-center justify-center',
-        'transition-opacity duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
+        'transition-opacity [transition-duration:220ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none',
         'data-[state=open]:opacity-100',
-        'data-[state=closed]:opacity-0 data-[state=closed]:duration-[140ms] data-[state=closed]:ease-[cubic-bezier(0.4,0,1,1)]',
+        'data-[state=closed]:opacity-0 data-[state=closed]:[transition-duration:140ms] data-[state=closed]:[transition-timing-function:cubic-bezier(0.4,0,1,1)]',
         overlayClassName ?? 'bg-slate-900/35 backdrop-blur-sm',
       )}
       onClick={onBackdropClick}
@@ -188,9 +207,9 @@ function AnimatedModalShell({
         data-state={dataState}
         onClick={(e) => e.stopPropagation()}
         className={cn(
-          'transition-all duration-[220ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:transform-none',
+          'transition-all [transition-duration:220ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:transform-none',
           'data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=open]:translate-y-0',
-          'data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.96] data-[state=closed]:translate-y-2 data-[state=closed]:duration-[140ms] data-[state=closed]:ease-[cubic-bezier(0.4,0,1,1)]',
+          'data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.96] data-[state=closed]:translate-y-2 data-[state=closed]:[transition-duration:140ms] data-[state=closed]:[transition-timing-function:cubic-bezier(0.4,0,1,1)]',
           cardClassName,
         )}
       >
@@ -1003,19 +1022,46 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     // frame the planning payload lands.
   }, [tasks, zonesFlat, deliverables, topLevelZoneInfo, planningIsLoading]);
 
-  // Seed drafts from server values whenever rows change.
-  useEffect(() => {
-    const initial: Record<string, string> = {};
-    const initialDur: Record<string, string> = {};
-    for (const r of rows) {
-      if (r.savedMonths != null) initial[r.key] = String(r.savedMonths);
-      if (r.savedDurationWeeks != null) initialDur[r.key] = String(r.savedDurationWeeks);
-    }
-    setDrafts(initial);
-    setDurationDrafts(initialDur);
-    // Reset explicit-date drafts on row refresh — server just told us
-    // the authoritative targetDate, so any stale drag draft is void.
-    setTargetDateDrafts({});
+  // §10 (2026-11-13) · Reconcile drafts with the server whenever rows
+  // change — MERGE, not reset. The previous effect re-seeded all three
+  // maps on every `rows` change, so any refetch (e.g. saving task due
+  // dates in the modal of ANOTHER row) threw away every pending edit,
+  // including a Gantt drag that was about to be saved.
+  //
+  // `seededRef` remembers the server values the drafts were last
+  // reconciled against; `mergeDraftsOnRefresh` uses it to tell a pending
+  // user edit (draft ≠ last seed, server unchanged → keep) from a clean
+  // or superseded draft (→ reseed from the new server value).
+  //
+  // Two deliberate choices:
+  //   • Functional updaters — each one merges against the LATEST queued
+  //     state of its own map (never a stale render closure). The three
+  //     dimensions merge independently, so the other two maps are passed
+  //     as `{}`; `sameDraftMap` returns the previous object when nothing
+  //     changed so an identity-only `rows` change does not re-render
+  //     (and cannot loop while `rows` is rebuilt on every render during
+  //     the initial planning load).
+  //   • `useLayoutEffect` — the merge lands before the browser paints,
+  //     so no frame ever shows fresh rows against stale drafts (e.g. the
+  //     months draft "6" against a server that just nulled months would
+  //     flash the months-derived date for one frame after a drag-save).
+  const seededRef = useRef<DraftSeedMap>({});
+  useLayoutEffect(() => {
+    const prevSeed = seededRef.current;
+    const nextSeed = seedFromRows(rows);
+    seededRef.current = nextSeed;
+    setDrafts((cur) => {
+      const next = mergeDraftsOnRefresh(prevSeed, nextSeed, cur, {}, {}).drafts;
+      return sameDraftMap(cur, next) ? cur : next;
+    });
+    setDurationDrafts((cur) => {
+      const next = mergeDraftsOnRefresh(prevSeed, nextSeed, {}, cur, {}).durationDrafts;
+      return sameDraftMap(cur, next) ? cur : next;
+    });
+    setTargetDateDrafts((cur) => {
+      const next = mergeDraftsOnRefresh(prevSeed, nextSeed, {}, {}, cur).targetDateDrafts;
+      return sameDraftMap(cur, next) ? cur : next;
+    });
   }, [rows]);
 
   // Auto-open in Gantt view once at least one row has a saved target
@@ -1067,36 +1113,49 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // runs. Guards the confirm button and disables per-row toggling.
   const [exceedApplying, setExceedApplying] = useState(false);
 
+  // §10 (2026-11-13) · The ONE write path for deliverable targets —
+  // shared by plain Save, "Save & update due dates" and the conflict
+  // prompt. The payload is SPARSE (`buildTargetItems`): only rows the
+  // user actually changed are sent. The pre-§10 payload posted every
+  // row with its months draft + the current `baseDate`, so the server
+  // re-derived `targetDate = months + baseDate` for rows nobody touched
+  // (and overwrote an earlier drag-saved date with its stale months).
+  const persistTargets = async (): Promise<{ updated: number; overriddenTasks: unknown[] }> => {
+    // DP-EMPTY-3 — synthetic (read-only) rows have negative,
+    // non-existent deliverableIds; `buildTargetItems` never emits them,
+    // which keeps the batch endpoint from 404-ing on their targets. The
+    // PM must run the DP-EMPTY-1 backfill to materialize real rows
+    // before they become editable.
+    const items = buildTargetItems(rows, drafts, durationDrafts, targetDateDrafts);
+    if (items.length === 0) return { updated: 0, overriddenTasks: [] };
+    const r = await client.post('/project-deliverables/targets/batch', {
+      baseDate,
+      // Client 2026-08-03: never auto-propagate to task endDates.
+      // Task due dates are AUTHORITATIVE at the task level once
+      // set; the PM manages any downstream adjustments manually.
+      applyToTasks: false,
+      items,
+    });
+    return r.data?.data ?? r.data;
+  };
+
   const save = useMutation({
-    mutationFn: () =>
-      client
-        .post('/project-deliverables/targets/batch', {
-          baseDate,
-          // Client 2026-08-03: never auto-propagate to task endDates.
-          // Task due dates are AUTHORITATIVE at the task level once
-          // set; the PM manages any downstream adjustments manually.
-          applyToTasks: false,
-          // DP-EMPTY-3 — synthetic (read-only) rows have negative,
-          // non-existent deliverableIds; excluding them from the
-          // payload keeps the batch endpoint from 404-ing on their
-          // targets. The PM must run the DP-EMPTY-1 backfill to
-          // materialize real rows before they become editable.
-          items: rows
-            .filter((r) => !r.readOnly)
-            .map((r) => ({
-              id: r.deliverableId,
-              zoneId: r.zoneId,
-              months: drafts[r.key] === '' || drafts[r.key] == null ? null : Number(drafts[r.key]),
-              durationWeeks: durationDrafts[r.key] === '' || durationDrafts[r.key] == null ? null : Number(durationDrafts[r.key]),
-              targetDate: targetDateDrafts[r.key] || undefined,
-            })),
-        })
-        .then((r) => r.data),
-    onSuccess: (data: any) => {
-      queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
-      queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
-      const payload = data?.data ?? data;
-      notify.success(`Saved ${payload?.updated ?? rows.length} deliverable targets`);
+    mutationFn: persistTargets,
+    onSuccess: async (payload) => {
+      // §10 · Wait for BOTH refetches before dropping the explicit-date
+      // drafts. Clearing them first would redraw the bar from the old
+      // saved date until the refetch lands (a visible jump back). The
+      // explicit clear is still needed for the edge where the server
+      // snapped the drag onto the Sunday that was already saved — the
+      // rows then come back unchanged and the reconcile effect has no
+      // "server date changed" signal to drop the draft on.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] }),
+        queryClient.invalidateQueries({ queryKey: ['planning', projectId] }),
+      ]);
+      setTargetDateDrafts({});
+      const updated = payload?.updated ?? 0;
+      notify.success(`Saved ${updated} deliverable target${updated === 1 ? '' : 's'}`);
       // Task due-date conflicts are handled up-front by the per-task
       // Update/Keep dialog in attemptSave; a silent success here is
       // the correct outcome when there are no conflicts.
@@ -1117,7 +1176,9 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       // DP-EMPTY-3 — synthetic read-only rows never enter the save
       // payload, so their tasks can't conflict with a saved target.
       if (r.readOnly) continue;
-      const newTargetIso = targetDateDrafts[r.key] || computePreview(drafts[r.key] ?? '') || r.savedDate;
+      // §10 — same resolution the bar uses: an untouched row is checked
+      // against its SAVED date, not against months + today's base date.
+      const newTargetIso = resolveTargetIso(r, drafts, targetDateDrafts, computePreview);
       if (!newTargetIso) continue;
       const targetMs = new Date(newTargetIso).getTime();
       for (const t of r.taskList ?? []) {
@@ -1155,17 +1216,35 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   };
 
   /**
-   * Confirm handler for the conflict prompt. Sequenced so the new
-   * deliverable target is persisted FIRST (batch save), then any tasks
-   * the PM chose to update get their endDate force-applied to that
-   * target. Force-apply reads the just-saved target on the server, so
-   * the ordering is load-bearing.
+   * Confirm handler for the conflict prompt. Real order, BOTH paths:
    *
-   * §8a · When the originating button was "Save & update due dates",
-   * we SKIP the plain save here (`previewMutation`'s own mutation runs
-   * the batch save as step 1) and chain straight into the preview
-   * flow after the force-apply pass clears any PM-requested per-task
-   * overwrites.
+   *   1. persist the deliverable targets (batch save),
+   *   2. force-apply the target onto every task the PM chose to update,
+   *   3. (Save & update only) chain into the reschedule preview.
+   *
+   * Step 1 before step 2 is load-bearing: `force-apply-target` takes no
+   * date in its body — it reads the deliverable target that is saved on
+   * the server at that moment, so the new target has to be there first.
+   *
+   * §10 (2026-11-13) · The "Save & update due dates" path used to SKIP
+   * step 1 here (it relied on `previewMutation`'s own batch save, which
+   * runs AFTER the force-apply pass), so force-apply copied the OLD
+   * target onto the tasks. On top of that, `forceApply.onSuccess`
+   * invalidates the planning query, and the old reseed effect then
+   * wiped the pending drag before `previewMutation` could post it. That
+   * path now persists up front too:
+   *   • plain Save        → `save.mutateAsync()` (owns the toast and
+   *                         awaits its own refetch),
+   *   • Save & update     → `persistTargets()` directly (no extra toast
+   *                         — the scheduler's summary speaks for the
+   *                         whole run) + an awaited deliverables refetch
+   *                         so the rows, and with them the payload
+   *                         `previewMutation` builds next, are current.
+   * `previewMutation` still calls `persistTargets()` as its step 1. Once
+   * the refetched rows have rendered nothing is dirty and it posts
+   * nothing; if it fires before that render lands it re-posts the same
+   * sparse items, which is idempotent (same explicit dates / same
+   * months + base date / same pinned saved date).
    */
   const confirmExceed = async () => {
     if (!exceedPrompt) return;
@@ -1173,6 +1252,18 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     try {
       if (exceedNextAction === 'save') {
         await save.mutateAsync();
+      } else {
+        try {
+          await persistTargets();
+        } catch (err) {
+          // `save.onError` covers the plain-Save path; this direct call
+          // has no mutation wrapper, so surface the failure here and
+          // stop — force-applying against an unsaved target is exactly
+          // the bug this ordering exists to prevent.
+          notify.apiError(err, 'Failed to save target dates');
+          return;
+        }
+        await queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
       }
       const updateIds = exceedPrompt
         .filter((t) => exceedChoices[t.taskId] === 'update')
@@ -1180,8 +1271,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       // Fire per-task force-apply in parallel — the endpoint is
       // idempotent and each hits a different task row so there's no
       // ordering constraint between them. For the Save & update path
-      // we still run this BEFORE the scheduler so the targets the
-      // scheduler reads already reflect the PM's per-task overwrites.
+      // this also runs BEFORE the scheduler preview, so the task dates
+      // the scheduler reads already reflect the PM's per-task overwrites.
       const results = await Promise.allSettled(
         updateIds.map((id) => forceApply.mutateAsync(id)),
       );
@@ -1273,26 +1364,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   const previewMutation = useMutation({
     mutationFn: async (): Promise<PreviewResult> => {
       // Step 1: persist deliverable target changes via the existing
-      // batch endpoint — same payload shape as the plain Save button.
-      await client.post('/project-deliverables/targets/batch', {
-        baseDate,
-        applyToTasks: false,
-        items: rows
-          .filter((r) => !r.readOnly)
-          .map((r) => ({
-            id: r.deliverableId,
-            zoneId: r.zoneId,
-            months: drafts[r.key] === '' || drafts[r.key] == null ? null : Number(drafts[r.key]),
-            durationWeeks: durationDrafts[r.key] === '' || durationDrafts[r.key] == null ? null : Number(durationDrafts[r.key]),
-            targetDate: targetDateDrafts[r.key] || undefined,
-          })),
-      });
+      // batch endpoint — same sparse payload as the plain Save button
+      // (§10: `persistTargets`, a no-op when nothing is dirty).
+      await persistTargets();
       // Step 2 (§8a): dry-run the project reschedule WITHOUT writing.
       const resp = await client.post(`/scheduling/projects/${projectId}/preview-reschedule`);
       return (resp.data?.data ?? resp.data) as PreviewResult;
     },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] });
+    onSuccess: async (data) => {
       // Seed per-row choices: default apply=true for rows that WILL
       // move; non-moving rows start unselected so the "Apply approved
       // (N)" count is accurate from the first render.
@@ -1305,6 +1384,16 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       }
       setReviewChoices(seed);
       setPreview(data.preview);
+      // §10 (2026-11-13) · Step 1 wrote the targets, so refresh both
+      // queries (the planning payload carries the per-task deliverable
+      // target too) and only THEN drop the explicit-date drafts — same
+      // reasoning as `save.onSuccess`: clearing before the refetch lands
+      // would redraw the bars from the old saved dates.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] }),
+        queryClient.invalidateQueries({ queryKey: ['planning', projectId] }),
+      ]);
+      setTargetDateDrafts({});
     },
     onError: (err: any) => notify.apiError(err, 'Failed to preview reschedule'),
     onSettled: () => setPreviewing(false),
@@ -1372,42 +1461,37 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // modals.
   const [exceedNextAction, setExceedNextAction] = useState<'save' | 'saveAndUpdate'>('save');
 
-  const hasUnsavedChanges = useMemo(() => {
-    for (const r of rows) {
-      // DP-EMPTY-3 — read-only (synthetic) rows never contribute to
-      // dirty state; the inputs are disabled and their draft entries
-      // stay at server-null.
-      if (r.readOnly) continue;
-      const draft = drafts[r.key] ?? '';
-      const server = r.savedMonths == null ? '' : String(r.savedMonths);
-      if (draft !== server) return true;
-      const durDraft = durationDrafts[r.key] ?? '';
-      const durServer = r.savedDurationWeeks == null ? '' : String(r.savedDurationWeeks);
-      if (durDraft !== durServer) return true;
-      // A Gantt target-date drag writes ONLY targetDateDrafts. This dimension
-      // was missing from the dirty check, so such a drag left "Save all"
-      // disabled and no unsaved banner — the drag was silently lost on refresh.
-      // Only a row that was actually dragged has an entry here, so unchanged
-      // rows never register as dirty.
-      const tgtDraft = targetDateDrafts[r.key];
-      if (tgtDraft != null && tgtDraft !== '' && tgtDraft !== (r.savedDate ?? '')) return true;
-    }
-    return false;
-  }, [rows, drafts, durationDrafts, targetDateDrafts]);
+  // §10 (2026-11-13) · Same three checks as before, now expressed through
+  // `rowDirtyFlags` so "is anything unsaved?" and "what does Save send?"
+  // (`buildTargetItems`) can never disagree:
+  //   • months draft ≠ server months,
+  //   • duration draft ≠ server duration,
+  //   • a Gantt target-date drag — it writes ONLY targetDateDrafts, and
+  //     only a row that was actually dragged has an entry there, so
+  //     unchanged rows never register as dirty.
+  // DP-EMPTY-3 — read-only (synthetic) rows never contribute to dirty
+  // state; the inputs are disabled and their draft entries stay at
+  // server-null.
+  const hasUnsavedChanges = useMemo(
+    () => rows.some((r) => rowDirtyFlags(r, drafts, durationDrafts, targetDateDrafts).any),
+    [rows, drafts, durationDrafts, targetDateDrafts],
+  );
 
   const resetDrafts = () => {
-    const initial: Record<string, string> = {};
-    const initialDur: Record<string, string> = {};
-    for (const r of rows) {
-      if (r.savedMonths != null) initial[r.key] = String(r.savedMonths);
-      if (r.savedDurationWeeks != null) initialDur[r.key] = String(r.savedDurationWeeks);
-    }
-    setDrafts(initial);
-    setDurationDrafts(initialDur);
+    // §10 (2026-11-13) · Full reset from the server values — a merge
+    // against an EMPTY previous seed is exactly the first-seed path
+    // (plain seed, no pending edit survives). `seededRef` is re-pointed
+    // at the same snapshot so the next `rows` refresh reconciles against
+    // what the drafts now hold.
+    const seed = seedFromRows(rows);
+    const pristine = mergeDraftsOnRefresh({}, seed, {}, {}, {});
+    seededRef.current = seed;
+    setDrafts(pristine.drafts);
+    setDurationDrafts(pristine.durationDrafts);
     // Discard pending Gantt target-date drags too (pristine state is empty).
     // Previously Reset skipped this, so a dragged-but-reset row still had a
     // stale target-date draft that got persisted on the next save.
-    setTargetDateDrafts({});
+    setTargetDateDrafts(pristine.targetDateDrafts);
   };
 
   // Available service options for the PR-012 multi-select. Unique
@@ -1427,23 +1511,30 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   }, [rows]);
 
   // Filtered rows for display (only affects the visible view; save
-  // still writes all rows).
+  // still considers ALL rows — hidden rows with pending edits are saved
+  // too).
   //
   // Filter chain (all AND-composed): due-date select → PR-012 service
   // multi-select (OR-within). PR-012 never touches the save payload —
   // TableView/GanttView receive the filtered list only.
+  //
+  // §10 (2026-11-13) · "With target / Missing target" is decided by the
+  // row's RESOLVED target (`resolveTargetIso`), not by its months. A
+  // drag-saved row has a date but no months, so the months-based check
+  // filed it under "Missing target". `computePreview` reads `baseDate`,
+  // hence the extra dep.
   const visibleRows = useMemo(() => {
     let out = rows;
     if (filterHasDue === 'yes') {
-      out = out.filter((r) => (drafts[r.key] ?? r.savedMonths ?? '') !== '' && (drafts[r.key] ?? r.savedMonths ?? '') !== null);
+      out = out.filter((r) => resolveTargetIso(r, drafts, targetDateDrafts, computePreview) !== '');
     } else if (filterHasDue === 'no') {
-      out = out.filter((r) => (drafts[r.key] ?? r.savedMonths ?? '') === '' || (drafts[r.key] ?? r.savedMonths ?? '') == null);
+      out = out.filter((r) => resolveTargetIso(r, drafts, targetDateDrafts, computePreview) === '');
     }
     if (serviceFilter.size > 0) {
       out = out.filter((r) => serviceFilter.has(r.serviceName ?? NO_SERVICE_KEY));
     }
     return out;
-  }, [rows, drafts, filterHasDue, serviceFilter]);
+  }, [rows, drafts, targetDateDrafts, baseDate, filterHasDue, serviceFilter]);
 
   // DP-6 · Bulk-collapse toolbar handlers. `collapseAll` uses the
   // CURRENTLY VISIBLE rows so a filtered view collapses only what the
@@ -2030,7 +2121,8 @@ function TableView({
   setDurationDrafts: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
   // DP-2 · read-only view of the Gantt drag drafts, so the deliverable-
   // header rollup resolves the latest target date the same way GanttRow
-  // does (`targetDateDrafts[r.key] || computePreview(draft) || savedDate`).
+  // does (§10: `resolveTargetIso` — explicit-date draft → pending months
+  // edit → saved date).
   targetDateDrafts: Record<string, string>;
   computePreview: (m: string) => string;
   // DP-6 · Collapse state (shared with GanttView, persisted per-project
@@ -2095,9 +2187,9 @@ function TableView({
       // so the raw row value is the sort/filter key.
       return r.hours != null ? String(r.hours) : '';
     }
-    // target
-    const draft = drafts[r.key] ?? '';
-    return targetDateDrafts[r.key] || computePreview(draft) || r.savedDate || '';
+    // target — §10: the resolved target (saved date unless an edit is
+    // pending), so the column filter/sort agree with the cell and the bar.
+    return resolveTargetIso(r, drafts, targetDateDrafts, computePreview);
   };
 
   // Helper: does a row pass the currently selected filter for a given
@@ -2146,13 +2238,11 @@ function TableView({
     setColFilters((s) => ({ ...s, [col]: all }));
   };
 
-  // Effective date for sort/display. Uses the SAME resolution order the
-  // Gantt bar geometry uses (see line ~1647): explicit-date draft →
-  // months preview → saved server value.
-  const effectiveDate = (r: any) => {
-    const draft = drafts[r.key] ?? '';
-    return targetDateDrafts[r.key] || computePreview(draft) || r.savedDate || '';
-  };
+  // Effective date for sort/display. Uses the SAME resolution the Gantt
+  // bar geometry uses (§10 · `resolveTargetIso`): explicit-date draft →
+  // months preview ONLY while the months edit is pending → saved server
+  // date.
+  const effectiveDate = (r: any) => resolveTargetIso(r, drafts, targetDateDrafts, computePreview);
   const effectiveMonths = (r: any) => {
     const draft = drafts[r.key] ?? '';
     return draft || (r.savedMonths == null ? '' : String(r.savedMonths));
@@ -2497,7 +2587,16 @@ function TableView({
               {!isCollapsed && g.zones.map((r: any) => {
                 const draft = drafts[r.key] ?? '';
                 const durDraft = durationDrafts[r.key] ?? '';
-                const preview = computePreview(draft);
+                // §10 (2026-11-13) · The date cell shows the row's
+                // RESOLVED target. A months preview appears only while
+                // the months edit is pending; a clean row shows its
+                // saved date (legacy months-without-date rows still
+                // fall back to the preview inside `resolveTargetIso`).
+                // `targetPending` = the value is not what the server
+                // holds (explicit-date draft or pending months edit) →
+                // rendered in the stronger "pending" text style.
+                const targetIso = resolveTargetIso(r, drafts, targetDateDrafts, computePreview);
+                const targetPending = targetIso !== (r.savedDate ?? '');
                 const serverMonths = r.savedMonths == null ? '' : String(r.savedMonths);
                 const serverDur = r.savedDurationWeeks == null ? '' : String(r.savedDurationWeeks);
                 const isDirty = !r.readOnly && (draft !== serverMonths || durDraft !== serverDur);
@@ -2582,11 +2681,11 @@ function TableView({
                         >
                           run backfill to plan
                         </span>
-                      ) : preview
-                        ? preview
-                        : r.savedDate
-                          ? <span className="text-slate-500 dark:text-slate-400">{r.savedDate}</span>
-                          : <span className="text-slate-300 dark:text-slate-600">no target</span>}
+                      ) : targetIso === ''
+                        ? <span className="text-slate-300 dark:text-slate-600">no target</span>
+                        : targetPending
+                          ? targetIso
+                          : <span className="text-slate-500 dark:text-slate-400">{targetIso}</span>}
                     </td>
                   </tr>
                 );
@@ -3001,7 +3100,7 @@ function GanttView({
       const isCollapsed = collapsed.has(gKey);
       // Rollup: sum hours, find latest resolved target, find earliest
       // resolved start (target − durationWeeks × 7d). Uses the same
-      // resolution order as GanttRow (see comment at line ~1647).
+      // resolution as GanttRow (§10 · `resolveTargetIso`).
       let latestTgt = -Infinity;
       let earliestStart = Infinity;
       let hoursSum = 0;
@@ -3016,7 +3115,7 @@ function GanttView({
         taskTotal += Number(z.taskTotal || 0);
         taskStarted += Number(z.taskStarted || 0);
         taskDone += Number(z.taskDone || 0);
-        const tIso = targetDateDrafts[z.key] || computePreview(drafts[z.key] ?? '') || z.savedDate;
+        const tIso = resolveTargetIso(z, drafts, targetDateDrafts, computePreview);
         if (!tIso) continue;
         const tMs = new Date(tIso).getTime();
         if (!Number.isFinite(tMs)) continue;
@@ -3117,13 +3216,12 @@ function GanttView({
   // Compute the timeline span. Base is `baseDate`; end is 3 months
   // past the latest target (or 3 years from base, whichever is bigger)
   // so short-project scroll bars don't rattle around at the end.
-  // Prefer explicit-date draft (from Gantt drag) → months draft →
-  // saved server value. Same resolution order used inside GanttRow.
-  const targets = orderedRows.map((r) => {
-    if (targetDateDrafts[r.key]) return targetDateDrafts[r.key];
-    const draft = drafts[r.key] ?? '';
-    return computePreview(draft) || r.savedDate;
-  }).filter(Boolean) as string[];
+  // §10 · Same resolution used inside GanttRow (`resolveTargetIso`):
+  // explicit-date draft (from Gantt drag) → pending months edit → saved
+  // server date.
+  const targets = orderedRows
+    .map((r) => resolveTargetIso(r, drafts, targetDateDrafts, computePreview))
+    .filter(Boolean);
 
   // Pad the timeline with 1 year of past-buffer BEFORE baseDate so
   // the "today" marker always has room to sit in the first third of
@@ -3337,7 +3435,7 @@ function GanttView({
     // the delta to. Children with no target at all are tracked but
     // skipped on apply (there's nothing to shift).
     const snapshot = slot.zones.map((z: any) => {
-      const curTargetIso = targetDateDrafts[z.key] || computePreview(drafts[z.key] ?? '') || z.savedDate;
+      const curTargetIso = resolveTargetIso(z, drafts, targetDateDrafts, computePreview);
       const curTargetMs = curTargetIso ? new Date(curTargetIso).getTime() : null;
       const priorDraft = targetDateDrafts[z.key] ?? '';
       return { key: z.key, curTargetMs, priorDraft };
@@ -3456,12 +3554,31 @@ function GanttView({
           newDate={new Date(pastDateConfirm.newTargetMs).toISOString().slice(0, 10)}
         />
       )}
-      {taskModalRow && (
-        <DeliverableTasksModal
-          row={taskModalRow}
-          onClose={() => setTaskModalRow(null)}
-        />
-      )}
+      {taskModalRow && (() => {
+        // §10 (2026-11-13) · Hand the modal the row's PENDING target (a
+        // dragged-but-unsaved bar, or a pending months edit) so it opens
+        // on what the user sees on the Gantt instead of the old saved
+        // date. `undefined` when the row is clean.
+        const eff = resolveTargetIso(taskModalRow, drafts, targetDateDrafts, computePreview);
+        return (
+          <DeliverableTasksModal
+            row={taskModalRow}
+            pendingTarget={eff && eff !== (taskModalRow.savedDate ?? '') ? eff : undefined}
+            // The modal saved the target itself — the drag draft is no
+            // longer a pending edit, so drop it (the refreshed saved
+            // date takes over).
+            onTargetCommitted={(rowKey) =>
+              setTargetDateDrafts((prev) => {
+                if (!(rowKey in prev)) return prev;
+                const next = { ...prev };
+                delete next[rowKey];
+                return next;
+              })
+            }
+            onClose={() => setTaskModalRow(null)}
+          />
+        );
+      })()}
 
       {/* Toolbar — scroll navigation + Today jump. */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-800 bg-[#FAFBFC] text-[12px]">
@@ -4043,13 +4160,18 @@ function GanttRow({
 }) {
   const draft = drafts[r.key] ?? '';
   const durDraft = durationDrafts[r.key] ?? '';
-  // Resolution order for the bar's target date:
+  // Resolution order for the bar's target date (§10 (2026-11-13) ·
+  // `resolveTargetIso`):
   //   1. explicit date from a Gantt drag (targetDateDrafts)
-  //   2. months preview (drafts + baseDate)
-  //   3. server savedDate
+  //   2. months preview (drafts + baseDate) — ONLY while the months
+  //      draft differs from the server, i.e. a pending table edit
+  //   3. server savedDate (months preview only as a legacy fallback for
+  //      rows that have months but no date)
   // Item 1 gives the drag week-level precision (client feedback
-  // 2026-08-02 item 4); items 2+3 preserve the classic table edit.
-  const targetDate = targetDateDrafts[r.key] || computePreview(draft) || r.savedDate;
+  // 2026-08-02 item 4); item 2 preserves the classic table edit. Before
+  // §10 item 2 applied to CLEAN drafts too, so `months + today's base
+  // date` outranked the saved date and a drag-saved bar jumped back.
+  const targetDate = resolveTargetIso(r, drafts, targetDateDrafts, computePreview);
   const durationWeeks = Number(durDraft || r.savedDurationWeeks || 0);
 
   // §4 (2026-11-10) · Hoisted ABOVE the early-return below so hook count
@@ -4714,8 +4836,30 @@ function PastDateConfirmModal({
  * (editable). Save writes each changed row via PATCH /tasks/:id and
  * flips the task's `dueDateOverridden` flag on the server. Refetches
  * planning data on close so the Gantt reflects the change.
+ *
+ * §10 (2026-11-13) · The modal now REFLECTS and COMMITS a pending
+ * target. `pendingTarget` is the row's unsaved target on the Gantt (a
+ * dragged bar / pending months edit) — the picker opens on it, the
+ * dry-run fires immediately and the task Due inputs fill with the
+ * scheduler's dates for that target. Save persists the target FIRST
+ * (explicit date, months nulled) and then the task due dates, so what
+ * the PM reviewed here is exactly what lands; `onTargetCommitted` tells
+ * the Gantt to drop its now-saved drag draft. Before §10 the modal
+ * seeded from `row.savedDate` only: a dragged bar opened on the old
+ * target with unchanged task dates, and its "preview target" could not
+ * be saved from here at all.
  */
-function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void }) {
+function DeliverableTasksModal({
+  row,
+  pendingTarget,
+  onTargetCommitted,
+  onClose,
+}: {
+  row: any;
+  pendingTarget?: string;
+  onTargetCommitted?: (rowKey: string) => void;
+  onClose: () => void;
+}) {
   const queryClient = useQueryClient();
   const [drafts, setDrafts] = useState<Record<number, string>>(() => {
     const seed: Record<number, string> = {};
@@ -4759,27 +4903,55 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
   // NOT be duplicated in the FE. Previously this used a naive
   // calendar-day shift, which produced different dates than the
   // actual scheduler and ignored weekends / holidays / dependency
-  // lag. We now POST to `/deliverables/:id/schedule/dry-run` with
-  // `{ anchorDate }` (debounced), map results by taskId, and render
-  // those dates directly.
-  const [previewTarget, setPreviewTarget] = useState<string>(row.savedDate ?? '');
+  // lag. We now POST to the deliverable's schedule dry-run route with
+  // `{ zoneId, anchorDate }` (debounced), map results by taskId, and
+  // render those dates directly.
+  //
+  // §10 (2026-11-13) · Seeded from the row's PENDING target when there
+  // is one. The dry-run below is enabled whenever the (debounced) target
+  // differs from `row.savedDate`, so it fires on open and the auto-seed
+  // effect fills the task Due inputs with the scheduler's dates.
+  const [previewTarget, setPreviewTarget] = useState<string>(pendingTarget || row.savedDate || '');
+  // The picker is offered when the row has a saved target OR opened on a
+  // pending one. Captured once: the parent drops the pending draft the
+  // moment we commit it, and the picker must not vanish mid-close.
+  const [hasTargetPicker] = useState<boolean>(() => Boolean(row.savedDate || pendingTarget));
   const debouncedTarget = useDebounce(previewTarget, 300);
+  // §10 addendum (2026-11-13) · THE dry-run route — the one place to
+  // change if the backend path moves. Keyed by the PROJECT DELIVERABLE id
+  // with the row's zone in the body. The previous route
+  // (`/deliverables/:id/…`) takes a ZoneDeliverableTarget id, so posting
+  // `row.deliverableId` to it 404'd — or returned ANOTHER deliverable's
+  // schedule whenever the two id spaces happened to collide.
+  const dryRunPath = `/project-deliverables/${row.deliverableId}/schedule/dry-run`;
+  type DryRunPayload = {
+    scheduled: Array<{
+      taskId: number;
+      startDate: string;
+      endDate: string;
+      infeasible?: boolean;
+      infeasibleReason?: string;
+    }>;
+    // Empty results still come back 200 with `scheduled: []` and a
+    // reason: 'no-zone' | 'no-target-row' | 'no-anchor' | 'no-tasks'.
+    feasibility?: { status?: string; reason?: string };
+  };
   const previewQuery = useQuery({
-    queryKey: ['deliv-preview', row.deliverableId, debouncedTarget],
+    queryKey: ['deliv-preview', row.deliverableId, row.zoneId ?? null, debouncedTarget],
     enabled: Boolean(row.deliverableId) && Boolean(debouncedTarget) && debouncedTarget !== row.savedDate,
-    queryFn: async () => {
-      const r = await client.post(`/deliverables/${row.deliverableId}/schedule/dry-run`, {
+    // A preview must not hammer the server on errors — the failure is
+    // surfaced next to the picker instead (see `previewNote`).
+    retry: false,
+    queryFn: async (): Promise<DryRunPayload> => {
+      const r = await client.post(dryRunPath, {
+        zoneId: row.zoneId ?? null,
         anchorDate: debouncedTarget,
       });
-      return r.data as {
-        scheduled: Array<{
-          taskId: number;
-          startDate: string;
-          endDate: string;
-          infeasible?: boolean;
-          infeasibleReason?: string;
-        }>;
-      };
+      // Every API response is wrapped as `{ success, data }`. Reading
+      // `r.data.scheduled` directly (the pre-§10 code) was always
+      // undefined, so even a 200 previewed nothing.
+      const payload = r.data?.data ?? r.data;
+      return (payload ?? { scheduled: [] }) as DryRunPayload;
     },
   });
   const previewByTaskId = useMemo(() => {
@@ -4797,6 +4969,26 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
   }, [previewQuery.data]);
   const previewing = previewQuery.isFetching;
   const previewActive = previewTarget !== (row.savedDate ?? '') && Boolean(previewTarget);
+  // §10 addendum (2026-11-13) · Surface the dry-run outcome next to the
+  // picker instead of failing silently. `previewNote` covers the cases
+  // where NO dates were recalculated (request failed, or the server had
+  // nothing to schedule against); `infeasibleCount` flags rows the
+  // scheduler placed but could not fit before the picked target — their
+  // dates are still rendered. 'no-tasks' / 'no-anchor' need no note (the
+  // body already says "No tasks under this deliverable.").
+  const previewScheduled = previewQuery.data?.scheduled ?? [];
+  const previewEmptyReason = previewQuery.data && previewScheduled.length === 0
+    ? previewQuery.data.feasibility?.reason
+    : undefined;
+  const previewNote: { tone: 'error' | 'muted'; text: string } | null =
+    previewQuery.isError
+      ? { tone: 'error', text: 'preview failed — dates not recalculated' }
+      : previewEmptyReason === 'no-target-row'
+        ? { tone: 'muted', text: 'save the target once to enable the task preview' }
+        : previewEmptyReason === 'no-zone'
+          ? { tone: 'muted', text: 'task preview is not available for project-level targets' }
+          : null;
+  const infeasibleCount = previewScheduled.filter((s) => s.infeasible).length;
 
   // §8c (2026-11-12) · When the dry-run returns, auto-seed any drafts
   // the user hasn't typed into. The input then shows the preview
@@ -4897,10 +5089,15 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
 
     // Shift the deliverable's preview target by the same Δ so the
     // dry-run that follows anchors to the moved deliverable date, not
-    // the original one. Skip when there's no saved target to shift.
-    if (row.savedDate) {
+    // the original one. Skip when there's no target to shift.
+    // §10 (2026-11-13) · keyed on the picker (saved OR pending target)
+    // rather than `row.savedDate` alone — a row that opened on a pending
+    // target with nothing saved yet must follow the chain shift too, or
+    // Save would commit the un-shifted target under the shifted tasks.
+    // `addDaysIso` returns '' unchanged, so an emptied picker stays empty.
+    if (hasTargetPicker) {
       setPreviewTarget((prev) => {
-        const base = prev || String(row.savedDate);
+        const base = prev || String(row.savedDate ?? '');
         return addDaysIso(base, deltaDays);
       });
     }
@@ -4912,11 +5109,32 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
     setManualEdits(new Set(tasks.map((t) => Number(t.id))));
   };
 
-  const dirty = (row.taskList ?? []).some((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
+  const tasksDirty = (row.taskList ?? []).some((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
+  // §10 (2026-11-13) · The target itself is part of what this modal
+  // saves: dirty when the picker holds a date other than the saved one
+  // (opened on a pending drag, edited here, or shifted by §8e). Read-
+  // only (synthetic) rows have no real deliverable to write against.
+  const targetDirty = Boolean(previewTarget) && previewTarget !== (row.savedDate ?? '') && !row.readOnly;
+  const dirty = tasksDirty || targetDirty;
 
   const save = async () => {
     setSaving(true);
+    // Set once the target write has landed, so a later task-PATCH
+    // failure still refreshes the Gantt (see the catch below).
+    let targetSaved = false;
     try {
+      if (targetDirty) {
+        // §10 · Target FIRST, then the task due dates — the same order
+        // as the tab-level Save. Explicit date → `months: null` (months
+        // no longer describes this target). No `durationWeeks` key: the
+        // server leaves the duration untouched. `applyToTasks: false` —
+        // the per-task PATCH loop below owns the task dates.
+        await client.post('/project-deliverables/targets/batch', {
+          applyToTasks: false,
+          items: [{ id: row.deliverableId, zoneId: row.zoneId ?? null, months: null, targetDate: previewTarget }],
+        });
+        targetSaved = true;
+      }
       const changed = (row.taskList ?? []).filter((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
       await Promise.all(
         changed.map((t: any) => {
@@ -4941,12 +5159,40 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
           return client.patch(`/tasks/${t.id}`, payload);
         }),
       );
-      notify.success(`Updated ${changed.length} due date${changed.length === 1 ? '' : 's'}`);
-      // Refresh planning data — the row will pick up the new dates.
-      queryClient.invalidateQueries({ queryKey: ['planning'] });
+      const dueSummary = `updated ${changed.length} due date${changed.length === 1 ? '' : 's'}`;
+      notify.success(
+        targetSaved
+          ? changed.length > 0
+            ? `Target moved to ${previewTarget} · ${dueSummary}`
+            : `Target moved to ${previewTarget}`
+          : `Updated ${changed.length} due date${changed.length === 1 ? '' : 's'}`,
+      );
+      if (targetSaved) {
+        // §10 · The saved target lives on the deliverables query, the
+        // task dates on the planning query. WAIT for both before telling
+        // the Gantt to drop its drag draft — dropping it first would
+        // redraw the bar from the old saved date until the refetch lands.
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: ['project-deliverables'] }),
+          queryClient.invalidateQueries({ queryKey: ['planning'] }),
+        ]);
+        onTargetCommitted?.(row.key);
+      } else {
+        // Refresh planning data — the row will pick up the new dates.
+        queryClient.invalidateQueries({ queryKey: ['planning'] });
+      }
       requestClose();
     } catch (err: any) {
-      notify.error(err?.response?.data?.message ?? 'Failed to save due dates');
+      notify.error(
+        err?.response?.data?.message
+          ?? (targetDirty && !targetSaved ? 'Failed to save the target date' : 'Failed to save due dates'),
+      );
+      // §10 · The target may already be saved even though a task PATCH
+      // failed — refresh so the Gantt does not keep the stale saved date.
+      if (targetSaved) {
+        queryClient.invalidateQueries({ queryKey: ['project-deliverables'] });
+        queryClient.invalidateQueries({ queryKey: ['planning'] });
+      }
     } finally {
       setSaving(false);
     }
@@ -4967,14 +5213,27 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
               {row.zoneName}
               {row.serviceName ? <span> · {row.serviceName}</span> : null}
               {row.savedDate ? <span> · target {row.savedDate}</span> : null}
+              {/* §10 (2026-11-13) · Saved vs pending, side by side: the
+                  saved target stays as-is and the picker's unsaved value
+                  is appended in the modal's amber "pending" style. A row
+                  with no saved target yet shows just the pending one. */}
+              {previewActive ? (
+                <span className="text-amber-700 dark:text-amber-400">
+                  {row.savedDate ? ' → ' : ' · target '}{previewTarget} (unsaved)
+                </span>
+              ) : null}
             </p>
             {/* §8c (2026-11-12) · Preview target picker. Routes
                 through the server scheduler dry-run — the FE no longer
                 does calendar-day math (§8 spec: one source of truth for
                 working days / holidays). Debounced ~300ms to avoid a
-                round-trip per keystroke. Save & update still owns the
-                commit. */}
-            {row.savedDate ? (
+                round-trip per keystroke.
+                §10 (2026-11-13) · Also offered when the row opened on a
+                pending target with nothing saved yet, and this modal's
+                own Save now commits the picked target together with the
+                task due dates (it used to be preview-only). */}
+            {hasTargetPicker ? (
+              <>
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   Preview target
@@ -4992,7 +5251,7 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                   </span>
                 ) : previewActive ? (
                   <span className="text-[11px] text-amber-700 dark:text-amber-400">
-                    preview only — Save &amp; update to commit
+                    unsaved — Save commits the new target and these due dates
                   </span>
                 ) : (
                   <button
@@ -5013,7 +5272,32 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
                     reset
                   </button>
                 )}
+                {/* §10 addendum (2026-11-13) · Dry-run outcome when no
+                    dates were recalculated — request failed (red) or
+                    the server had nothing to schedule against (slate).
+                    Sits beside the "unsaved" hint; the row wraps. */}
+                {!previewing && previewNote ? (
+                  <span
+                    className={cn(
+                      'text-[11px]',
+                      previewNote.tone === 'error'
+                        ? 'text-red-600 dark:text-red-400'
+                        : 'text-slate-500 dark:text-slate-400',
+                    )}
+                  >
+                    {previewNote.text}
+                  </span>
+                ) : null}
               </div>
+              {/* §10 addendum · Rows the scheduler could not fit before
+                  the picked target. Their dates still render in the
+                  table below — this is only the heads-up. */}
+              {!previewing && infeasibleCount > 0 ? (
+                <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400">
+                  {infeasibleCount} task{infeasibleCount === 1 ? '' : 's'} cannot fit before this target
+                </p>
+              ) : null}
+              </>
             ) : null}
           </div>
           <button type="button" onClick={requestClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 text-[18px] leading-none px-1">×</button>
@@ -5092,7 +5376,7 @@ function DeliverableTasksModal({ row, onClose }: { row: any; onClose: () => void
               disabled={!dirty || saving}
               className="px-3.5 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {saving ? 'Saving…' : 'Save due dates'}
+              {saving ? 'Saving…' : targetDirty ? 'Save target + due dates' : 'Save due dates'}
             </button>
           </div>
         </div>

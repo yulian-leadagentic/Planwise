@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { SchedulerService } from './scheduler.service';
@@ -6,6 +15,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 
 /**
  * T3 · Scheduling endpoints
@@ -21,7 +31,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller()
 export class SchedulingController {
-  constructor(private readonly scheduler: SchedulerService) {}
+  constructor(
+    private readonly scheduler: SchedulerService,
+    private readonly access: ProjectAccessService,
+  ) {}
 
   @Post('deliverables/:id/schedule/dry-run')
   @RequirePermissions({ module: 'projects', action: 'write' })
@@ -35,6 +48,70 @@ export class SchedulingController {
   ) {
     const anchorDate = body?.anchorDate ? new Date(body.anchorDate) : undefined;
     return this.scheduler.scheduleDeliverableDryRun({ deliverableId: id, anchorDate });
+  }
+
+  // ─── §10 (2026-11-13) · Dry-run by (ProjectDeliverable × Zone) ─────
+  //
+  // The route above is keyed by a ZoneDeliverableTarget id, which the
+  // Deliverable Planning UI never receives — it only holds the
+  // ProjectDeliverable id + the zone id. Passing a ProjectDeliverable
+  // id there 404s (or, worse, schedules an unrelated ZDT that happens
+  // to share the numeric id). This route takes what the client has and
+  // resolves the ZDT server-side. No writes.
+  //
+  // `:id` is a ProjectDeliverable id. Unlike the ZDT-keyed route this
+  // one asserts project access first (the caller-supplied id is
+  // resolved to its project → `assertProjectAccess`).
+  //
+  // Empty outcomes return 200 with `scheduled: []` and
+  // `feasibility.reason` = 'no-zone' (no zoneId — deliverable-level
+  // target) or 'no-target-row' (pair has no saved target yet).
+  @Post('project-deliverables/:id/schedule/dry-run')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({
+    summary:
+      '§10 · Compute a working-day schedule for a (ProjectDeliverable × Zone) pair without writing. Body { zoneId, anchorDate? } — the ZoneDeliverableTarget is resolved server-side; optional anchorDate simulates a different target date for the dry-run only.',
+  })
+  async dryRunForProjectDeliverable(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body?: { zoneId?: number | null; anchorDate?: string },
+  ) {
+    // Inline body type → the global ValidationPipe has nothing to
+    // validate against, so guard the two fields by hand.
+    let zoneId: number | null = null;
+    const rawZoneId: unknown = body?.zoneId;
+    if (rawZoneId != null) {
+      const n =
+        typeof rawZoneId === 'number'
+          ? rawZoneId
+          : typeof rawZoneId === 'string' && rawZoneId.trim() !== ''
+            ? Number(rawZoneId)
+            : NaN;
+      if (!Number.isInteger(n)) {
+        throw new BadRequestException('zoneId must be an integer');
+      }
+      zoneId = n;
+    }
+
+    let anchorDate: Date | undefined;
+    const rawAnchor: unknown = body?.anchorDate;
+    if (rawAnchor != null) {
+      const d = typeof rawAnchor === 'string' && rawAnchor.trim() !== '' ? new Date(rawAnchor) : null;
+      if (!d || Number.isNaN(d.getTime())) {
+        throw new BadRequestException('anchorDate must be an ISO date');
+      }
+      anchorDate = d;
+    }
+
+    const projectId = await this.scheduler.getProjectIdForProjectDeliverable(id);
+    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+
+    return this.scheduler.scheduleProjectDeliverableDryRun({
+      projectDeliverableId: id,
+      zoneId,
+      anchorDate,
+    });
   }
 
   @Post('deliverables/:id/schedule/commit')

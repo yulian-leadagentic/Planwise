@@ -16,6 +16,8 @@
  *
  * All date comparisons use the YYYY-MM-DD prefix of the ISO string.
  */
+import { NotFoundException } from '@nestjs/common';
+
 import { SchedulerService } from './scheduler.service';
 import { ExecutionPlanningService } from '../execution-planning/execution-planning.service';
 
@@ -780,5 +782,157 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
     // Shorter branch (B) must have slack.
     expect(byId.get(2)!.onCriticalPath).toBe(false);
     expect((byId.get(2)!.float ?? 0)).toBeGreaterThan(0);
+  });
+
+  // ─── §10 (2026-11-13) · Dry-run by (ProjectDeliverable × Zone) ─────
+  //
+  // The Deliverable Planning UI only holds the ProjectDeliverable id +
+  // zone id; `scheduleProjectDeliverableDryRun` resolves the ZDT via
+  // the composite unique key and delegates to the ZDT-keyed dry-run.
+  // The shared `makePrisma` mock answers every
+  // `zoneDeliverableTarget.findUnique` with the full fixture row, so
+  // each test below overrides it to tell the two lookups apart:
+  //   • composite-key lookup → `{ id }` (or null)
+  //   • id lookup (inside `scheduleDeliverable`) → the full row
+  describe('scheduleProjectDeliverableDryRun', () => {
+    const target = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+    const ZDT_ID = 77;
+    const PD_ID = 227; // ProjectDeliverable id — deliberately ≠ ZDT id
+    const ZONE_ID = 9;
+
+    function setup() {
+      const { prisma } = makePrisma({
+        tasks: [makeTask({ id: 1, budgetHours: 8 })],
+        deps: [],
+        deliverable: { id: ZDT_ID, targetDate: target, zoneId: ZONE_ID, projectDeliverableId: PD_ID },
+      });
+      const fullRow = {
+        id: ZDT_ID,
+        targetDate: target,
+        zoneId: ZONE_ID,
+        projectDeliverableId: PD_ID,
+        projectDeliverable: { project: { id: 1, startDate: null } },
+        zone: { id: ZONE_ID, projectId: 1 },
+      };
+      prisma.zoneDeliverableTarget.findUnique = jest.fn().mockImplementation(({ where }: any) => {
+        const key = where?.zoneId_projectDeliverableId;
+        if (key) {
+          const hit = key.zoneId === ZONE_ID && key.projectDeliverableId === PD_ID;
+          return Promise.resolve(hit ? { id: ZDT_ID } : null);
+        }
+        return Promise.resolve(where?.id === ZDT_ID ? fullRow : null);
+      });
+      return { prisma, svc: newService(prisma) };
+    }
+
+    it('zoneId null/undefined → empty result (reason=no-zone) without any ZDT lookup', async () => {
+      const { prisma, svc } = setup();
+
+      for (const zoneId of [null, undefined]) {
+        const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD_ID, zoneId });
+        expect(out.scheduled).toEqual([]);
+        expect(out.feasibility.reason).toBe('no-zone');
+        expect(out.feasibility.earliestForwardFinish).toBeNull();
+      }
+
+      expect(prisma.zoneDeliverableTarget.findUnique).not.toHaveBeenCalled();
+      expect(prisma.task.findMany).not.toHaveBeenCalled();
+    });
+
+    it('no ZDT row for the (zone × deliverable) pair → empty result (reason=no-target-row)', async () => {
+      const { prisma, svc } = setup();
+      const spy = jest.spyOn(svc, 'scheduleDeliverableDryRun');
+
+      // Zone 999 has no saved target for this deliverable.
+      const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD_ID, zoneId: 999 });
+
+      expect(out.scheduled).toEqual([]);
+      expect(out.feasibility.reason).toBe('no-target-row');
+
+      // Looked up by the composite unique key — never by `id`.
+      expect(prisma.zoneDeliverableTarget.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.zoneDeliverableTarget.findUnique).toHaveBeenCalledWith({
+        where: { zoneId_projectDeliverableId: { zoneId: 999, projectDeliverableId: PD_ID } },
+        select: { id: true },
+      });
+      expect(spy).not.toHaveBeenCalled();
+      expect(prisma.task.findMany).not.toHaveBeenCalled();
+    });
+
+    it('ZDT found → delegates with the resolved ZDT id (not the ProjectDeliverable id) and forwards anchorDate', async () => {
+      const { svc } = setup();
+      const anchorDate = new Date(Date.UTC(2026, 10, 17)); // Tue 2026-11-17
+      const canned = {
+        scheduled: [],
+        feasibility: { status: 'feasible' as const, earliestForwardFinish: null, overflowDays: 0 },
+      };
+      const spy = jest.spyOn(svc, 'scheduleDeliverableDryRun').mockResolvedValue(canned);
+
+      const out = await svc.scheduleProjectDeliverableDryRun({
+        projectDeliverableId: PD_ID,
+        zoneId: ZONE_ID,
+        anchorDate,
+      });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith({ deliverableId: ZDT_ID, anchorDate });
+      expect(out).toBe(canned);
+    });
+
+    it('end-to-end through the engine: anchorDate overrides the stored target; nothing is written', async () => {
+      const { prisma, svc } = setup();
+
+      // No anchorDate → the stored ZDT target (Tue 11-10) anchors the task.
+      const stored = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD_ID, zoneId: ZONE_ID });
+      expect(stored.scheduled).toHaveLength(1);
+      expect(stored.scheduled[0].taskId).toBe(1);
+      expect(iso(stored.scheduled[0].endDate)).toBe('2026-11-10');
+
+      // anchorDate → the hypothetical target (Tue 11-17) anchors it instead.
+      const preview = await svc.scheduleProjectDeliverableDryRun({
+        projectDeliverableId: PD_ID,
+        zoneId: ZONE_ID,
+        anchorDate: new Date(Date.UTC(2026, 10, 17)),
+      });
+      expect(iso(preview.scheduled[0].endDate)).toBe('2026-11-17');
+      expect(iso(preview.scheduled[0].startDate)).toBe('2026-11-17');
+
+      // Tasks were loaded for the resolved pair; dry-run never writes.
+      expect(prisma.task.findMany.mock.calls[0][0].where).toMatchObject({
+        projectDeliverableId: PD_ID,
+        zoneId: ZONE_ID,
+      });
+      expect(prisma.task.update).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  // §10 · Project resolution used by the controller's access check.
+  describe('getProjectIdForProjectDeliverable', () => {
+    function setup(row: { projectId: number } | null) {
+      const { prisma } = makePrisma({
+        tasks: [],
+        deps: [],
+        deliverable: { id: 1, targetDate: new Date(Date.UTC(2026, 10, 10)), zoneId: 1, projectDeliverableId: 1 },
+      });
+      prisma.projectDeliverable = { findFirst: jest.fn().mockResolvedValue(row) };
+      return { prisma, svc: newService(prisma) };
+    }
+
+    it('returns the projectId of a live (non-soft-deleted) deliverable', async () => {
+      const { prisma, svc } = setup({ projectId: 42 });
+
+      await expect(svc.getProjectIdForProjectDeliverable(227)).resolves.toBe(42);
+      expect(prisma.projectDeliverable.findFirst).toHaveBeenCalledWith({
+        where: { id: 227, deletedAt: null },
+        select: { projectId: true },
+      });
+    });
+
+    it('throws NotFoundException when the deliverable does not exist', async () => {
+      const { svc } = setup(null);
+
+      await expect(svc.getProjectIdForProjectDeliverable(227)).rejects.toThrow(NotFoundException);
+    });
   });
 });
