@@ -8,8 +8,9 @@
  *   3. which pending edits SURVIVE a server refresh of `rows` → `mergeDraftsOnRefresh`
  *
  * §11 (2026-11-13) added small pure helpers next to them:
- * `explicitDirtyKeys` / `resetMonthsDraftsToSeed` (months draft of an
- * explicit-saved row), `withoutColFilter` / `isColFilterActive` /
+ * `explicitDirtyKeys` / `resetMonthsDraftsToSeed` /
+ * `resetMonthsDraftsOfRows` (months draft of a row whose explicit date
+ * was saved or committed), `withoutColFilter` / `isColFilterActive` /
  * `rowPassesColFilter` (Table column filters), `snapToSundayIso`,
  * `isCompleteIsoDate`, `taskProgressCounts`, `mergeRowOrder`,
  * `moveRowKey`.
@@ -85,7 +86,19 @@ export function resolveTargetIso(
   return r.savedDate || computePreview(monthsDraft) || '';
 }
 
-/** Which dimensions of a row the user has changed vs the server. */
+/**
+ * Which dimensions of a row the user has changed vs the server.
+ *
+ * §11 A5 (2026-11-13) · `explicit` and `months` are never both true — a
+ * row has ONE pending target edit, and it is the one `resolveTargetIso`
+ * shows. A non-empty explicit-date draft is the pending edit when it
+ * differs from the saved date OR when the months draft is dirty: in the
+ * second case it sits on the saved date but is actively overriding a
+ * pending months edit (months typed, then the bar dragged back onto the
+ * saved date). `months` is then reported false, so `buildTargetItems`
+ * sends the explicit date. Before, that row DISPLAYED the explicit date
+ * while Save posted the months, and the bar jumped.
+ */
 export function rowDirtyFlags(
   r: TargetRowLike,
   drafts: DraftMap,
@@ -96,8 +109,9 @@ export function rowDirtyFlags(
   // inputs are disabled and they are excluded from every save.
   if (r.readOnly) return { explicit: false, months: false, duration: false, any: false };
   const explicitDraft = targetDateDrafts[r.key] ?? '';
-  const explicit = explicitDraft !== '' && explicitDraft !== (r.savedDate ?? '');
-  const months = (drafts[r.key] ?? '') !== monthsServerOf(r);
+  const monthsDirty = (drafts[r.key] ?? '') !== monthsServerOf(r);
+  const explicit = explicitDraft !== '' && (explicitDraft !== (r.savedDate ?? '') || monthsDirty);
+  const months = monthsDirty && !explicit;
   const duration = (durationDrafts[r.key] ?? '') !== durServerOf(r);
   return { explicit, months, duration, any: explicit || months || duration };
 }
@@ -215,6 +229,17 @@ export function resetMonthsDraftsToSeed(
     else next[key] = server;
   }
   return next;
+}
+
+/**
+ * §11 A5 (2026-11-13) · "Last edit wins": an explicit date was just
+ * COMMITTED for these rows (a Gantt drag was let go), so their months
+ * drafts are no longer pending edits — back to each row's own server
+ * months. Same reset as above, seeded from the rows themselves.
+ */
+export function resetMonthsDraftsOfRows(drafts: DraftMap, rows: TargetRowLike[]): DraftMap {
+  if (rows.length === 0) return drafts;
+  return resetMonthsDraftsToSeed(drafts, rows.map((r) => r.key), seedFromRows(rows));
 }
 
 /**
@@ -436,9 +461,18 @@ function mergeValueDrafts(
  * last reconciled against; a key missing from it (first seed / new row)
  * gets a plain seed and no explicit-date draft.
  *
- * The three dimensions are merged independently of each other — callers
- * may rely on that (the tab applies each one inside its own functional
- * `setState` updater).
+ * Months and duration are merged independently of everything else —
+ * callers may rely on that (the tab applies each one inside its own
+ * functional `setState` updater, passing `{}` for the other maps).
+ *
+ * §11 A5 (2026-11-13) · The explicit-date merge is the exception: it
+ * also reads the MONTHS drafts, so a caller that wants `targetDateDrafts`
+ * must pass the real months drafts. An explicit draft that equals the
+ * server date is normally "no longer an edit" and dropped — but not while
+ * that row's months draft is still a pending edit after this merge: it is
+ * then the thing holding the display on that date (see `rowDirtyFlags`),
+ * and dropping it would let the months preview pop back on any
+ * background refetch.
  */
 export function mergeDraftsOnRefresh(
   prevSeed: DraftSeedMap,
@@ -447,19 +481,23 @@ export function mergeDraftsOnRefresh(
   durationDrafts: DraftMap,
   targetDateDrafts: DraftMap,
 ): { drafts: DraftMap; durationDrafts: DraftMap; targetDateDrafts: DraftMap } {
+  const nextDrafts = mergeValueDrafts(prevSeed, nextSeed, drafts, 'months');
   const nextTargetDateDrafts: DraftMap = {};
   for (const key of Object.keys(nextSeed)) {
     const d = targetDateDrafts[key];
     const prev = prevSeed[key];
+    if (!d || prev == null) continue;
+    const serverDate = nextSeed[key].date;
     // Keep a pending drag only while the server date it was dragged away
     // from is unchanged. A changed server date is the new authoritative
-    // value; a draft equal to it is no longer an edit.
-    if (d && prev != null && prev.date === nextSeed[key].date && d !== nextSeed[key].date) {
-      nextTargetDateDrafts[key] = d;
-    }
+    // value; a draft equal to it is no longer an edit…
+    const pendingDrag = prev.date === serverDate && d !== serverDate;
+    // …unless it is overriding a months edit that is still pending.
+    const overridesMonths = d === serverDate && (nextDrafts[key] ?? '') !== nextSeed[key].months;
+    if (pendingDrag || overridesMonths) nextTargetDateDrafts[key] = d;
   }
   return {
-    drafts: mergeValueDrafts(prevSeed, nextSeed, drafts, 'months'),
+    drafts: nextDrafts,
     durationDrafts: mergeValueDrafts(prevSeed, nextSeed, durationDrafts, 'dur'),
     targetDateDrafts: nextTargetDateDrafts,
   };

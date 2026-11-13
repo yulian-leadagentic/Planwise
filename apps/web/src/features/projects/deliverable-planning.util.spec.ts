@@ -12,6 +12,7 @@ import {
   moveRowKey,
   explicitDirtyKeys,
   resetMonthsDraftsToSeed,
+  resetMonthsDraftsOfRows,
   withoutColFilter,
   isColFilterActive,
   rowPassesColFilter,
@@ -110,6 +111,36 @@ describe('rowDirtyFlags', () => {
     expect(
       rowDirtyFlags(ro, { [ro.key]: '9' }, { [ro.key]: '9' }, { [ro.key]: '2027-01-10' }),
     ).toEqual({ explicit: false, months: false, duration: false, any: false });
+  });
+
+  // §11 A5 · one pending target edit per row — the one that is displayed.
+  it('A5: an explicit draft ON the saved date is `explicit` while it overrides a dirty months draft', () => {
+    // Months 8 typed, then the bar dragged back onto the saved date.
+    expect(rowDirtyFlags(r, { [r.key]: '8' }, clean.dur, { [r.key]: '2026-12-13' })).toEqual({
+      explicit: true, months: false, duration: false, any: true,
+    });
+  });
+
+  it('A5: explicit and months are never both true', () => {
+    // Explicit draft away from the saved date + a dirty months draft.
+    expect(rowDirtyFlags(r, { [r.key]: '8' }, clean.dur, { [r.key]: '2027-01-10' })).toEqual({
+      explicit: true, months: false, duration: false, any: true,
+    });
+    // No explicit draft (missing or '') → the months edit is the pending one.
+    expect(rowDirtyFlags(r, { [r.key]: '8' }, clean.dur, {})).toMatchObject({ explicit: false, months: true });
+    expect(rowDirtyFlags(r, { [r.key]: '8' }, clean.dur, { [r.key]: '' })).toMatchObject({ explicit: false, months: true });
+  });
+
+  it('A5: what is DISPLAYED is what is SAVED (repro 1: months typed, bar dragged back to the saved date)', () => {
+    const k = row({ key: '20:topzone-9', deliverableId: 20, zoneId: 9, savedDate: '2027-07-04', savedMonths: null });
+    const drafts = { [k.key]: '8' };
+    const dates = { [k.key]: '2027-07-04' };
+    expect(resolveTargetIso(k, drafts, dates, computePreview)).toBe('2027-07-04');
+    // Used to post `{ months: 8 }` → the server stored months + base date.
+    expect(buildTargetItems([k], drafts, {}, dates, computePreview)).toEqual([
+      { id: 20, zoneId: 9, months: null, durationWeeks: null, targetDate: '2027-07-04' },
+    ]);
+    expect(explicitDirtyKeys([k], drafts, {}, dates)).toEqual([k.key]);
   });
 });
 
@@ -285,6 +316,32 @@ describe('resetMonthsDraftsToSeed', () => {
     const healed = resetMonthsDraftsToSeed(stale, [K], seedFromRows([r]));
     expect(resolveTargetIso(r, healed, {}, computePreview)).toBe('2027-07-11');
     expect(rowDirtyFlags(r, healed, {}, {}).any).toBe(false);
+  });
+});
+
+describe('resetMonthsDraftsOfRows', () => {
+  const a = row({ key: '10:topzone-1', savedDate: '2027-07-04', savedMonths: null });
+  const b = row({ key: '11:topzone-2', savedDate: '2027-03-07', savedMonths: 6 });
+
+  it('puts each given row back on ITS server months, leaves the others alone', () => {
+    const drafts = { [a.key]: '8', [b.key]: '9', other: '3' };
+    expect(resetMonthsDraftsOfRows(drafts, [a, b])).toEqual({ [b.key]: '6', other: '3' });
+    expect(resetMonthsDraftsOfRows(drafts, [a])).toEqual({ [b.key]: '9', other: '3' });
+  });
+
+  it('returns the SAME object for no rows / nothing to change', () => {
+    const drafts = { [b.key]: '6' };
+    expect(resetMonthsDraftsOfRows(drafts, [])).toBe(drafts);
+    expect(resetMonthsDraftsOfRows(drafts, [a, b])).toBe(drafts);
+  });
+
+  it('A5 repro 1 ends clean: months typed, bar dragged back onto the saved date, months reset on drop', () => {
+    const typed = { [a.key]: '8' };
+    const dragged = { [a.key]: '2027-07-04' };
+    const afterDrop = resetMonthsDraftsOfRows(typed, [a]);
+    expect(rowDirtyFlags(a, afterDrop, {}, dragged).any).toBe(false);
+    expect(buildTargetItems([a], afterDrop, {}, dragged, computePreview)).toEqual([]);
+    expect(resolveTargetIso(a, afterDrop, dragged, computePreview)).toBe('2027-07-04');
   });
 });
 
@@ -539,6 +596,42 @@ describe('mergeDraftsOnRefresh', () => {
     expect(out.targetDateDrafts).toEqual({});
   });
 
+  // §11 A5 · an explicit draft sitting ON the server date still matters
+  // while it overrides a pending months edit.
+  it('A5: KEEPS an explicit draft equal to the server date while the months draft is dirty', () => {
+    const s = { [K]: seed('', '', '2027-07-04') };
+    // Background refetch, server unchanged; months 8 typed, bar on 07-04.
+    const out = mergeDraftsOnRefresh(s, { ...s }, { [K]: '8' }, {}, { [K]: '2027-07-04' });
+    expect(out.targetDateDrafts).toEqual({ [K]: '2027-07-04' });
+    expect(out.drafts).toEqual({ [K]: '8' });
+  });
+
+  it('A5: …and drops it as before once the months draft is clean', () => {
+    const s = { [K]: seed('6', '', '2027-07-04') };
+    const out = mergeDraftsOnRefresh(s, { ...s }, { [K]: '6' }, {}, { [K]: '2027-07-04' });
+    expect(out.targetDateDrafts).toEqual({});
+  });
+
+  it('A5: also kept when the server date moved ONTO the draft but the months draft is still pending', () => {
+    // The explicit date was just saved; server months was null before and
+    // after, so the typed 8 survives the merge. Dropping the explicit
+    // draft here would flash the months preview until the post-save
+    // cleanup resets the months draft.
+    const prev = { [K]: seed('', '', '2027-07-04') };
+    const next = { [K]: seed('', '', '2027-07-11') };
+    const out = mergeDraftsOnRefresh(prev, next, { [K]: '8' }, {}, { [K]: '2027-07-11' });
+    expect(out.targetDateDrafts).toEqual({ [K]: '2027-07-11' });
+  });
+
+  it('A5: a months draft that this very merge reseeds does not keep the explicit draft alive', () => {
+    // Server months moved 6 → null with the save, so the dirty "8" is
+    // reseeded by the merge — nothing is being overridden any more.
+    const prev = { [K]: seed('6', '', '2027-07-04') };
+    const next = { [K]: seed('', '', '2027-07-11') };
+    const out = mergeDraftsOnRefresh(prev, next, { [K]: '8' }, {}, { [K]: '2027-07-11' });
+    expect(out).toEqual({ drafts: {}, durationDrafts: {}, targetDateDrafts: {} });
+  });
+
   it('reseeds a CLEAN months draft after the server nulled months (drag-save)', () => {
     const prev = { [K]: seed('6', '4', '2027-05-09') };
     const next = { [K]: seed('', '4', '2026-12-13') };
@@ -613,10 +706,11 @@ describe('mergeDraftsOnRefresh', () => {
     });
   });
 
-  it('merges each dimension independently of the other two', () => {
+  it('months and duration merge independently; the explicit-date merge needs the months drafts', () => {
     // The tab runs each dimension inside its own functional setState
-    // updater, passing {} for the other two — the per-dimension result
-    // must be identical to a single combined call.
+    // updater — the per-dimension result must be identical to a single
+    // combined call. Months and duration get {} for the other maps;
+    // §11 A5: the explicit-date merge is handed the months drafts too.
     const prev = { [K]: seed('6', '4', '2027-05-09'), [OTHER]: seed('9', '', '2027-03-07') };
     const next = { [K]: seed('6', '4', '2027-05-09'), [OTHER]: seed('', '', '2026-12-13') };
     const drafts = { [K]: '8', [OTHER]: '9' };
@@ -625,7 +719,7 @@ describe('mergeDraftsOnRefresh', () => {
     const combined = mergeDraftsOnRefresh(prev, next, drafts, dur, dates);
     expect(mergeDraftsOnRefresh(prev, next, drafts, {}, {}).drafts).toEqual(combined.drafts);
     expect(mergeDraftsOnRefresh(prev, next, {}, dur, {}).durationDrafts).toEqual(combined.durationDrafts);
-    expect(mergeDraftsOnRefresh(prev, next, {}, {}, dates).targetDateDrafts).toEqual(combined.targetDateDrafts);
+    expect(mergeDraftsOnRefresh(prev, next, drafts, {}, dates).targetDateDrafts).toEqual(combined.targetDateDrafts);
   });
 
   it('is stable: re-merging against an identical seed changes nothing', () => {

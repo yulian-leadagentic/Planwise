@@ -32,6 +32,7 @@ import {
   isCompleteIsoDate,
   explicitDirtyKeys,
   resetMonthsDraftsToSeed,
+  resetMonthsDraftsOfRows,
   withoutColFilter,
   isColFilterActive,
   rowPassesColFilter,
@@ -1134,6 +1135,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   //     changed so an identity-only `rows` change does not re-render
   //     (and cannot loop while `rows` is rebuilt on every render during
   //     the initial planning load).
+  //     §11 A5 (2026-11-13) · one exception: the explicit-date merge is
+  //     also handed the months drafts of THIS render — it must keep an
+  //     explicit draft that sits on the server date while that row's
+  //     months edit is still pending (see `mergeDraftsOnRefresh`).
   //   • `useLayoutEffect` — the merge lands before the browser paints,
   //     so no frame ever shows fresh rows against stale drafts (e.g. the
   //     months draft "6" against a server that just nulled months would
@@ -1152,7 +1157,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       return sameDraftMap(cur, next) ? cur : next;
     });
     setTargetDateDrafts((cur) => {
-      const next = mergeDraftsOnRefresh(prevSeed, nextSeed, {}, {}, cur).targetDateDrafts;
+      const next = mergeDraftsOnRefresh(prevSeed, nextSeed, drafts, {}, cur).targetDateDrafts;
       return sameDraftMap(cur, next) ? cur : next;
     });
   }, [rows]);
@@ -2210,6 +2215,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           durationDrafts={durationDrafts}
           setDurationDrafts={setDurationDrafts}
           targetDateDrafts={targetDateDrafts}
+          setTargetDateDrafts={setTargetDateDrafts}
           computePreview={computePreview}
           collapsed={collapsed}
           onToggleCollapse={toggleCollapse}
@@ -2263,6 +2269,7 @@ function TableView({
   durationDrafts,
   setDurationDrafts,
   targetDateDrafts,
+  setTargetDateDrafts,
   computePreview,
   collapsed,
   onToggleCollapse,
@@ -2286,6 +2293,9 @@ function TableView({
   // does (§10: `resolveTargetIso` — explicit-date draft → pending months
   // edit → saved date).
   targetDateDrafts: Record<string, string>;
+  // §11 A5 (2026-11-13) · The Table's one WRITE to these drafts: typing
+  // in a row's Months input removes that row's explicit-date draft.
+  setTargetDateDrafts: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
   computePreview: (m: string) => string;
   // DP-6 · Collapse state (shared with GanttView, persisted per-project
   // in the parent). Absent from the set = the group is expanded.
@@ -2853,7 +2863,22 @@ function TableView({
                         min="0"
                         step="1"
                         value={draft}
-                        onChange={(e) => setDrafts((s) => ({ ...s, [r.key]: e.target.value }))}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setDrafts((s) => ({ ...s, [r.key]: value }));
+                          // §11 A5 (2026-11-13) · Last edit wins: a typed
+                          // months value replaces the row's explicit-date
+                          // draft (an unsaved Gantt drag), so the months
+                          // preview is what is shown AND what Save sends.
+                          // It used to stay hidden behind the dragged date
+                          // and was silently dropped by the save.
+                          setTargetDateDrafts((s) => {
+                            if (!(r.key in s)) return s;
+                            const next = { ...s };
+                            delete next[r.key];
+                            return next;
+                          });
+                        }}
                         placeholder="—"
                         disabled={r.readOnly}
                         title={r.readOnly ? readOnlyHint : undefined}
@@ -3741,6 +3766,12 @@ function GanttView({
         const newMs = s.curTargetMs + finalDeltaDays * 86_400_000;
         if (newMs < earliestNew) earliestNew = newMs;
       }
+      // §11 A5 (2026-11-13) · Last edit wins, per child: every child that
+      // received a new date in this drag has its months draft put back on
+      // the server value — on drop, or (past-date path) only when the
+      // prompt is confirmed. Same rule as the single-row drags.
+      const movedRows = slot.zones.filter((z: any) => appliedTargets.has(z.key));
+      const commitExplicitDates = () => setDrafts((prev) => resetMonthsDraftsOfRows(prev, movedRows));
       if (earliestNew < todayMs) {
         setTargetDateDrafts((prev) => {
           const copy = { ...prev };
@@ -3756,11 +3787,14 @@ function GanttView({
           kind: 'move',
           apply: () => {
             setTargetDateDrafts((prev) => ({ ...prev, ...Object.fromEntries(appliedTargets) }));
+            commitExplicitDates();
           },
         });
+      } else {
+        // Drafts already written during onMove — Save-all picks them up
+        // unchanged; only the superseded months drafts are left to reset.
+        commitExplicitDates();
       }
-      // Otherwise: drafts already written during onMove — nothing else
-      // to do here. Save-all picks them up unchanged.
     };
 
     window.addEventListener('pointermove', onMove);
@@ -4563,13 +4597,24 @@ function GanttRow({
         // target, so duration (rounded to weeks) and target (shifted
         // in days) stay in lock-step and the left edge doesn't drift.
         const dxWeeks = Math.round(dxMs / (7 * 86_400_000));
-        const snappedDxMs = dxWeeks * 7 * 86_400_000;
-        const newDur = Math.max(0, initDurationWeeks + dxWeeks);
-        finalTargetMs = Math.max(0, initTargetMs + snappedDxMs);
-        // §11 (2026-11-13) · Sunday snap — a no-op for the Sunday dates
-        // the server stores.
-        lastTargetIso = snapToSundayIso(isoDayOf(finalTargetMs));
-        lastDurWeeks = String(newDur);
+        if (dxWeeks === 0) {
+          // §11 A5 (2026-11-13) · Back at the start → both drafts go back
+          // to what they were, exactly like the middle drag. It used to
+          // write the CURRENT target as an explicit draft here, so a
+          // resize that ended where it began still left an edit behind
+          // (and would now also count as "an explicit date committed").
+          finalTargetMs = initTargetMs;
+          lastTargetIso = initTargetDateDraft;
+          lastDurWeeks = initDurDraft;
+        } else {
+          const snappedDxMs = dxWeeks * 7 * 86_400_000;
+          const newDur = Math.max(0, initDurationWeeks + dxWeeks);
+          finalTargetMs = Math.max(0, initTargetMs + snappedDxMs);
+          // §11 (2026-11-13) · Sunday snap — a no-op for the Sunday dates
+          // the server stores.
+          lastTargetIso = snapToSundayIso(isoDayOf(finalTargetMs));
+          lastDurWeeks = String(newDur);
+        }
         setTargetDateDrafts((s) => ({ ...s, [r.key]: lastTargetIso }));
         setDurationDrafts((s) => ({ ...s, [r.key]: lastDurWeeks }));
       } else {
@@ -4607,9 +4652,21 @@ function GanttRow({
         onRequestPastDate(r.key, finalTargetMs, kind, () => {
           setTargetDateDrafts((s) => ({ ...s, [r.key]: lastTargetIso }));
           setDurationDrafts((s) => ({ ...s, [r.key]: lastDurWeeks }));
+          // Only on Apply — a cancelled prompt leaves the months draft alone.
+          commitExplicitDate();
         });
+      } else if (mode !== 'left' && lastTargetIso !== initTargetDateDraft) {
+        commitExplicitDate();
       }
     };
+    // §11 A5 (2026-11-13) · Last edit wins: a middle / right-edge drag
+    // that was let go on a NEW explicit date supersedes any pending
+    // months edit on this row, so the months draft goes back to the
+    // server value. Done once, on drop (not per pointermove, not for a
+    // drag that came back to where it started, never for the left edge).
+    // E.g. months typed, then the bar dragged back onto the saved date:
+    // the row ends clean instead of "unsaved" with Save posting the months.
+    const commitExplicitDate = () => setDrafts((prev) => resetMonthsDraftsOfRows(prev, [r]));
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
   };
