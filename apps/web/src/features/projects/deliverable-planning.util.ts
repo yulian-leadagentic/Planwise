@@ -7,6 +7,13 @@
  *   2. which rows a save SENDS (and in what shape)            → `buildTargetItems`
  *   3. which pending edits SURVIVE a server refresh of `rows` → `mergeDraftsOnRefresh`
  *
+ * §11 (2026-11-13) added small pure helpers next to them:
+ * `explicitDirtyKeys` / `resetMonthsDraftsToSeed` (months draft of an
+ * explicit-saved row), `withoutColFilter` / `isColFilterActive` /
+ * `rowPassesColFilter` (Table column filters), `snapToSundayIso`,
+ * `isCompleteIsoDate`, `taskProgressCounts`, `mergeRowOrder`,
+ * `moveRowKey`.
+ *
  * §10 (2026-11-13) · Principle: the SAVED `targetDate` is the single
  * source of truth for display. Months is only an input device — a
  * months-derived preview is shown only while the user has a pending
@@ -109,6 +116,7 @@ export function buildTargetItems(
   drafts: DraftMap,
   durationDrafts: DraftMap,
   targetDateDrafts: DraftMap,
+  computePreview: (months: string) => string,
 ): TargetBatchItem[] {
   const items: TargetBatchItem[] = [];
   for (const r of rows) {
@@ -138,18 +146,248 @@ export function buildTargetItems(
         durationWeeks,
       });
     } else {
-      // Duration-only edit — pin the saved date so the server does not
-      // re-derive it from months + today's base date.
+      // Duration-only edit.
+      // §11 (2026-11-13) · Pin the saved date ONLY when letting the
+      // server re-derive it from months + base date would CHANGE it (no
+      // months at all, or months that no longer yield the saved date).
+      // An explicit `targetDate` also makes the server delete the target
+      // rows of every descendant zone — a side effect a plain duration
+      // edit must not have when months already produces the same date.
+      const pinDate =
+        Boolean(r.savedDate) &&
+        (r.savedMonths == null || computePreview(String(r.savedMonths)) !== r.savedDate);
       items.push({
         id: r.deliverableId,
         zoneId: r.zoneId,
         months: r.savedMonths,
         durationWeeks,
-        ...(r.savedDate ? { targetDate: r.savedDate } : {}),
+        ...(pinDate && r.savedDate ? { targetDate: r.savedDate } : {}),
       });
     }
   }
   return items;
+}
+
+/**
+ * §11 (2026-11-13) · Keys of the rows a save sends on the EXPLICIT-date
+ * branch (`rowDirtyFlags(...).explicit`; read-only rows never qualify).
+ * Captured together with `buildTargetItems` — i.e. when the POST is
+ * built — because once such a row is saved its months draft is no longer
+ * a pending edit (see `resetMonthsDraftsToSeed`).
+ */
+export function explicitDirtyKeys(
+  rows: TargetRowLike[],
+  drafts: DraftMap,
+  durationDrafts: DraftMap,
+  targetDateDrafts: DraftMap,
+): string[] {
+  const keys: string[] = [];
+  for (const r of rows) {
+    if (rowDirtyFlags(r, drafts, durationDrafts, targetDateDrafts).explicit) keys.push(r.key);
+  }
+  return keys;
+}
+
+/**
+ * §11 (2026-11-13) · A row whose target was just SAVED as an explicit
+ * date: put its months draft back on the server value (`seed`, '' for an
+ * unknown key). `mergeDraftsOnRefresh` cannot do this on its own — it
+ * only reseeds a dirty months draft when the SERVER months moved, and a
+ * row that was already drag-saved has months null before and after, so a
+ * typed-but-superseded "8" survived and outranked the saved date as soon
+ * as the explicit-date draft was dropped.
+ *
+ * Duration drafts are deliberately not touched. Returns the SAME object
+ * when nothing changed.
+ */
+export function resetMonthsDraftsToSeed(
+  drafts: DraftMap,
+  keys: string[],
+  seed: DraftSeedMap,
+): DraftMap {
+  let next = drafts;
+  for (const key of keys) {
+    const server = seed[key]?.months ?? '';
+    if ((next[key] ?? '') === server && (server !== '' || !(key in next))) continue;
+    if (next === drafts) next = { ...drafts };
+    // Same storage rule as the refresh merge: a clean '' is not stored.
+    if (server === '') delete next[key];
+    else next[key] = server;
+  }
+  return next;
+}
+
+/**
+ * §11 (2026-11-13) · Table column filters. A column's filter is a list
+ * of selected values; [] (or a missing entry) = no filter.
+ *
+ * "Select all" means NO filter — not "the values that exist right now".
+ * Storing the current values kept the column "filtered (N)" and excluded
+ * every value that appeared later (a row whose date changed while the
+ * user was typing its months vanished mid-edit).
+ */
+export function withoutColFilter<K extends string>(
+  filters: Record<K, string[]>,
+  col: K,
+): Record<K, string[]> {
+  return { ...filters, [col]: [] };
+}
+
+/**
+ * Does a column filter currently restrict anything? Not when it is
+ * empty, and not when it holds every value the column currently offers
+ * (`availableValues` — the options its dropdown lists): such a set hides
+ * nothing, so the header shows the un-filtered state. This is how a full
+ * set persisted by the old "Select all" reads as inactive. With no
+ * available values to compare against, a non-empty set stays active.
+ */
+export function isColFilterActive(
+  selected: readonly string[] | undefined,
+  availableValues: readonly string[],
+): boolean {
+  if (!selected || selected.length === 0) return false;
+  if (availableValues.length === 0) return true;
+  const sel = new Set(selected);
+  return !availableValues.every((v) => sel.has(v));
+}
+
+/**
+ * One row against one column filter. A row with pending edits ALWAYS
+ * passes: it must stay on screen until it is saved or reset, whatever
+ * its edited value now is. (No "full set" rule needed here — a set that
+ * holds every available value contains this row's value by definition.)
+ */
+export function rowPassesColFilter(
+  value: string,
+  selected: readonly string[] | undefined,
+  rowDirty: boolean,
+): boolean {
+  if (rowDirty) return true;
+  if (!selected || selected.length === 0) return true;
+  return selected.includes(value);
+}
+
+/**
+ * §11 (2026-11-13) · The server stores every target on a Sunday: it
+ * snaps FORWARD to the next Sunday (a Sunday stays). Mirror of
+ * `snapToSunday` in project-deliverables.service.ts, ISO in → ISO out,
+ * so a date the client drafts is the date that comes back after Save.
+ *
+ * '' → ''. An unparsable value, or a year below 1000 (what a date input
+ * emits while the year is still being typed), is returned unchanged.
+ */
+export function snapToSundayIso(iso: string): string {
+  if (!iso) return '';
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  if (!Number.isFinite(y) || y < 1000) return iso;
+  const date = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1));
+  if (Number.isNaN(date.getTime())) return iso;
+  const day = date.getUTCDay(); // Sun=0..Sat=6
+  date.setUTCDate(date.getUTCDate() + (day === 0 ? 0 : 7 - day));
+  return date.toISOString().slice(0, 10);
+}
+
+/**
+ * §11 (2026-11-13) · Is `value` a COMPLETE calendar date — exactly
+ * yyyy-mm-dd, a real day, year ≥ 1000? A `<input type="date">` emits ''
+ * or a short-year value (0002-…, 0020-…) while the user is still typing;
+ * those are "no change yet" and must not become a target (nor a dry-run
+ * anchor).
+ */
+export function isCompleteIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (y < 1000) return false;
+  const date = new Date(Date.UTC(y, m - 1, d));
+  // Date.UTC rolls an impossible day over (02-30 → 03-02) — reject those.
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
+/**
+ * §11 (2026-11-13) · Task-status progress of one (zone × deliverable)
+ * row, on the real Prisma `TaskStatus` enum
+ * (not_started | in_progress | in_review | completed | on_hold |
+ * cancelled). `done` = completed; `started` = in progress, in review or
+ * completed. The pre-§11 counters compared against legacy values
+ * (`done` / `to_do` / `blocked`), so nothing was ever "done" and every
+ * task counted as "started".
+ */
+export function taskProgressCounts(
+  tasks: { status?: string | null }[],
+): { total: number; started: number; done: number } {
+  let started = 0;
+  let done = 0;
+  for (const t of tasks) {
+    if (t.status === 'completed') {
+      done += 1;
+      started += 1;
+    } else if (t.status === 'in_progress' || t.status === 'in_review') {
+      started += 1;
+    }
+  }
+  return { total: tasks.length, started, done };
+}
+
+/**
+ * §11 (2026-11-13) · Reconcile the persisted Gantt row order with the
+ * project's FULL (unfiltered) row set: every saved key that still exists
+ * keeps its position — whether or not a filter currently hides it —
+ * deleted rows drop out, and rows not in the saved order are appended in
+ * `allKeys` order. Returns the SAME array reference when nothing changed
+ * so a `setState` updater can bail out.
+ */
+export function mergeRowOrder(saved: string[], allKeys: string[]): string[] {
+  const all = new Set(allKeys);
+  const seen = new Set<string>();
+  const merged: string[] = [];
+  for (const k of saved) {
+    if (all.has(k) && !seen.has(k)) {
+      seen.add(k);
+      merged.push(k);
+    }
+  }
+  const keptCount = merged.length;
+  for (const k of allKeys) {
+    if (!seen.has(k)) {
+      seen.add(k);
+      merged.push(k);
+    }
+  }
+  if (keptCount === saved.length && merged.length === saved.length) return saved;
+  return merged;
+}
+
+/**
+ * §11 (2026-11-13) · Drag-reorder while a filter may be active. `toIndex`
+ * addresses the VISIBLE rows, but `order` also holds the rows a filter
+ * hides — so the drop position is resolved through the visible row that
+ * sits at `toIndex` once the dragged key is taken out. With nothing
+ * hidden this is exactly the old "remove, then insert at toIndex".
+ */
+export function moveRowKey(
+  order: string[],
+  visibleKeys: string[],
+  fromKey: string,
+  toIndex: number,
+): string[] {
+  const rest = order.filter((k) => k !== fromKey);
+  const visibleRest = visibleKeys.filter((k) => k !== fromKey);
+  const clamped = Math.max(0, Math.min(toIndex, visibleRest.length));
+  let at: number;
+  if (clamped < visibleRest.length) {
+    at = rest.indexOf(visibleRest[clamped]);
+  } else if (visibleRest.length > 0) {
+    // Dropped past the last visible row → right after it.
+    const last = rest.indexOf(visibleRest[visibleRest.length - 1]);
+    at = last === -1 ? -1 : last + 1;
+  } else {
+    at = rest.length;
+  }
+  if (at === -1) at = rest.length;
+  return [...rest.slice(0, at), fromKey, ...rest.slice(at)];
 }
 
 /** Snapshot of the server values the drafts are (re)seeded from. */

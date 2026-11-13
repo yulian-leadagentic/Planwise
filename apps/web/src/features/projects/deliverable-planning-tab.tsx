@@ -12,6 +12,8 @@ import { resolveTaskDeliverableDetailed } from '@/features/planning/resolve-task
 import { GroupControl, dpGroupDimLabel, type DPGroupDim } from '@/features/planning/group-control';
 import { ZONE_DISPLAY } from '@/features/templates/zone-templates/constants';
 import { useDebounce } from '@/hooks/use-debounce';
+import { getFocusable, useFocusTrap } from '@/components/shared/use-focus-trap';
+import { STATUS_PILL, STATUS_LABEL } from '@/lib/task-constants';
 import {
   hasPredecessorConflict,
   getPredecessorConflictMessage,
@@ -23,6 +25,16 @@ import {
   mergeDraftsOnRefresh,
   seedFromRows,
   sameDraftMap,
+  snapToSundayIso,
+  taskProgressCounts,
+  mergeRowOrder,
+  moveRowKey,
+  isCompleteIsoDate,
+  explicitDirtyKeys,
+  resetMonthsDraftsToSeed,
+  withoutColFilter,
+  isColFilterActive,
+  rowPassesColFilter,
   type DraftSeedMap,
 } from './deliverable-planning.util';
 
@@ -153,6 +165,11 @@ function useModalTransition(isOpen: boolean, exitMs = 150) {
   return { shouldRender, dataState };
 }
 
+// §11 (2026-11-13) · Open `AnimatedModalShell`s, oldest first. Escape is
+// handled by the LAST entry only, so with two shells open the top-most
+// one closes first.
+const openModalShells: symbol[] = [];
+
 /**
  * §9 (2026-11-12) · Open/close animation tuned to feel "springy but
  * not playful" — expo-out entry, decisive ease-in exit, slight lift.
@@ -175,21 +192,90 @@ function useModalTransition(isOpen: boolean, exitMs = 150) {
  * shell silently animated on the 150ms default. (Deliberately not
  * quoting the old class names here: Tailwind scans comments too, and
  * the literal strings would bring the warning straight back.)
+ *
+ * §11 (2026-11-13) · The shell now also carries the dialog plumbing:
+ *   - `role="dialog"` + `aria-modal` (+ optional `ariaLabel`) on the card;
+ *   - Escape → `onEscape`, or `onBackdropClick` when none is given — the
+ *     SAME close path as a backdrop click, so each modal's own guards
+ *     apply. Top-most shell only (`openModalShells` above);
+ *   - Tab is trapped inside the card (`useFocusTrap`); on open the card
+ *     takes focus unless focus is already inside it, and on close /
+ *     unmount focus returns to whatever had it before.
  */
 function AnimatedModalShell({
   open,
   onBackdropClick,
+  onEscape,
   overlayClassName,
   cardClassName,
+  ariaLabel,
   children,
 }: {
   open: boolean;
   onBackdropClick?: () => void;
+  // §11 review · Escape handler for a modal whose BACKDROP must stay
+  // non-dismissive. Defaults to `onBackdropClick`.
+  onEscape?: () => void;
   overlayClassName?: string;
   cardClassName?: string;
+  ariaLabel?: string;
   children: React.ReactNode;
 }) {
   const { shouldRender, dataState } = useModalTransition(open, 140);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // Latest Escape handler, read at keydown time — keeps the Escape effect
+  // keyed on `open` alone so a re-render never reshuffles the stack.
+  const onEscapeRef = useRef(onEscape ?? onBackdropClick);
+  onEscapeRef.current = onEscape ?? onBackdropClick;
+
+  useFocusTrap(open, cardRef);
+
+  useEffect(() => {
+    if (!open) return;
+    const id = Symbol('dp-modal-shell');
+    openModalShells.push(id);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (openModalShells[openModalShells.length - 1] !== id) return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onEscapeRef.current?.();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      // `useFocusTrap` only wraps first ↔ last. Because the CARD takes
+      // the initial focus, two more exits need closing: Shift+Tab from
+      // the card itself, and Tab while focus sits outside the card.
+      const card = cardRef.current;
+      const active = document.activeElement;
+      if (!card) return;
+      if (active === card ? !e.shiftKey : card.contains(active)) return;
+      const focusables = getFocusable(card);
+      e.preventDefault();
+      ((e.shiftKey ? focusables[focusables.length - 1] : focusables[0]) ?? card).focus();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      const i = openModalShells.indexOf(id);
+      if (i !== -1) openModalShells.splice(i, 1);
+    };
+  }, [open]);
+
+  // Keyed on `shouldRender` too: the card only mounts one render after
+  // `open` flips (see `useModalTransition`).
+  useEffect(() => {
+    if (!open || !shouldRender) return;
+    const card = cardRef.current;
+    if (!card) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!card.contains(previous)) card.focus({ preventScroll: true });
+    return () => {
+      if (previous && previous !== document.body && document.contains(previous)) {
+        previous.focus({ preventScroll: true });
+      }
+    };
+  }, [open, shouldRender]);
+
   if (!shouldRender) return null;
   return (
     <div
@@ -204,9 +290,15 @@ function AnimatedModalShell({
       onClick={onBackdropClick}
     >
       <div
+        ref={cardRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={ariaLabel}
+        tabIndex={-1}
         data-state={dataState}
         onClick={(e) => e.stopPropagation()}
         className={cn(
+          'outline-none focus:outline-none',
           'transition-all [transition-duration:220ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none motion-reduce:transform-none',
           'data-[state=open]:opacity-100 data-[state=open]:scale-100 data-[state=open]:translate-y-0',
           'data-[state=closed]:opacity-0 data-[state=closed]:scale-[0.96] data-[state=closed]:translate-y-2 data-[state=closed]:[transition-duration:140ms] data-[state=closed]:[transition-timing-function:cubic-bezier(0.4,0,1,1)]',
@@ -708,9 +800,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       const savedMonths = aggMonths ?? deliverable?.targetMonths ?? null;
       const savedDate = aggDate ?? deliverable?.targetDate ?? null;
       const savedDurationWeeks = aggDurationWeeks ?? deliverable?.estimatedDurationWeeks ?? null;
-      const taskTotal = group.length;
-      const taskDone = group.filter((t) => t.status === 'done').length;
-      const taskStarted = group.filter((t) => t.status !== 'to_do' && t.status !== 'blocked').length;
+      // §11 (2026-11-13) · Counted on the real `TaskStatus` enum — the
+      // legacy `done` / `to_do` / `blocked` values never matched, so no
+      // bar ever turned green and every bar read "in progress".
+      const { total: taskTotal, started: taskStarted, done: taskDone } = taskProgressCounts(group);
       // DP-3 · Σ budgetHours across every task in this (zone × deliverable).
       // Prisma serializes `Decimal` as a string on the wire, so coerce
       // with `Number(...)` and treat null/undefined as 0.
@@ -1120,14 +1213,20 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // row with its months draft + the current `baseDate`, so the server
   // re-derived `targetDate = months + baseDate` for rows nobody touched
   // (and overwrote an earlier drag-saved date with its stale months).
-  const persistTargets = async (): Promise<{ updated: number; overriddenTasks: unknown[] }> => {
+  const persistTargets = async (): Promise<{ updated: number; overriddenTasks: unknown[]; explicitKeys: string[] }> => {
     // DP-EMPTY-3 — synthetic (read-only) rows have negative,
     // non-existent deliverableIds; `buildTargetItems` never emits them,
     // which keeps the batch endpoint from 404-ing on their targets. The
     // PM must run the DP-EMPTY-1 backfill to materialize real rows
     // before they become editable.
-    const items = buildTargetItems(rows, drafts, durationDrafts, targetDateDrafts);
-    if (items.length === 0) return { updated: 0, overriddenTasks: [] };
+    // §11 (2026-11-13) · `computePreview` lets a duration-only edit skip
+    // the explicit date when months + base date already yields it.
+    const items = buildTargetItems(rows, drafts, durationDrafts, targetDateDrafts, computePreview);
+    // §11 (2026-11-13) · Rows going out on the explicit-date branch —
+    // captured HERE, with the payload, and handed back to the caller for
+    // `dropSavedTargetDrafts` (never re-derived after the refetch).
+    const explicitKeys = explicitDirtyKeys(rows, drafts, durationDrafts, targetDateDrafts);
+    if (items.length === 0) return { updated: 0, overriddenTasks: [], explicitKeys: [] };
     const r = await client.post('/project-deliverables/targets/batch', {
       baseDate,
       // Client 2026-08-03: never auto-propagate to task endDates.
@@ -1136,7 +1235,36 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       applyToTasks: false,
       items,
     });
-    return r.data?.data ?? r.data;
+    return { ...(r.data?.data ?? r.data), explicitKeys };
+  };
+
+  // §11 (2026-11-13) · A row whose target was just saved as an EXPLICIT
+  // date has no pending months edit any more — put its months draft back
+  // on the server value. Without this a months value typed before the
+  // drag survived the save whenever the server months did not move (null
+  // before and after), and outranked the saved date as soon as the
+  // explicit-date draft was dropped. Duration drafts are left alone.
+  const resetMonthsDraftsFor = (rowKeys: string[]) => {
+    if (rowKeys.length === 0) return;
+    setDrafts((prev) => resetMonthsDraftsToSeed(prev, rowKeys, seededRef.current));
+  };
+  // The ONE "targets saved + refetched" cleanup, shared by plain Save,
+  // the reschedule preview and the conflict-prompt route into it, so the
+  // three cannot drift: drop every explicit-date draft and, in the same
+  // breath, the months drafts of the rows that were saved explicitly.
+  const dropSavedTargetDrafts = (savedExplicitKeys: string[]) => {
+    setTargetDateDrafts({});
+    resetMonthsDraftsFor(savedExplicitKeys);
+  };
+  // Same rule for the one row the tasks modal just committed.
+  const onModalTargetCommitted = (rowKey: string) => {
+    setTargetDateDrafts((prev) => {
+      if (!(rowKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[rowKey];
+      return next;
+    });
+    resetMonthsDraftsFor([rowKey]);
   };
 
   const save = useMutation({
@@ -1153,7 +1281,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] }),
         queryClient.invalidateQueries({ queryKey: ['planning', projectId] }),
       ]);
-      setTargetDateDrafts({});
+      dropSavedTargetDrafts(payload?.explicitKeys ?? []);
       const updated = payload?.updated ?? 0;
       notify.success(`Saved ${updated} deliverable target${updated === 1 ? '' : 's'}`);
       // Task due-date conflicts are handled up-front by the per-task
@@ -1176,6 +1304,9 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       // DP-EMPTY-3 — synthetic read-only rows never enter the save
       // payload, so their tasks can't conflict with a saved target.
       if (r.readOnly) continue;
+      // §11 (2026-11-13) · Only a row whose TARGET this save moves (date or months edit; duration alone does not) may prompt — otherwise tasks the PM already kept "as-is" were re-offered, pre-set to overwrite, on every unrelated save.
+      const dirty = rowDirtyFlags(r, drafts, durationDrafts, targetDateDrafts);
+      if (!dirty.explicit && !dirty.months) continue;
       // §10 — same resolution the bar uses: an untouched row is checked
       // against its SAVED date, not against months + today's base date.
       const newTargetIso = resolveTargetIso(r, drafts, targetDateDrafts, computePreview);
@@ -1240,21 +1371,23 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
    *                         whole run) + an awaited deliverables refetch
    *                         so the rows, and with them the payload
    *                         `previewMutation` builds next, are current.
-   * `previewMutation` still calls `persistTargets()` as its step 1. Once
-   * the refetched rows have rendered nothing is dirty and it posts
-   * nothing; if it fires before that render lands it re-posts the same
-   * sparse items, which is idempotent (same explicit dates / same
-   * months + base date / same pinned saved date).
+   * §11 (2026-11-13) · `previewMutation` is then started with
+   * `skipPersist: true`. Its own step 1 used to run again here and —
+   * whenever it fired before the refetched rows had rendered — re-posted
+   * the identical items (two batch POSTs in a row; a backdated target
+   * was audit-logged twice). The keys of the rows saved on the explicit
+   * branch travel along so its success path can finish the cleanup.
    */
   const confirmExceed = async () => {
     if (!exceedPrompt) return;
     setExceedApplying(true);
     try {
+      let savedExplicitKeys: string[] = [];
       if (exceedNextAction === 'save') {
         await save.mutateAsync();
       } else {
         try {
-          await persistTargets();
+          savedExplicitKeys = (await persistTargets()).explicitKeys;
         } catch (err) {
           // `save.onError` covers the plain-Save path; this direct call
           // has no mutation wrapper, so surface the failure here and
@@ -1288,7 +1421,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
       if (exceedNextAction === 'saveAndUpdate') {
         setPreviewing(true);
-        previewMutation.mutate();
+        // §11 · already persisted above — do not post the batch twice.
+        previewMutation.mutate({ skipPersist: true, savedExplicitKeys });
       }
     } finally {
       setExceedApplying(false);
@@ -1361,15 +1495,24 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // typed custom end date is ignored in the §8a flow.
   const [reviewChoices, setReviewChoices] = useState<Record<number, { apply: boolean; end: string }>>({});
 
+  // §11 (2026-11-13) · Optional variables. `skipPersist` — the caller
+  // (the conflict prompt) has ALREADY posted the batch, so step 1 must
+  // not post it again; it then passes the explicit-branch row keys of
+  // that post as `savedExplicitKeys`. Every other caller passes nothing
+  // and gets the default (persist here).
+  type PreviewVars = { skipPersist?: boolean; savedExplicitKeys?: string[] };
   const previewMutation = useMutation({
-    mutationFn: async (): Promise<PreviewResult> => {
+    mutationFn: async (vars: PreviewVars | void): Promise<PreviewResult & { savedExplicitKeys: string[] }> => {
+      const opts: PreviewVars = vars || {};
       // Step 1: persist deliverable target changes via the existing
       // batch endpoint — same sparse payload as the plain Save button
       // (§10: `persistTargets`, a no-op when nothing is dirty).
-      await persistTargets();
+      const savedExplicitKeys = opts.skipPersist
+        ? opts.savedExplicitKeys ?? []
+        : (await persistTargets()).explicitKeys;
       // Step 2 (§8a): dry-run the project reschedule WITHOUT writing.
       const resp = await client.post(`/scheduling/projects/${projectId}/preview-reschedule`);
-      return (resp.data?.data ?? resp.data) as PreviewResult;
+      return { ...((resp.data?.data ?? resp.data) as PreviewResult), savedExplicitKeys };
     },
     onSuccess: async (data) => {
       // Seed per-row choices: default apply=true for rows that WILL
@@ -1393,7 +1536,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] }),
         queryClient.invalidateQueries({ queryKey: ['planning', projectId] }),
       ]);
-      setTargetDateDrafts({});
+      dropSavedTargetDrafts(data.savedExplicitKeys);
     },
     onError: (err: any) => notify.apiError(err, 'Failed to preview reschedule'),
     onSettled: () => setPreviewing(false),
@@ -1420,6 +1563,17 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     },
     onError: (err: any) => notify.apiError(err, 'Failed to apply approved task dates'),
   });
+
+  // §11 review · ONE cancel path for the review modal — the "ביטול"
+  // button and Escape. Inert while the preview is still being computed
+  // or the approved dates are being applied (the button is disabled on
+  // the same condition).
+  const reviewCancelDisabled = (previewing && !preview) || applyMutation.isPending;
+  const cancelReview = () => {
+    if (reviewCancelDisabled) return;
+    setPreview(null);
+    setReviewChoices({});
+  };
 
   const confirmReview = () => {
     if (!preview) return;
@@ -1535,6 +1689,11 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     }
     return out;
   }, [rows, drafts, targetDateDrafts, baseDate, filterHasDue, serviceFilter]);
+
+  // §11 (2026-11-13) · Keys of the UNFILTERED rows. The Gantt reconciles
+  // its saved row order against these, so a row hidden by a filter keeps
+  // its place instead of being re-appended at the end when it reappears.
+  const allRowKeys = useMemo(() => rows.map((r) => r.key), [rows]);
 
   // DP-6 · Bulk-collapse toolbar handlers. `collapseAll` uses the
   // CURRENTLY VISIBLE rows so a filtered view collapses only what the
@@ -1734,6 +1893,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           as utilities — the modal popped in with no transition. */}
       <AnimatedModalShell
         open={Boolean(previewing || preview)}
+        // §11 review · Escape = "ביטול". No `onBackdropClick` on purpose:
+        // a click outside must not dismiss the review.
+        onEscape={cancelReview}
+        ariaLabel="סקירת עדכון תאריכים"
         cardClassName="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[1040px] max-w-[92vw] max-h-[85vh] flex flex-col"
       >
         <>
@@ -1830,11 +1993,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
             <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button
                 type="button"
-                disabled={(previewing && !preview) || applyMutation.isPending}
-                onClick={() => {
-                  setPreview(null);
-                  setReviewChoices({});
-                }}
+                disabled={reviewCancelDisabled}
+                onClick={cancelReview}
                 className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
               >
                 ביטול
@@ -2062,12 +2222,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         <GanttView
           projectId={projectId}
           rows={visibleRows}
+          allRowKeys={allRowKeys}
           drafts={drafts}
           durationDrafts={durationDrafts}
           targetDateDrafts={targetDateDrafts}
           setDrafts={setDrafts}
           setDurationDrafts={setDurationDrafts}
           setTargetDateDrafts={setTargetDateDrafts}
+          onTargetCommitted={onModalTargetCommitted}
           computePreview={computePreview}
           baseDate={baseDate}
           collapsed={collapsed}
@@ -2161,6 +2323,18 @@ function TableView({
     { deliverable: [], zone: [], service: [], months: [], duration: [], hours: [], target: [] },
   );
   const [openFilter, setOpenFilter] = useState<null | ColKey>(null);
+  // §11 (2026-11-13) · Columns whose "Select all" was just pressed.
+  // Display-only and in-memory: "Select all" stores NO filter (see
+  // `selectAll`), and this keeps that column's boxes rendered as checked
+  // so the click has a visible result.
+  const [selectAllShown, setSelectAllShown] = useState<ReadonlySet<ColKey>>(() => new Set());
+  const markSelectAllShown = (col: ColKey, shown: boolean) =>
+    setSelectAllShown((prev) => {
+      if (prev.has(col) === shown) return prev;
+      const next = new Set(prev);
+      if (shown) next.add(col); else next.delete(col);
+      return next;
+    });
   // Sort state — one column at a time; asc/desc toggle.
   const [sort, setSort] = useProjectTabState<{ col: ColKey; dir: 'asc' | 'desc' }>(
     projectId,
@@ -2192,20 +2366,29 @@ function TableView({
     return resolveTargetIso(r, drafts, targetDateDrafts, computePreview);
   };
 
+  // §11 (2026-11-13) · Rows with pending edits. A column filter never
+  // hides one of these: the row stays on screen until it is saved or
+  // reset. Before, typing a Months value changed the row's Target Date,
+  // the new date fell outside the Target Date filter, and the row (with
+  // the input the user was typing in) unmounted mid-edit.
+  const dirtyRowKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const r of rows) {
+      if (rowDirtyFlags(r, drafts, durationDrafts, targetDateDrafts).any) keys.add(r.key);
+    }
+    return keys;
+  }, [rows, drafts, durationDrafts, targetDateDrafts]);
+
   // Helper: does a row pass the currently selected filter for a given
   // column? Called both by the visible-rows pipeline and by the
   // "available options" builder (which excludes the requesting column).
-  const rowPassesCol = (r: any, col: ColKey, filters: Record<ColKey, string[]>): boolean => {
-    const sel = filters[col];
-    if (!sel || sel.length === 0) return true;
-    const v = rowValue(r, col) || '(empty)';
-    return sel.includes(v);
-  };
+  const rowPassesCol = (r: any, col: ColKey, filters: Record<ColKey, string[]>): boolean =>
+    rowPassesColFilter(rowValue(r, col) || '(empty)', filters[col], dirtyRowKeys.has(r.key));
 
   // Visible rows: pass every column filter.
   const filtered = useMemo(
     () => rows.filter((r) => ALL_COLS.every((c) => rowPassesCol(r, c, colFilters))),
-    [rows, drafts, durationDrafts, targetDateDrafts, colFilters],
+    [rows, drafts, durationDrafts, targetDateDrafts, colFilters, dirtyRowKeys],
   );
 
   // For a given column, build the list of distinct values the user
@@ -2220,22 +2403,52 @@ function TableView({
       counts.set(v, (counts.get(v) ?? 0) + 1);
     }
     const sel = new Set(colFilters[col] ?? []);
+    // §11 · right after "Select all" the boxes render checked although
+    // no filter is stored (see `selectAll`).
+    const allShown = selectAllShown.has(col);
     return Array.from(counts.entries())
-      .map(([value, count]) => ({ value, count, selected: sel.has(value) }))
+      .map(([value, count]) => ({ value, count, selected: allShown || sel.has(value) }))
       .sort((a, b) => a.value.localeCompare(b.value));
   };
 
+  // §11 (2026-11-13) · Header props for one column. The filter counts as
+  // active only while it actually restricts something: a stored set that
+  // holds every value the dropdown offers (what the old "Select all"
+  // persisted) reads as un-filtered, so those states heal themselves.
+  const filterHeaderProps = (col: ColKey) => {
+    const options = optionsFor(col);
+    const sel = colFilters[col] ?? [];
+    return {
+      options,
+      activeCount: isColFilterActive(sel, options.map((o) => o.value)) ? sel.length : 0,
+    };
+  };
+
+  // §11 (2026-11-13) · "Select all" = NO filter on that column (the entry
+  // goes back to [], persisted like every other change of `colFilters`),
+  // so values that appear later are included too. It used to store the
+  // values that existed at that moment. While `selectAllShown` holds the
+  // column, unchecking one box stores "everything listed except it".
   const toggleFilterValue = (col: ColKey, value: string) => {
+    if (selectAllShown.has(col)) {
+      const rest = optionsFor(col).map((o) => o.value).filter((v) => v !== value);
+      markSelectAllShown(col, false);
+      setColFilters((s) => ({ ...s, [col]: rest }));
+      return;
+    }
     setColFilters((s) => {
       const cur = new Set(s[col]);
       if (cur.has(value)) cur.delete(value); else cur.add(value);
       return { ...s, [col]: Array.from(cur) };
     });
   };
-  const clearFilter = (col: ColKey) => setColFilters((s) => ({ ...s, [col]: [] }));
+  const clearFilter = (col: ColKey) => {
+    markSelectAllShown(col, false);
+    setColFilters((s) => ({ ...s, [col]: [] }));
+  };
   const selectAll = (col: ColKey) => {
-    const all = optionsFor(col).map((o) => o.value);
-    setColFilters((s) => ({ ...s, [col]: all }));
+    markSelectAllShown(col, true);
+    setColFilters((s) => withoutColFilter(s, col));
   };
 
   // Effective date for sort/display. Uses the SAME resolution the Gantt
@@ -2389,7 +2602,7 @@ function TableView({
             <SortableFilterableHeader
               label={dpGroupDimLabel(outerDim)} width="w-[240px]"
               sort={sort} col="deliverable" onToggleSort={() => toggleSort('deliverable')}
-              options={optionsFor('deliverable')} activeCount={colFilters.deliverable.length}
+              {...filterHeaderProps('deliverable')}
               onToggleValue={(v) => toggleFilterValue('deliverable', v)}
               onClear={() => clearFilter('deliverable')} onSelectAll={() => selectAll('deliverable')}
               open={openFilter === 'deliverable'} onToggleOpen={() => setOpenFilter((c) => c === 'deliverable' ? null : 'deliverable')}
@@ -2397,7 +2610,7 @@ function TableView({
             <SortableFilterableHeader
               label={innerDim ? dpGroupDimLabel(innerDim) : 'Row'}
               sort={sort} col="zone" onToggleSort={() => toggleSort('zone')}
-              options={optionsFor('zone')} activeCount={colFilters.zone.length}
+              {...filterHeaderProps('zone')}
               onToggleValue={(v) => toggleFilterValue('zone', v)}
               onClear={() => clearFilter('zone')} onSelectAll={() => selectAll('zone')}
               open={openFilter === 'zone'} onToggleOpen={() => setOpenFilter((c) => c === 'zone' ? null : 'zone')}
@@ -2405,7 +2618,7 @@ function TableView({
             <SortableFilterableHeader
               label="Service"
               sort={sort} col="service" onToggleSort={() => toggleSort('service')}
-              options={optionsFor('service')} activeCount={colFilters.service.length}
+              {...filterHeaderProps('service')}
               onToggleValue={(v) => toggleFilterValue('service', v)}
               onClear={() => clearFilter('service')} onSelectAll={() => selectAll('service')}
               open={openFilter === 'service'} onToggleOpen={() => setOpenFilter((c) => c === 'service' ? null : 'service')}
@@ -2413,7 +2626,7 @@ function TableView({
             <SortableFilterableHeader
               label="Months" width="w-[110px]" align="right"
               sort={sort} col="months" onToggleSort={() => toggleSort('months')}
-              options={optionsFor('months')} activeCount={colFilters.months.length}
+              {...filterHeaderProps('months')}
               onToggleValue={(v) => toggleFilterValue('months', v)}
               onClear={() => clearFilter('months')} onSelectAll={() => selectAll('months')}
               open={openFilter === 'months'} onToggleOpen={() => setOpenFilter((c) => c === 'months' ? null : 'months')}
@@ -2421,7 +2634,7 @@ function TableView({
             <SortableFilterableHeader
               label="Duration (weeks) *" width="w-[140px]" align="right"
               sort={sort} col="duration" onToggleSort={() => toggleSort('duration')}
-              options={optionsFor('duration')} activeCount={colFilters.duration.length}
+              {...filterHeaderProps('duration')}
               onToggleValue={(v) => toggleFilterValue('duration', v)}
               onClear={() => clearFilter('duration')} onSelectAll={() => selectAll('duration')}
               open={openFilter === 'duration'} onToggleOpen={() => setOpenFilter((c) => c === 'duration' ? null : 'duration')}
@@ -2432,7 +2645,7 @@ function TableView({
             <SortableFilterableHeader
               label="Hours" width="w-[100px]" align="right"
               sort={sort} col="hours" onToggleSort={() => toggleSort('hours')}
-              options={optionsFor('hours')} activeCount={colFilters.hours.length}
+              {...filterHeaderProps('hours')}
               onToggleValue={(v) => toggleFilterValue('hours', v)}
               onClear={() => clearFilter('hours')} onSelectAll={() => selectAll('hours')}
               open={openFilter === 'hours'} onToggleOpen={() => setOpenFilter((c) => c === 'hours' ? null : 'hours')}
@@ -2440,7 +2653,7 @@ function TableView({
             <SortableFilterableHeader
               label="Target Date" width="w-[160px]"
               sort={sort} col="target" onToggleSort={() => toggleSort('target')}
-              options={optionsFor('target')} activeCount={colFilters.target.length}
+              {...filterHeaderProps('target')}
               onToggleValue={(v) => toggleFilterValue('target', v)}
               onClear={() => clearFilter('target')} onSelectAll={() => selectAll('target')}
               open={openFilter === 'target'} onToggleOpen={() => setOpenFilter((c) => c === 'target' ? null : 'target')}
@@ -2865,12 +3078,14 @@ function SortableFilterableHeader({
 function GanttView({
   projectId,
   rows,
+  allRowKeys,
   drafts,
   durationDrafts,
   targetDateDrafts,
   setDrafts,
   setDurationDrafts,
   setTargetDateDrafts,
+  onTargetCommitted,
   computePreview,
   baseDate,
   collapsed,
@@ -2881,7 +3096,14 @@ function GanttView({
   topLevelZoneSortOrderMap,
 }: {
   projectId: number;
+  // The FILTERED rows (what is drawn) …
   rows: any[];
+  // … and the keys of ALL the project's rows, filter or not (§11) — the
+  // saved row order is reconciled against these.
+  allRowKeys: string[];
+  // §11 · The tasks modal committed this row's target: the parent drops
+  // its explicit-date draft AND resets its months draft.
+  onTargetCommitted: (rowKey: string) => void;
   drafts: Record<string, string>;
   durationDrafts: Record<string, string>;
   targetDateDrafts: Record<string, string>;
@@ -2909,26 +3131,36 @@ function GanttView({
   // the incoming rows whenever the row set changes, preserving any
   // prior order the user established. New rows get appended at the
   // end. (D&D reorder — client feedback 2026-08-02.)
-  const orderKey = 'planwise:gantt:row-order:v1';
+  //
+  // §11 (2026-11-13) · Two fixes:
+  //   - the key is per PROJECT. It used to be one global key, so every
+  //     project overwrote the others' order. A project with nothing
+  //     saved yet falls back to READING the legacy global key (which is
+  //     never written or deleted any more);
+  //   - the merge runs against ALL the project's row keys, not the
+  //     filtered `rows`. Merging against the filtered list dropped the
+  //     hidden rows from the order and re-appended them at the end once
+  //     the filter cleared — applying a filter permanently reordered.
+  const LEGACY_ORDER_KEY = 'planwise:gantt:row-order:v1';
+  const orderKey = `${LEGACY_ORDER_KEY}:${projectId}`;
   const [rowOrder, setRowOrder] = useState<string[]>(() => {
     try {
-      const raw = localStorage.getItem(orderKey);
-      return raw ? (JSON.parse(raw) as string[]) : [];
+      const raw = localStorage.getItem(orderKey) ?? localStorage.getItem(LEGACY_ORDER_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? (parsed as string[]) : [];
     } catch { return []; }
   });
   useEffect(() => {
-    // Merge: keep saved order for rows still present; append new ones.
-    const present = new Set(rows.map((r) => r.key));
-    const kept = rowOrder.filter((k) => present.has(k));
-    const added = rows.map((r) => r.key).filter((k) => !kept.includes(k));
-    const merged = [...kept, ...added];
-    if (merged.length !== rowOrder.length || merged.some((k, i) => k !== rowOrder[i])) {
-      setRowOrder(merged);
-    }
-  }, [rows]);
+    // Nothing to reconcile against (no rows at all) — leave the saved
+    // order alone rather than wiping it.
+    if (allRowKeys.length === 0) return;
+    // `mergeRowOrder` returns `prev` itself when nothing changed, so this
+    // is a no-op render-wise in the common case.
+    setRowOrder((prev) => mergeRowOrder(prev, allRowKeys));
+  }, [allRowKeys]);
   useEffect(() => {
     try { localStorage.setItem(orderKey, JSON.stringify(rowOrder)); } catch { /* ignore */ }
-  }, [rowOrder]);
+  }, [rowOrder, orderKey]);
 
   // DPG-4 (2026-10-20) · Timeline-window selector — how many years the
   // Gantt should show at a time (1 / 2 / 3). Replaces the hardcoded
@@ -3396,12 +3628,12 @@ function GanttView({
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [dropIndicatorIdx, setDropIndicatorIdx] = useState<number | null>(null);
 
+  // §11 (2026-11-13) · `toIndex` is an index into the VISIBLE rows
+  // (`orderedRows`), while `rowOrder` now also keeps the rows a filter
+  // hides — `moveRowKey` resolves the drop through the visible keys.
   const handleReorder = (fromKey: string, toIndex: number) => {
-    setRowOrder((prev) => {
-      const filtered = prev.filter((k) => k !== fromKey);
-      const clamped = Math.max(0, Math.min(toIndex, filtered.length));
-      return [...filtered.slice(0, clamped), fromKey, ...filtered.slice(clamped)];
-    });
+    const visibleKeys = orderedRows.map((r) => r.key as string);
+    setRowOrder((prev) => moveRowKey(prev, visibleKeys, fromKey, toIndex));
   };
 
   // DPG-3 (2026-10-20) · Rollup-bar drag state. Tracks the group being
@@ -3472,7 +3704,11 @@ function GanttView({
       for (const s of snapshot) {
         if (s.curTargetMs == null) continue;
         const newMs = s.curTargetMs + snapped * 86_400_000;
-        const iso = isoDayOf(newMs);
+        // §11 review · Sunday-snapped like the single-row drags, so a
+        // legacy non-Sunday child also lands on the date the server will
+        // store (a no-op for Sunday dates). `appliedTargets` holds the
+        // snapped value — it is what the past-date confirm replays.
+        const iso = snapToSundayIso(isoDayOf(newMs));
         next[s.key] = iso;
         appliedTargets.set(s.key, iso);
       }
@@ -3566,15 +3802,10 @@ function GanttView({
             pendingTarget={eff && eff !== (taskModalRow.savedDate ?? '') ? eff : undefined}
             // The modal saved the target itself — the drag draft is no
             // longer a pending edit, so drop it (the refreshed saved
-            // date takes over).
-            onTargetCommitted={(rowKey) =>
-              setTargetDateDrafts((prev) => {
-                if (!(rowKey in prev)) return prev;
-                const next = { ...prev };
-                delete next[rowKey];
-                return next;
-              })
-            }
+            // date takes over). §11 (2026-11-13) · handled by the parent,
+            // which also puts that row's months draft back on the server
+            // value (it needs the parent's seed snapshot for that).
+            onTargetCommitted={onTargetCommitted}
             onClose={() => setTaskModalRow(null)}
           />
         );
@@ -4287,7 +4518,10 @@ function GanttRow({
     let lastTargetIso: string = initTargetDateDraft;
     let lastDurWeeks: string = initDurDraft;
 
-    // Snap a raw ms timestamp to yyyy-mm-dd (server handles Sunday snap).
+    // Snap a raw ms timestamp to yyyy-mm-dd (UTC day). §11 (2026-11-13) ·
+    // the Sunday snap is applied on top of this by the callers below
+    // (`snapToSundayIso`, same rule as the server), so the draft already
+    // IS the date that comes back after Save.
     const isoDayOf = (ms: number) => {
       const d = new Date(ms);
       d.setUTCHours(0, 0, 0, 0);
@@ -4302,8 +4536,22 @@ function GanttRow({
         // an explicit ISO date — no more month-rounding round-trip
         // through the months+baseDate hack. Week-level precision
         // survives the save (client feedback 2026-08-02 item 4).
-        finalTargetMs = Math.max(0, initTargetMs + dxMs);
-        lastTargetIso = isoDayOf(finalTargetMs);
+        // §11 (2026-11-13) · The move now snaps to whole weeks (like the
+        // right edge) and lands on a Sunday. It used to write a
+        // day-precision date that the server then pushed forward to the
+        // next Sunday, so the bar jumped after Save and the past-date
+        // prompt showed a date that was never stored. A sub-week wiggle
+        // (dxWeeks 0) puts the initial draft back — no dirty draft.
+        const dxWeeks = Math.round(dxMs / (7 * 86_400_000));
+        if (dxWeeks === 0) {
+          finalTargetMs = initTargetMs;
+          lastTargetIso = initTargetDateDraft;
+        } else {
+          lastTargetIso = snapToSundayIso(
+            isoDayOf(Math.max(0, initTargetMs + dxWeeks * 7 * 86_400_000)),
+          );
+          finalTargetMs = new Date(lastTargetIso).getTime();
+        }
         setTargetDateDrafts((s) => ({ ...s, [r.key]: lastTargetIso }));
       } else if (mode === 'right') {
         // §8d (2026-11-12) · RIGHT edge drag now = resize (duration
@@ -4318,7 +4566,9 @@ function GanttRow({
         const snappedDxMs = dxWeeks * 7 * 86_400_000;
         const newDur = Math.max(0, initDurationWeeks + dxWeeks);
         finalTargetMs = Math.max(0, initTargetMs + snappedDxMs);
-        lastTargetIso = isoDayOf(finalTargetMs);
+        // §11 (2026-11-13) · Sunday snap — a no-op for the Sunday dates
+        // the server stores.
+        lastTargetIso = snapToSundayIso(isoDayOf(finalTargetMs));
         lastDurWeeks = String(newDur);
         setTargetDateDrafts((s) => ({ ...s, [r.key]: lastTargetIso }));
         setDurationDrafts((s) => ({ ...s, [r.key]: lastDurWeeks }));
@@ -4890,11 +5140,20 @@ function DeliverableTasksModal({
     return () => cancelAnimationFrame(id);
   }, []);
   const closingRef = useRef(false);
-  const requestClose = () => {
+  // Unguarded close — only for the modal's OWN close after a successful
+  // save (it runs while `saving` is still true).
+  const closeNow = () => {
     if (closingRef.current) return;
     closingRef.current = true;
     setOpen(false);
     setTimeout(onClose, 120);
+  };
+  // §11 review · Every USER-initiated close (backdrop, Escape, ×, Cancel)
+  // is refused while a save is in flight — closing mid-save unmounted the
+  // modal under its own pending requests.
+  const requestClose = () => {
+    if (saving) return;
+    closeNow();
   };
 
   // §8c (2026-11-12) · Preview target picker now routes through the
@@ -4912,6 +5171,25 @@ function DeliverableTasksModal({
   // differs from `row.savedDate`, so it fires on open and the auto-seed
   // effect fills the task Due inputs with the scheduler's dates.
   const [previewTarget, setPreviewTarget] = useState<string>(pendingTarget || row.savedDate || '');
+  // §11 review · What the date INPUT shows. Kept apart from
+  // `previewTarget` so the box is never rewritten under the user's
+  // fingers: while it has focus it holds exactly what was typed / picked;
+  // `previewTarget` — and everything derived from it (header, dry-run
+  // anchor, Save payload, toast) — is the Sunday-snapped date; on blur
+  // the box takes the snapped date. A value that is not a complete date
+  // yet ('' or a half-typed year) is "no change yet": `previewTarget`
+  // keeps its last value, so no garbage anchor is ever sent.
+  const [targetInput, setTargetInput] = useState<string>(pendingTarget || row.savedDate || '');
+  const onTargetInputChange = (raw: string) => {
+    setTargetInput(raw);
+    if (isCompleteIsoDate(raw)) setPreviewTarget(snapToSundayIso(raw));
+  };
+  // Every OTHER writer of the target (reset to saved, the §8e chain
+  // shift) goes through here so the box stays in sync.
+  const setTargetAndInput = (next: string) => {
+    setPreviewTarget(next);
+    setTargetInput(next);
+  };
   // The picker is offered when the row has a saved target OR opened on a
   // pending one. Captured once: the parent drops the pending draft the
   // moment we commit it, and the picker must not vanish mid-close.
@@ -5095,11 +5373,12 @@ function DeliverableTasksModal({
     // target with nothing saved yet must follow the chain shift too, or
     // Save would commit the un-shifted target under the shifted tasks.
     // `addDaysIso` returns '' unchanged, so an emptied picker stays empty.
+    // §11 (2026-11-13) · Sunday-snapped like every other target write —
+    // the server stores the next Sunday anyway. Written through
+    // `setTargetAndInput` so the date box follows the shift.
     if (hasTargetPicker) {
-      setPreviewTarget((prev) => {
-        const base = prev || String(row.savedDate ?? '');
-        return addDaysIso(base, deltaDays);
-      });
+      const base = previewTarget || String(row.savedDate ?? '');
+      setTargetAndInput(snapToSundayIso(addDaysIso(base, deltaDays)));
     }
 
     // Flag EVERY row as manually edited so the dry-run auto-seed
@@ -5181,7 +5460,9 @@ function DeliverableTasksModal({
         // Refresh planning data — the row will pick up the new dates.
         queryClient.invalidateQueries({ queryKey: ['planning'] });
       }
-      requestClose();
+      // §11 review · `closeNow`, not `requestClose`: the save is done but
+      // `saving` only flips back in `finally`, after this line.
+      closeNow();
     } catch (err: any) {
       notify.error(
         err?.response?.data?.message
@@ -5202,6 +5483,7 @@ function DeliverableTasksModal({
     <AnimatedModalShell
       open={open}
       onBackdropClick={requestClose}
+      ariaLabel={`Tasks — ${row.deliverableName}`}
       overlayClassName="bg-black/40"
       cardClassName="w-[720px] max-w-[92vw] max-h-[80vh] flex flex-col rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700"
     >
@@ -5238,40 +5520,54 @@ function DeliverableTasksModal({
                 <label className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                   Preview target
                 </label>
+                {/* §11 (2026-11-13) · The picked date is Sunday-snapped
+                    (same rule as the server), so the header, the dry-run
+                    and Save all see the date that will actually be
+                    stored. §11 review · the snap is NOT written back into
+                    the box while it has focus (it broke typing and the
+                    arrow keys) — the box shows `targetInput` and takes
+                    the snapped date on blur. */}
                 <input
                   type="date"
-                  value={previewTarget}
-                  onChange={(e) => setPreviewTarget(e.target.value)}
+                  value={targetInput}
+                  onChange={(e) => onTargetInputChange(e.target.value)}
+                  onBlur={() => setTargetInput(previewTarget)}
                   disabled={saving}
+                  title="Targets land on Sundays — a mid-week date moves forward to the next Sunday"
                   className="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1 text-[12px] font-mono tabular-nums bg-white dark:bg-slate-900 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
                 />
+                {/* §11 (2026-11-13) · "reset to saved" sits next to the
+                    unsaved hint — i.e. exactly while there IS something
+                    to reset. It used to render only when the preview was
+                    NOT active, where it was always disabled (dead UI). */}
                 {previewing ? (
                   <span className="text-[11px] text-slate-500 dark:text-slate-400 italic">
                     previewing…
                   </span>
                 ) : previewActive ? (
-                  <span className="text-[11px] text-amber-700 dark:text-amber-400">
-                    unsaved — Save commits the new target and these due dates
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPreviewTarget(row.savedDate ?? '');
-                      setManualEdits(new Set());
-                      setDrafts(() => {
-                        const seed: Record<number, string> = {};
-                        for (const t of row.taskList ?? []) seed[t.id] = t.endDate ?? '';
-                        return seed;
-                      });
-                    }}
-                    disabled={saving || previewTarget === (row.savedDate ?? '')}
-                    className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-40"
-                    title="Reset to saved target"
-                  >
-                    reset
-                  </button>
-                )}
+                  <>
+                    <span className="text-[11px] text-amber-700 dark:text-amber-400">
+                      unsaved — Save commits the new target and these due dates
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTargetAndInput(row.savedDate ?? '');
+                        setManualEdits(new Set());
+                        setDrafts(() => {
+                          const seed: Record<number, string> = {};
+                          for (const t of row.taskList ?? []) seed[t.id] = t.endDate ?? '';
+                          return seed;
+                        });
+                      }}
+                      disabled={saving}
+                      className="text-[11px] text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 disabled:opacity-40"
+                      title="Reset to saved target"
+                    >
+                      reset to saved
+                    </button>
+                  </>
+                ) : null}
                 {/* §10 addendum (2026-11-13) · Dry-run outcome when no
                     dates were recalculated — request failed (red) or
                     the server had nothing to schedule against (slate).
@@ -5456,6 +5752,19 @@ type TasksEditorTableProps = {
   onClear?: (taskId: number | string) => void;
 };
 
+// §11 (2026-11-13) · Dark-mode halves of the shared `STATUS_PILL` classes
+// (task-constants only carries the light pair). Same
+// `dark:bg-<color>-900/30 dark:text-<color>-300` recipe as the other
+// pills in this file.
+const STATUS_PILL_DARK: Record<string, string> = {
+  not_started: 'dark:bg-slate-800 dark:text-slate-300',
+  in_progress: 'dark:bg-blue-900/30 dark:text-blue-300',
+  in_review: 'dark:bg-violet-900/30 dark:text-violet-300',
+  completed: 'dark:bg-emerald-900/30 dark:text-emerald-300',
+  on_hold: 'dark:bg-amber-900/30 dark:text-amber-300',
+  cancelled: 'dark:bg-red-900/30 dark:text-red-300',
+};
+
 function TasksEditorTable({
   tasks,
   mode,
@@ -5516,17 +5825,18 @@ function TasksEditorTable({
     );
   };
 
+  // §11 (2026-11-13) · Label + colours from the shared task constants,
+  // keyed on the real `TaskStatus` enum. The pill used to compare against
+  // legacy values (`done`, `blocked`) and print the raw enum string.
   const statusPill = (status: TasksEditorRow['status']) => {
     if (!status) return <span className="text-slate-300 dark:text-slate-600">—</span>;
-    const cls =
-      status === 'done' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
-      status === 'in_progress' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
-      status === 'in_review' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' :
-      status === 'blocked' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
-      'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300';
+    const cls = cn(
+      STATUS_PILL[status] ?? 'bg-slate-100 text-slate-600',
+      STATUS_PILL_DARK[status] ?? 'dark:bg-slate-800 dark:text-slate-300',
+    );
     return (
       <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold', cls)}>
-        {status}
+        {STATUS_LABEL[status] ?? status}
       </span>
     );
   };

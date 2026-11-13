@@ -319,7 +319,7 @@ export function ProjectDetailPage() {
       <div className="px-5 py-6">
         {tab === 'info' && <ProjectInfoTab projectId={projectId} project={project} />}
         {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
-        {tab === 'schedule' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading schedule...</div>}><DeliverablePlanningTab projectId={projectId} /></Suspense>}
+        {tab === 'schedule' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading schedule...</div>}><DeliverablePlanningTab key={projectId} projectId={projectId} /></Suspense>}
         {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
         {tab === 'execution' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading execution...</div>}><ProjectExecutionBoard projectId={projectId} /></Suspense>}
         {tab === 'cost' && showFinance && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading labor cost...</div>}><LaborCostTab projectId={projectId} /></Suspense>}
