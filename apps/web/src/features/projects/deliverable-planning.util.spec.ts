@@ -24,6 +24,10 @@ import {
   earliestIsoMs,
   taskStartForSave,
   taskDatesPatch,
+  lagLabelText,
+  chainArrowTooltip,
+  taskBarTooltip,
+  clickGestureTracker,
   type TargetRowLike,
 } from './deliverable-planning.util';
 
@@ -1085,5 +1089,149 @@ describe('taskDatesPatch', () => {
         ...stored,
       }),
     ).toEqual({ endDate: null });
+  });
+});
+
+// ── §13 (2026-11-15) ────────────────────────────────────────────────
+
+describe('lagLabelText', () => {
+  it('positive lag → the drawn label, per unit', () => {
+    expect(lagLabelText(7, 'CALENDAR_DAYS')).toBe('+7ק');
+    expect(lagLabelText(3, 'WORKING_DAYS')).toBe('+3ימ"ע');
+  });
+
+  it('zero, negative or unusable lag → no label', () => {
+    expect(lagLabelText(0, 'CALENDAR_DAYS')).toBeNull();
+    expect(lagLabelText(-2, 'WORKING_DAYS')).toBeNull();
+    expect(lagLabelText(Number.NaN, 'CALENDAR_DAYS')).toBeNull();
+  });
+});
+
+describe('chainArrowTooltip', () => {
+  const succ = { code: 'CRD-036', name: 'Coordination drawings' };
+  const pred = { code: 'CRD-021', name: 'Survey' };
+  const LRM = '‎';
+
+  it('dashed stub: predecessor without a span, 7 calendar days', () => {
+    expect(
+      chainArrowTooltip({ succ, pred, lag: 7, lagUnit: 'CALENDAR_DAYS', predHasSpan: false, critical: false }),
+    ).toBe(
+      [
+        'תלות: CRD-036 מתחילה אחרי סיום CRD-021',
+        `השהיה: 7 ימים קלנדריים (${LRM}+7ק)`,
+        'ל-CRD-021 אין תאריך התחלה (או שההתחלה מאוחרת מהסיום), ולכן אין לה פס. החץ המקווקו מסמן רק את התלות הנכנסת.',
+      ].join('\n'),
+    );
+  });
+
+  it('normal arrow with a working-day lag', () => {
+    expect(
+      chainArrowTooltip({ succ, pred, lag: 3, lagUnit: 'WORKING_DAYS', predHasSpan: true, critical: false }),
+    ).toBe(['תלות: CRD-036 מתחילה אחרי סיום CRD-021', `השהיה: 3 ימי עבודה (${LRM}+3ימ"ע)`].join('\n'));
+  });
+
+  it('zero lag → "no lag", nothing in parentheses', () => {
+    expect(
+      chainArrowTooltip({ succ, pred, lag: 0, lagUnit: 'WORKING_DAYS', predHasSpan: true, critical: false }),
+    ).toBe(['תלות: CRD-036 מתחילה אחרי סיום CRD-021', 'ללא השהיה'].join('\n'));
+  });
+
+  it('critical arrow → the critical-path line comes last', () => {
+    expect(
+      chainArrowTooltip({ succ, pred, lag: 7, lagUnit: 'CALENDAR_DAYS', predHasSpan: true, critical: true }),
+    ).toBe(
+      ['תלות: CRD-036 מתחילה אחרי סיום CRD-021', `השהיה: 7 ימים קלנדריים (${LRM}+7ק)`, 'על הנתיב הקריטי'].join('\n'),
+    );
+    // …also after the stub explanation.
+    const lines = chainArrowTooltip({ succ, pred, lag: 0, lagUnit: 'CALENDAR_DAYS', predHasSpan: false, critical: true }).split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toBe('על הנתיב הקריטי');
+  });
+
+  it('singular day', () => {
+    expect(
+      chainArrowTooltip({ succ, pred, lag: 1, lagUnit: 'CALENDAR_DAYS', predHasSpan: true, critical: false }).split('\n')[1],
+    ).toBe(`השהיה: יום קלנדרי אחד (${LRM}+1ק)`);
+    expect(
+      chainArrowTooltip({ succ, pred, lag: 1, lagUnit: 'WORKING_DAYS', predHasSpan: true, critical: false }).split('\n')[1],
+    ).toBe(`השהיה: יום עבודה אחד (${LRM}+1ימ"ע)`);
+  });
+
+  it('negative lag reads as a lead, with no label in parentheses (none is drawn)', () => {
+    const line = chainArrowTooltip({ succ, pred, lag: -3, lagUnit: 'WORKING_DAYS', predHasSpan: true, critical: false }).split('\n')[1];
+    expect(line).toBe('הקדמה: 3 ימי עבודה לפני הסיום');
+    expect(line).not.toContain('(');
+    expect(
+      chainArrowTooltip({ succ, pred, lag: -1, lagUnit: 'CALENDAR_DAYS', predHasSpan: true, critical: false }).split('\n')[1],
+    ).toBe('הקדמה: יום קלנדרי אחד לפני הסיום');
+  });
+
+  it('the label in parentheses is exactly what lagLabelText draws', () => {
+    for (const [lag, unit] of [[7, 'CALENDAR_DAYS'], [12, 'WORKING_DAYS']] as const) {
+      const line = chainArrowTooltip({ succ, pred, lag, lagUnit: unit, predHasSpan: true, critical: false }).split('\n')[1];
+      expect(line.endsWith(`(${LRM}${lagLabelText(lag, unit)})`)).toBe(true);
+    }
+  });
+
+  it('a task without a code is named by its name', () => {
+    expect(
+      chainArrowTooltip({
+        succ: { code: null, name: 'Shop drawings' },
+        pred: { name: 'Survey' },
+        lag: 0,
+        lagUnit: 'CALENDAR_DAYS',
+        predHasSpan: false,
+        critical: false,
+      }),
+    ).toBe(
+      [
+        'תלות: Shop drawings מתחילה אחרי סיום Survey',
+        'ללא השהיה',
+        'ל-Survey אין תאריך התחלה (או שההתחלה מאוחרת מהסיום), ולכן אין לה פס. החץ המקווקו מסמן רק את התלות הנכנסת.',
+      ].join('\n'),
+    );
+  });
+});
+
+describe('taskBarTooltip', () => {
+  it('code · name · start → end', () => {
+    expect(
+      taskBarTooltip({ code: 'CRD-036', name: 'Coordination drawings', startIso: '2027-01-04', endIso: '2027-01-11', critical: false }),
+    ).toBe('CRD-036 · Coordination drawings · 2027-01-04 → 2027-01-11');
+  });
+
+  it('no code → starts with the name; critical path keeps its suffix', () => {
+    expect(
+      taskBarTooltip({ code: null, name: 'Survey', startIso: '2027-01-04', endIso: '2027-01-04', critical: true }),
+    ).toBe('Survey · 2027-01-04 → 2027-01-04 · critical path');
+  });
+});
+
+describe('clickGestureTracker', () => {
+  it('no movement, or a wiggle inside the slop → click', () => {
+    expect(clickGestureTracker(100, 3).endsAsClick(100)).toBe(true);
+    const t = clickGestureTracker(100, 3);
+    t.move(101);
+    t.move(98);
+    expect(t.endsAsClick(102)).toBe(true);
+  });
+
+  it('released beyond the slop → drag', () => {
+    expect(clickGestureTracker(100, 3).endsAsClick(103)).toBe(false);
+    const t = clickGestureTracker(100, 3);
+    t.move(140);
+    expect(t.endsAsClick(180)).toBe(false);
+  });
+
+  it('out and BACK to the start is a drag, not a click', () => {
+    const t = clickGestureTracker(100, 3);
+    t.move(160);
+    t.move(120);
+    t.move(101);
+    expect(t.endsAsClick(100)).toBe(false);
+    // …in either direction.
+    const u = clickGestureTracker(100, 3);
+    u.move(60);
+    expect(u.endsAsClick(100)).toBe(false);
   });
 });

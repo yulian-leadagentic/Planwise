@@ -37,6 +37,10 @@ import {
   earliestIsoMs,
   taskDatesPatch,
   type TaskDatesPatch,
+  lagLabelText,
+  chainArrowTooltip,
+  taskBarTooltip,
+  clickGestureTracker,
   isCompleteIsoDate,
   explicitDirtyKeys,
   resetMonthsDraftsToSeed,
@@ -3882,6 +3886,9 @@ function GanttView({
     const initClientX = e.clientX;
     const msPerPx = 86_400_000 / PX_PER_DAY;
     let finalDeltaDays = 0;
+    // §13 (2026-11-15) · Click-vs-drag is decided over the WHOLE gesture
+    // (see `onUp`). The slop matches GanttRow's so both feel the same.
+    const clickTracker = clickGestureTracker(initClientX, 3);
     // Last-committed per-child iso map — reused inside the past-date
     // confirm callback so the modal's Apply re-plays the exact deltas
     // the user let go of.
@@ -3896,6 +3903,7 @@ function GanttView({
     setRollupDragInfo({ groupKey: slot.key, deltaDays: 0 });
 
     const onMove = (ev: PointerEvent) => {
+      clickTracker.move(ev.clientX);
       const dxPx = ev.clientX - initClientX;
       const dxDays = Math.round((dxPx * msPerPx) / 86_400_000);
       // Snap to the nearest 7 days so every child's new target still
@@ -3937,14 +3945,16 @@ function GanttView({
       setRollupDragInfo(null);
 
       // Treat a near-zero drag as a plain click → toggle collapse.
-      // CLICK_SLOP matches GanttRow's middle-drag threshold so the
-      // feel is consistent between per-row and rollup clicks.
-      const CLICK_SLOP = 3;
-      const totalDx = Math.abs(ev.clientX - initClientX);
-      if (totalDx < CLICK_SLOP && finalDeltaDays === 0) {
+      // §13 (2026-11-15) · "Near-zero" now means the pointer NEVER left
+      // the slop during the gesture. Only the release point used to be
+      // checked, so a drag that went out and came back to its start (the
+      // children are already back on their prior drafts by then) was
+      // read as a click and the group collapsed under the user.
+      if (clickTracker.endsAsClick(ev.clientX)) {
         onToggleCollapse(slot.key);
         return;
       }
+      // Out and back: leave the group, and the drafts, as they were.
       if (finalDeltaDays === 0) return;
 
       // Past-date revert. If any resulting target would land before
@@ -4764,6 +4774,9 @@ function GanttRow({
     const initClientX = e.clientX;
     const msPerPx = 86_400_000 / pxPerDay;
     let finalTargetMs = initTargetMs;
+    // §13 (2026-11-15) · Click-vs-drag is decided over the WHOLE gesture
+    // (see the click detection in `onUp`).
+    const clickTracker = clickGestureTracker(initClientX, 3);
     // Track the last-committed draft values so we can re-apply
     // atomically after the past-date confirmation modal.
     let lastTargetIso: string = initTargetDateDraft;
@@ -4780,6 +4793,7 @@ function GanttRow({
     };
 
     const onMove = (ev: PointerEvent) => {
+      clickTracker.move(ev.clientX);
       const dxPx = ev.clientX - initClientX;
       const dxMs = dxPx * msPerPx;
       if (mode === 'middle') {
@@ -4849,9 +4863,12 @@ function GanttRow({
       // Click detection — MIDDLE-mode near-zero drag opens the task
       // list modal instead of committing a target move (client
       // feedback 2026-08-02 items 2+3).
-      const CLICK_SLOP = 3;
-      const totalDx = Math.abs(ev.clientX - initClientX);
-      if (mode === 'middle' && totalDx < CLICK_SLOP) {
+      // §13 (2026-11-15) · Same flaw as the rollup bar had: only the
+      // release point was checked, so a bar dragged out and back to its
+      // start opened the tasks modal. A click is now a gesture that never
+      // left the slop; out-and-back just ends (the move handler has
+      // already put the initial draft back at zero weeks).
+      if (mode === 'middle' && clickTracker.endsAsClick(ev.clientX)) {
         setTargetDateDrafts((s) => ({ ...s, [r.key]: initTargetDateDraft }));
         onBarClick();
         return;
@@ -4982,11 +4999,40 @@ function GanttRow({
   // Lag label — short, Hebrew-flavored suffix to keep the chain readable
   // without ballooning: working-day lags → `+Nימ"ע`, calendar-day lags →
   // `+Nק`. Only emitted when lag > 0; zero-lag arrows stay unlabeled.
-  const lagLabel = (lag: number, unit: 'WORKING_DAYS' | 'CALENDAR_DAYS'): string | null => {
-    if (!Number.isFinite(lag) || lag <= 0) return null;
-    return unit === 'WORKING_DAYS' ? `+${lag}ימ"ע` : `+${lag}ק`;
-  };
+  // §13 (2026-11-15) · now `lagLabelText` in the util, shared with the
+  // arrow's hover text (`chainArrowTooltip`) that quotes it.
   const CLIP_PAD = 2;
+  // §13 (2026-11-15) · Hover targets of the chain arrows. A 1px line (and
+  // a 10px label) cannot be hit, so each arrow gets an invisible twin on
+  // the same geometry — an 8px transparent stroke — and each label an
+  // invisible box. Both are CLIPPED to the task strip (y ≥ 28): the label
+  // of a first-lane arrow is drawn up into the deliverable bar's band
+  // (y 8..24), and a hover target there would swallow the bar's drag and
+  // click. Nothing that is drawn changes.
+  const stripClipId = `dp-strip-clip-${r.key}`;
+  const stripClip = `url(#${stripClipId})`;
+  const arrowHit = {
+    stroke: 'transparent',
+    strokeWidth: 8,
+    fill: 'none',
+    clipPath: stripClip,
+    style: { pointerEvents: 'stroke' as const },
+  };
+  const labelHit = (label: string | null, centerX: number, baselineY: number) => {
+    if (!label) return null;
+    const w = label.length * 7 + 4; // generous box around a 10px mono label
+    return (
+      <rect
+        x={centerX - w / 2}
+        y={baselineY - 9}
+        width={w}
+        height={11}
+        fill="transparent"
+        clipPath={stripClip}
+        style={{ pointerEvents: 'all' }}
+      />
+    );
+  };
 
   return (
     <div
@@ -5103,6 +5149,12 @@ function GanttRow({
             >
               <path d="M 0 0 L 10 5 L 0 10 z" className="fill-slate-400" />
             </marker>
+            {/* §13 (2026-11-15) · The task strip — everything below the
+                deliverable bar. Bounds the arrows' invisible hover
+                targets (see `arrowHit` / `labelHit`). */}
+            <clipPath id={stripClipId}>
+              <rect x={0} y={TASK_STRIP_TOP} width={totalWidth} height={Math.max(0, rowHeightPx - TASK_STRIP_TOP)} />
+            </clipPath>
           </defs>
           {/* Task bars first (under arrows) */}
           {taskBarItems.map((it) => {
@@ -5120,7 +5172,14 @@ function GanttRow({
             const barClass = it.onCriticalPath
               ? 'fill-red-100 stroke-red-500 dark:fill-red-500/20 dark:stroke-red-400'
               : 'fill-blue-100 stroke-blue-500 dark:fill-blue-500/20 dark:stroke-blue-400';
-            const bodyTitle = `${it.code ? `${it.code} · ` : ''}${it.name}${it.onCriticalPath ? ' · critical path' : ''}`;
+            // §13 (2026-11-15) · the hover text now carries the dates.
+            const bodyTitle = taskBarTooltip({
+              code: it.code,
+              name: it.name,
+              startIso: new Date(it.startMs).toISOString().slice(0, 10),
+              endIso: new Date(it.endMs).toISOString().slice(0, 10),
+              critical: it.onCriticalPath,
+            });
             const clippedLeft = rawLeft < -CLIP_PAD;
             const clippedRight = rawRight > totalWidth + CLIP_PAD;
             return (
@@ -5171,11 +5230,22 @@ function GanttRow({
                 : 'stroke-slate-300 dark:stroke-slate-500';
               const strokeW = isCP ? 1.5 : 1;
               const markerId = isCP ? `dp-arrow-cp-${r.key}` : `dp-arrow-nc-${r.key}`;
-              const label = lagLabel(dep.lag, dep.lagUnit);
+              const label = lagLabelText(dep.lag, dep.lagUnit);
               const labelClass = cn(
                 'font-mono text-[10px]',
                 isCP ? 'fill-red-600 dark:fill-red-400' : 'fill-slate-500 dark:fill-slate-400',
               );
+              // §13 (2026-11-15) · What this arrow (and its lag label)
+              // means, as a native tooltip. It sits on the arrow's <g>,
+              // so it shows for both hover targets inside it.
+              const tip = chainArrowTooltip({
+                succ,
+                pred,
+                lag: dep.lag,
+                lagUnit: dep.lagUnit,
+                predHasSpan: pred.hasSpan,
+                critical: isCP,
+              });
 
               // Case A: predecessor has no span — render dashed stub into
               // the successor's left edge so the chain's incoming edge is
@@ -5189,6 +5259,7 @@ function GanttRow({
                 const stubFromX = Math.max(0, sLeft - 14);
                 return (
                   <g key={`arr-${succ.id}-${di}`}>
+                    <title>{tip}</title>
                     <line
                       x1={stubFromX}
                       y1={sY}
@@ -5199,6 +5270,7 @@ function GanttRow({
                       className={strokeClass}
                       markerEnd={`url(#${markerId})`}
                     />
+                    <line x1={stubFromX} y1={sY} x2={sLeft - 2} y2={sY} {...arrowHit} />
                     {label && (
                       <text
                         x={(stubFromX + sLeft) / 2}
@@ -5209,6 +5281,7 @@ function GanttRow({
                         {label}
                       </text>
                     )}
+                    {labelHit(label, (stubFromX + sLeft) / 2, sY - 2)}
                   </g>
                 );
               }
@@ -5246,6 +5319,7 @@ function GanttRow({
               if (pred.lane === succ.lane) {
                 return (
                   <g key={`arr-${succ.id}-${di}`}>
+                    <title>{tip}</title>
                     <line
                       x1={x1}
                       y1={pY}
@@ -5255,6 +5329,7 @@ function GanttRow({
                       className={strokeClass}
                       markerEnd={`url(#${markerId})`}
                     />
+                    <line x1={x1} y1={pY} x2={x2} y2={sY} {...arrowHit} />
                     {label && (
                       <text
                         x={mx}
@@ -5265,20 +5340,24 @@ function GanttRow({
                         {label}
                       </text>
                     )}
+                    {labelHit(label, mx, my - 2)}
                   </g>
                 );
               }
               // Cross-lane: pred's right → short horizontal → vertical → short horizontal into succ's left.
               const elbowX = Math.max(x1 + 4, x2 - 4);
+              const elbowPoints = `${x1},${pY} ${elbowX},${pY} ${elbowX},${sY} ${x2},${sY}`;
               return (
                 <g key={`arr-${succ.id}-${di}`}>
+                  <title>{tip}</title>
                   <polyline
-                    points={`${x1},${pY} ${elbowX},${pY} ${elbowX},${sY} ${x2},${sY}`}
+                    points={elbowPoints}
                     fill="none"
                     strokeWidth={strokeW}
                     className={strokeClass}
                     markerEnd={`url(#${markerId})`}
                   />
+                  <polyline points={elbowPoints} {...arrowHit} />
                   {label && (
                     <text
                       x={elbowX}
@@ -5289,6 +5368,7 @@ function GanttRow({
                       {label}
                     </text>
                   )}
+                  {labelHit(label, elbowX, my - 2)}
                 </g>
               );
             });

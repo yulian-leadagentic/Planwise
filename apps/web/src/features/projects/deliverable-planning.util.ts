@@ -19,6 +19,9 @@
  * `resolveGrouping`, `ganttRangeCaption`, `withPriorDrafts`,
  * `earliestIsoMs`, `taskStartForSave` and `taskDatesPatch`.
  *
+ * §13 (2026-11-15) added `lagLabelText`, `chainArrowTooltip`,
+ * `taskBarTooltip` and `clickGestureTracker`.
+ *
  * §10 (2026-11-13) · Principle: the SAVED `targetDate` is the single
  * source of truth for display. Months is only an input device — a
  * months-derived preview is shown only while the user has a pending
@@ -625,6 +628,109 @@ export function taskDatesPatch(args: {
   const start = taskStartForSave(args);
   if (start === undefined || start === (storedStart ?? '')) return null;
   return { estimatedStartDate: start };
+}
+
+export type LagUnit = 'WORKING_DAYS' | 'CALENDAR_DAYS';
+
+/**
+ * §13 (2026-11-15) · The short lag label drawn next to a Gantt chain
+ * arrow: `+Nימ"ע` for working days, `+Nק` for calendar days. Only a
+ * positive lag gets one (`null` otherwise — zero-lag arrows are bare).
+ * `chainArrowTooltip` quotes this very string, so the label and its
+ * explanation cannot drift apart.
+ */
+export function lagLabelText(lag: number, unit: LagUnit): string | null {
+  if (!Number.isFinite(lag) || lag <= 0) return null;
+  return unit === 'WORKING_DAYS' ? `+${lag}ימ"ע` : `+${lag}ק`;
+}
+
+const lagDaysPhrase = (days: number, unit: LagUnit): string =>
+  unit === 'WORKING_DAYS'
+    ? (days === 1 ? 'יום עבודה אחד' : `${days} ימי עבודה`)
+    : (days === 1 ? 'יום קלנדרי אחד' : `${days} ימים קלנדריים`);
+
+/**
+ * §13 (2026-11-15) · Hover text of one chain arrow (and of its lag
+ * label) in the Gantt's per-row task overlay. Nothing on screen said
+ * what a small `+7ק` with a dashed arrow into a task bar meant. One line
+ * each, in Hebrew like the label it explains:
+ *
+ *   1. the dependency — successor starts after the predecessor ends
+ *      (a task is named by its code, or by its name when it has none);
+ *   2. the lag — spelled out, with the drawn label in parentheses; "no
+ *      lag" for 0; a negative lag reads as a lead (no label is drawn);
+ *   3. only for the dashed stub — why the predecessor has no bar;
+ *   4. only for an arrow drawn as critical — "on the critical path".
+ *
+ * The U+200E before the quoted label keeps its `+N` reading left-to-right
+ * inside the right-to-left sentence.
+ */
+export function chainArrowTooltip(args: {
+  succ: { code?: string | null; name: string };
+  pred: { code?: string | null; name: string };
+  lag: number;
+  lagUnit: LagUnit;
+  /** False for the dashed stub: the predecessor has no drawable span. */
+  predHasSpan: boolean;
+  /** The arrow is drawn in the critical-path colour. */
+  critical: boolean;
+}): string {
+  const ref = (t: { code?: string | null; name: string }): string => t.code || t.name;
+  const pred = ref(args.pred);
+  const lag = Number.isFinite(args.lag) ? args.lag : 0;
+  const label = lagLabelText(lag, args.lagUnit);
+  const lines = [`תלות: ${ref(args.succ)} מתחילה אחרי סיום ${pred}`];
+  if (label) lines.push(`השהיה: ${lagDaysPhrase(lag, args.lagUnit)} (‎${label})`);
+  else if (lag < 0) lines.push(`הקדמה: ${lagDaysPhrase(-lag, args.lagUnit)} לפני הסיום`);
+  else lines.push('ללא השהיה');
+  if (!args.predHasSpan) {
+    lines.push(
+      `ל-${pred} אין תאריך התחלה (או שההתחלה מאוחרת מהסיום), ולכן אין לה פס. החץ המקווקו מסמן רק את התלות הנכנסת.`,
+    );
+  }
+  if (args.critical) lines.push('על הנתיב הקריטי');
+  return lines.join('\n');
+}
+
+/**
+ * §13 (2026-11-15) · Hover text of a task sub-bar in the same overlay:
+ * `<code> · <name> · <start> → <end>` (+ the critical-path suffix it
+ * always had). The dates were missing — the bar's position was the only
+ * hint of when the task runs.
+ */
+export function taskBarTooltip(args: {
+  code?: string | null;
+  name: string;
+  startIso: string;
+  endIso: string;
+  critical: boolean;
+}): string {
+  return `${args.code ? `${args.code} · ` : ''}${args.name} · ${args.startIso} → ${args.endIso}${args.critical ? ' · critical path' : ''}`;
+}
+
+/**
+ * §13 (2026-11-15) · Click or drag? A pointer gesture counts as a CLICK
+ * only if the pointer never left the slop radius during the WHOLE
+ * gesture. The Gantt used to look at the release point alone, so a drag
+ * that went out and came back to where it started was read as a click —
+ * the group collapsed under the user, or the tasks modal opened.
+ * Feed it every pointermove; ask on pointerup.
+ */
+export function clickGestureTracker(startX: number, slopPx: number): {
+  move: (x: number) => void;
+  endsAsClick: (x: number) => boolean;
+} {
+  let maxExcursion = 0;
+  const move = (x: number) => {
+    maxExcursion = Math.max(maxExcursion, Math.abs(x - startX));
+  };
+  return {
+    move,
+    endsAsClick: (x: number) => {
+      move(x);
+      return maxExcursion < slopPx;
+    },
+  };
 }
 
 /** Snapshot of the server values the drafts are (re)seeded from. */
