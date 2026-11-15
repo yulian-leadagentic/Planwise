@@ -15,6 +15,17 @@
  *   Mon 2026-11-09 · Tue 2026-11-10
  *
  * All date comparisons use the YYYY-MM-DD prefix of the ISO string.
+ *
+ * §12 (2026-11-14) · The clock is pinned (see `SUITE_TODAY` below). The
+ * engine reads `new Date()` as "today" — the forward pass and the
+ * resource-leveling runway both start at max(project.startDate, today) —
+ * and these fixtures use fixed November-2026 anchors with no project
+ * start, so the run date leaked into the results: the two D2 "spill to
+ * the previous working day" specs went red from 2026-11-10 (today past
+ * the day the spill lands on → flagged `overload`) and the D7 diamond was
+ * only ever green on 2026-11-03 / 11-04 (its float math needs ES(A) to be
+ * exactly the documented "today"). Nothing in the engine is wrong there;
+ * the specs simply never said which day they run on.
  */
 import { NotFoundException } from '@nestjs/common';
 
@@ -34,6 +45,49 @@ type Task = {
 function iso(d: Date): string {
   return d.toISOString().split('T')[0];
 }
+
+/**
+ * §12 (2026-11-14) · "Today" for every spec in this file unless a spec
+ * pins its own: Tue 2026-10-27 — before every November anchor used
+ * below, so the whole runway is open, and the day the D2 overload spec
+ * already names in its comment. Mid-morning UTC so the UTC calendar day
+ * is the same in any host timezone.
+ */
+const SUITE_TODAY = new Date('2026-10-27T09:00:00.000Z');
+
+/**
+ * Fake ONLY `Date`. The service awaits jest-mocked Prisma promises;
+ * leaving the timer / microtask APIs real keeps that plumbing untouched,
+ * so pinning the clock cannot change anything but "what day is it".
+ */
+const REAL_TIMER_APIS = [
+  'hrtime',
+  'nextTick',
+  'performance',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+  'setImmediate',
+  'clearImmediate',
+  'setInterval',
+  'clearInterval',
+  'setTimeout',
+  'clearTimeout',
+] as const;
+
+beforeAll(() => {
+  jest.useFakeTimers({ doNotFake: [...REAL_TIMER_APIS] });
+});
+beforeEach(() => {
+  // Re-pin before every spec — one that moves the clock (D7) must not
+  // leak its date into the next.
+  jest.setSystemTime(SUITE_TODAY);
+});
+afterAll(() => {
+  jest.useRealTimers();
+});
 
 function makeTask(partial: Partial<Task> & { id: number }): Task {
   return {
@@ -109,6 +163,14 @@ function makePrisma(fixture: {
         },
         zone: { id: fixture.deliverable.zoneId, projectId: 1 },
       }),
+      // §12 · scope lookup: no OTHER dated target for the deliverable.
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    // §12 · scope lookup: a flat project (the target's zone has no
+    // sub-zones), so the scope is the target's zone alone — the shape
+    // every pre-§12 spec in this file was written for.
+    zone: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     task: {
       findMany: jest.fn().mockResolvedValue(fixture.tasks),
@@ -739,6 +801,10 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
   // Base date = today (2026-11-03, Tue). Forward pass:
   //   ES_A=11-03, ES_B=11-04, ES_C=11-04, EF_C=11-08, ES_D=11-09.
   it('D7 · diamond: critical path flows through the longer branch', async () => {
+    // §12 (2026-11-14) · The premise above ("today = Tue 2026-11-03") is
+    // now stated to the engine instead of assumed from the wall clock:
+    // zero project slack needs ES(A) to be exactly that day.
+    jest.setSystemTime(new Date('2026-11-03T09:00:00.000Z'));
     const target = new Date(Date.UTC(2026, 10, 9)); // Mon 2026-11-09
 
     const tasks = [
@@ -898,9 +964,11 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
       expect(iso(preview.scheduled[0].startDate)).toBe('2026-11-17');
 
       // Tasks were loaded for the resolved pair; dry-run never writes.
+      // §12 (2026-11-14) · the zone filter is the target's SCOPE (zone +
+      // sub-zones) — here the zone alone, it has no sub-zones.
       expect(prisma.task.findMany.mock.calls[0][0].where).toMatchObject({
         projectDeliverableId: PD_ID,
-        zoneId: ZONE_ID,
+        zoneId: { in: [ZONE_ID] },
       });
       expect(prisma.task.update).not.toHaveBeenCalled();
       expect(prisma.$transaction).not.toHaveBeenCalled();
@@ -934,5 +1002,551 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
 
       await expect(svc.getProjectIdForProjectDeliverable(227)).rejects.toThrow(NotFoundException);
     });
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// §12 (2026-11-14) · project-shaped fixture for the specs below.
+//
+// `makePrisma` above answers every query with the whole fixture, which
+// is right for a single (deliverable × zone) pair but cannot show WHICH
+// tasks a target picks. This one is where-aware: a zone tree, several
+// targets, tasks that carry their zone + deliverable, and Prisma mocks
+// that filter the way the real queries do.
+// ════════════════════════════════════════════════════════════════════
+type ZoneFx = { id: number; parentId: number | null; name?: string };
+type TargetFx = {
+  id: number; // ZoneDeliverableTarget id
+  zoneId: number | null;
+  projectDeliverableId: number;
+  targetDate: Date | null;
+};
+type ProjectTask = Task & {
+  zoneId: number | null;
+  projectDeliverableId: number;
+  code: string;
+  name: string;
+};
+
+function makeProjectTask(
+  partial: Partial<ProjectTask> & { id: number; zoneId: number | null; projectDeliverableId: number },
+): ProjectTask {
+  return {
+    ...makeTask(partial),
+    code: `T-${partial.id}`,
+    name: `Task ${partial.id}`,
+    ...partial,
+  } as ProjectTask;
+}
+
+const PROJECT_ID = 59;
+
+function makeProjectPrisma(fx: {
+  zones: ZoneFx[];
+  targets: TargetFx[];
+  tasks: ProjectTask[];
+  deps?: Array<{ taskId: number; dependsOnId: number }>;
+}) {
+  const updates: Array<{ id: number; data: any }> = [];
+  const zoneById = new Map(fx.zones.map((z) => [z.id, z]));
+  const targetRow = (t: TargetFx) => ({
+    id: t.id,
+    zoneId: t.zoneId,
+    projectDeliverableId: t.projectDeliverableId,
+    targetDate: t.targetDate,
+    projectDeliverable: {
+      id: t.projectDeliverableId,
+      name: `Deliverable ${t.projectDeliverableId}`,
+      project: { id: PROJECT_ID, startDate: null },
+    },
+    zone:
+      t.zoneId == null
+        ? null
+        : { id: t.zoneId, name: zoneById.get(t.zoneId)?.name ?? `Zone ${t.zoneId}`, projectId: PROJECT_ID },
+  });
+  // Prisma's `zoneId` filter shapes used by the service: a scalar, null,
+  // or `{ in: [...] }`.
+  const zoneMatches = (taskZoneId: number | null, cond: any): boolean => {
+    if (cond === undefined) return true;
+    if (cond === null) return taskZoneId === null;
+    if (typeof cond === 'object') return taskZoneId !== null && cond.in.includes(taskZoneId);
+    return taskZoneId === cond;
+  };
+
+  const prisma: any = {
+    project: {
+      findUnique: jest.fn().mockResolvedValue({ id: PROJECT_ID, name: 'Sandbox' }),
+    },
+    zone: {
+      findMany: jest.fn().mockImplementation(async ({ where }: any) =>
+        where?.projectId === PROJECT_ID
+          ? fx.zones.map((z) => ({ id: z.id, parentId: z.parentId }))
+          : [],
+      ),
+    },
+    zoneDeliverableTarget: {
+      findUnique: jest.fn().mockImplementation(async ({ where }: any) => {
+        const key = where?.zoneId_projectDeliverableId;
+        if (key) {
+          const hit = fx.targets.find(
+            (t) => t.zoneId === key.zoneId && t.projectDeliverableId === key.projectDeliverableId,
+          );
+          return hit ? { id: hit.id } : null;
+        }
+        const hit = fx.targets.find((t) => t.id === where?.id);
+        return hit ? targetRow(hit) : null;
+      }),
+      // Two callers: the scope lookup (`projectDeliverableId` + dated
+      // only) and the project-wide loops (every target of the project).
+      findMany: jest.fn().mockImplementation(async ({ where }: any) => {
+        let rows = fx.targets;
+        if (where?.projectDeliverableId != null) {
+          rows = rows.filter((t) => t.projectDeliverableId === where.projectDeliverableId);
+        }
+        if (where?.targetDate && 'not' in where.targetDate) {
+          rows = rows.filter((t) => t.targetDate != null);
+        }
+        return rows.map(targetRow);
+      }),
+    },
+    task: {
+      findMany: jest.fn().mockImplementation(async ({ where }: any) => {
+        if (where?.id?.in) return fx.tasks.filter((t) => where.id.in.includes(t.id));
+        return fx.tasks.filter(
+          (t) =>
+            t.projectDeliverableId === where.projectDeliverableId &&
+            zoneMatches(t.zoneId, where.zoneId),
+        );
+      }),
+      update: jest.fn().mockImplementation(async ({ where, data }: any) => {
+        updates.push({ id: where.id, data });
+        return { ...fx.tasks.find((t) => t.id === where.id), ...data };
+      }),
+    },
+    taskDependency: {
+      findMany: jest.fn().mockImplementation(async ({ where }: any) =>
+        (fx.deps ?? [])
+          .filter(
+            (d) => where.taskId.in.includes(d.taskId) && where.dependsOnId.in.includes(d.dependsOnId),
+          )
+          .map((d) => ({ lag: 0, lagUnit: 'WORKING_DAYS', ...d })),
+      ),
+    },
+    timeEntry: { groupBy: jest.fn().mockResolvedValue([]) },
+    calendarDay: { findMany: jest.fn().mockResolvedValue([]) },
+    hrSettings: { findFirst: jest.fn().mockResolvedValue({ weeklyRestDays: [5, 6] }) },
+    workSchedule: { findFirst: jest.fn().mockResolvedValue(null) },
+    $transaction: jest.fn().mockImplementation(async (fn: any) => fn(prisma)),
+  };
+  return { prisma, updates, svc: newService(prisma) };
+}
+
+const ids = (scheduled: Array<{ taskId: number }>): number[] =>
+  scheduled.map((s) => s.taskId).sort((a, b) => a - b);
+
+// ════════════════════════════════════════════════════════════════════
+// §12 (2026-11-14) · S1 — a target schedules its zone AND its sub-zones
+//
+// Staging shape: deliverable 230 targeted on top zone 693 "Building A";
+// task BIM-021 lives in zone 695 "Level 1" (child of 693). The DP row
+// for (230 × 693) lists it, but the exact `zoneId` match dropped it
+// from the dry-run, the reschedule preview and the commit.
+//
+//   693 Building A ── 695 Level 1 ── 696 Wing
+//                  └─ 697 Level 2
+//   700 Building B
+// ════════════════════════════════════════════════════════════════════
+describe('SchedulerService — §12 · target scope covers sub-zones', () => {
+  const PD = 230;
+  const TUE_1110 = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+  const TUE_1117 = new Date(Date.UTC(2026, 10, 17)); // Tue 2026-11-17
+  const ZONES: ZoneFx[] = [
+    { id: 693, parentId: null, name: 'Building A' },
+    { id: 695, parentId: 693, name: 'Level 1' },
+    { id: 696, parentId: 695, name: 'Wing' },
+    { id: 697, parentId: 693, name: 'Level 2' },
+    { id: 700, parentId: null, name: 'Building B' },
+  ];
+  // One assignee per task unless a spec says otherwise — resource
+  // leveling must not blur what these specs are about.
+  const assignee = (id: number) => [{ user: { id, dailyStandardHours: 8 } }];
+
+  it('schedules tasks of descendant zones under the top-zone target (and nothing outside the sub-tree)', async () => {
+    const { prisma, svc } = makeProjectPrisma({
+      zones: ZONES,
+      targets: [{ id: 501, zoneId: 693, projectDeliverableId: PD, targetDate: TUE_1110 }],
+      tasks: [
+        makeProjectTask({ id: 1, zoneId: 693, projectDeliverableId: PD, assignees: assignee(1) }),
+        makeProjectTask({ id: 21, zoneId: 695, projectDeliverableId: PD, assignees: assignee(2) }), // BIM-021
+        makeProjectTask({ id: 22, zoneId: 696, projectDeliverableId: PD, assignees: assignee(3) }), // grandchild
+        makeProjectTask({ id: 98, zoneId: 695, projectDeliverableId: 231, assignees: assignee(4) }), // other deliverable
+        makeProjectTask({ id: 99, zoneId: 700, projectDeliverableId: PD, assignees: assignee(5) }), // other top zone
+      ],
+    });
+
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 501 });
+
+    expect(ids(out.scheduled)).toEqual([1, 21, 22]);
+    // No dependencies → all three are terminal and end on the target.
+    for (const s of out.scheduled) expect(iso(s.endDate)).toBe('2026-11-10');
+    // The task query carries the whole sub-tree of zone 693.
+    expect(prisma.task.findMany.mock.calls[0][0].where).toMatchObject({
+      projectDeliverableId: PD,
+      zoneId: { in: [693, 695, 696, 697] },
+    });
+
+    // Same result through the (ProjectDeliverable × Zone) entry point
+    // the Deliverable Planning preview picker uses.
+    const viaPair = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 693 });
+    expect(ids(viaPair.scheduled)).toEqual([1, 21, 22]);
+  });
+
+  it('a descendant zone with its own target is excluded and scheduled by that target — closest ancestor-or-self wins', async () => {
+    const fixture = () => ({
+      zones: ZONES,
+      targets: [
+        { id: 501, zoneId: 693, projectDeliverableId: PD, targetDate: TUE_1110 },
+        { id: 502, zoneId: 695, projectDeliverableId: PD, targetDate: TUE_1117 }, // own target on Level 1
+        // A row WITHOUT a target date (duration only) is not a target:
+        // it cannot anchor anything, so it must not take Level 2 away
+        // from the Building A target either.
+        { id: 503, zoneId: 697, projectDeliverableId: PD, targetDate: null },
+      ] as TargetFx[],
+      tasks: [
+        makeProjectTask({ id: 1, zoneId: 693, projectDeliverableId: PD, assignees: assignee(1) }),
+        makeProjectTask({ id: 21, zoneId: 695, projectDeliverableId: PD, assignees: assignee(2) }),
+        makeProjectTask({ id: 22, zoneId: 696, projectDeliverableId: PD, assignees: assignee(3) }), // under Level 1
+        makeProjectTask({ id: 23, zoneId: 697, projectDeliverableId: PD, assignees: assignee(4) }), // Level 2
+      ],
+      // 21 (Level 1 scope) is a predecessor of 1 (Building A scope): the
+      // edge crosses two targets, so neither schedule may use it.
+      deps: [{ taskId: 1, dependsOnId: 21 }],
+    });
+    const { svc } = makeProjectPrisma(fixture());
+
+    const top = await svc.scheduleDeliverableDryRun({ deliverableId: 501 });
+    expect(ids(top.scheduled)).toEqual([1, 23]);
+    for (const s of top.scheduled) expect(iso(s.endDate)).toBe('2026-11-10');
+
+    const nested = await svc.scheduleDeliverableDryRun({ deliverableId: 502 });
+    expect(ids(nested.scheduled)).toEqual([21, 22]); // its whole sub-tree, incl. zone 696
+    // Anchored on ITS target — not chained in front of task 1's start.
+    for (const s of nested.scheduled) expect(iso(s.endDate)).toBe('2026-11-17');
+
+    const dateless = await svc.scheduleDeliverableDryRun({ deliverableId: 503 });
+    expect(dateless.scheduled).toEqual([]);
+    expect(dateless.feasibility.reason).toBe('no-anchor');
+
+    // Project-wide: every task exactly once, with its own target's
+    // dates — whatever order the targets come back in.
+    const expected = { 1: '2026-11-10', 21: '2026-11-17', 22: '2026-11-17', 23: '2026-11-10' };
+    for (const reverse of [false, true]) {
+      const fx = fixture();
+      if (reverse) fx.targets.reverse();
+      const { svc: s2 } = makeProjectPrisma(fx);
+      const { preview } = await s2.previewReschedule(PROJECT_ID);
+      expect(preview).toHaveLength(4);
+      expect(Object.fromEntries(preview.map((r) => [r.taskId, r.afterEnd]))).toEqual(expected);
+    }
+  });
+
+  it('a null zone stays an exact match — only tasks with no zone, no tree lookup', async () => {
+    const { prisma, svc } = makeProjectPrisma({
+      zones: ZONES,
+      // The schema does not allow a zone-less ZDT; the engine still
+      // treats one defensively and this pins what it does with it.
+      targets: [{ id: 510, zoneId: null, projectDeliverableId: PD, targetDate: TUE_1110 }],
+      tasks: [
+        makeProjectTask({ id: 5, zoneId: null, projectDeliverableId: PD, assignees: assignee(1) }),
+        makeProjectTask({ id: 6, zoneId: 693, projectDeliverableId: PD, assignees: assignee(2) }),
+      ],
+    });
+
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 510 });
+
+    expect(ids(out.scheduled)).toEqual([5]);
+    expect(prisma.task.findMany.mock.calls[0][0].where.zoneId).toBeNull();
+    expect(prisma.zone.findMany).not.toHaveBeenCalled();
+    expect(prisma.zoneDeliverableTarget.findMany).not.toHaveBeenCalled();
+  });
+
+  it('a dependency between tasks of two zones inside the scope is an in-scope edge', async () => {
+    // 21 (Level 1, 1 wd) → 1 (Building A, 2 wd). Anchor Tue 11-10.
+    //   task 1 : end Tue 11-10, start Mon 11-09 (2 wd inclusive).
+    //   task 21: end = prevWorkingDay(Mon 11-09) = Sun 11-08, start Sun 11-08.
+    const { prisma, svc } = makeProjectPrisma({
+      zones: ZONES,
+      targets: [{ id: 501, zoneId: 693, projectDeliverableId: PD, targetDate: TUE_1110 }],
+      tasks: [
+        makeProjectTask({ id: 1, zoneId: 693, projectDeliverableId: PD, budgetHours: 16, assignees: assignee(1) }),
+        makeProjectTask({ id: 21, zoneId: 695, projectDeliverableId: PD, budgetHours: 8, assignees: assignee(2) }),
+      ],
+      deps: [{ taskId: 1, dependsOnId: 21 }],
+    });
+
+    const out = await svc.scheduleDeliverableDryRun({ deliverableId: 501 });
+    const byId = new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-10');
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-09');
+    // Without the edge task 21 would be terminal and end on the anchor.
+    expect(iso(byId.get(21)!.endDate)).toBe('2026-11-08');
+    expect(iso(byId.get(21)!.startDate)).toBe('2026-11-08');
+    expect(prisma.taskDependency.findMany.mock.calls[0][0].where).toEqual({
+      taskId: { in: [1, 21] },
+      dependsOnId: { in: [1, 21] },
+    });
+  });
+
+  it('the commit paths write the sub-zone task — once, from its own target', async () => {
+    const fixture = () => ({
+      zones: ZONES,
+      targets: [
+        { id: 501, zoneId: 693, projectDeliverableId: PD, targetDate: TUE_1110 },
+        { id: 502, zoneId: 697, projectDeliverableId: PD, targetDate: TUE_1117 },
+      ] as TargetFx[],
+      tasks: [
+        makeProjectTask({ id: 1, zoneId: 693, projectDeliverableId: PD, assignees: assignee(1) }),
+        makeProjectTask({ id: 21, zoneId: 695, projectDeliverableId: PD, assignees: assignee(2) }),
+        makeProjectTask({ id: 23, zoneId: 697, projectDeliverableId: PD, assignees: assignee(3) }),
+      ],
+    });
+
+    // Project-wide "Save & update due dates".
+    const a = makeProjectPrisma(fixture());
+    const res = await a.svc.saveAndUpdateDueDates(PROJECT_ID, 7);
+    expect(res.requiresReview).toEqual([]);
+    expect([...res.autoApplied].sort((x, y) => x.taskId - y.taskId)).toEqual([
+      { taskId: 1, newStart: '2026-11-10', newEnd: '2026-11-10' },
+      { taskId: 21, newStart: '2026-11-10', newEnd: '2026-11-10' }, // Level 1 → Building A target
+      { taskId: 23, newStart: '2026-11-17', newEnd: '2026-11-17' }, // Level 2 → its own target
+    ]);
+    expect(a.updates.map((u) => u.id).sort((x, y) => x - y)).toEqual([1, 21, 23]);
+
+    // Single-target commit (`POST deliverables/:id/schedule/commit`).
+    const b = makeProjectPrisma(fixture());
+    await b.svc.scheduleDeliverableAndCommit({ deliverableId: 501 }, 7);
+    expect(b.updates.map((u) => u.id).sort((x, y) => x - y)).toEqual([1, 21]);
+    expect(iso(b.updates.find((u) => u.id === 21)!.data.endDate)).toBe('2026-11-10');
+  });
+
+  it('the overload scan sees a sub-zone task and reports it under the target (DP row) zone', async () => {
+    // Today (pinned) = Tue 2026-10-27 = the target day. Two full-day
+    // tasks for the SAME assignee: the first fills the day, the second
+    // has no runway left before "today" → overload. The second lives in
+    // the sub-zone, so before §12 it was not even loaded.
+    const today = new Date(Date.UTC(2026, 9, 27));
+    const { svc } = makeProjectPrisma({
+      zones: ZONES,
+      targets: [{ id: 501, zoneId: 693, projectDeliverableId: PD, targetDate: today }],
+      tasks: [
+        makeProjectTask({ id: 1, zoneId: 693, projectDeliverableId: PD, budgetHours: 8, assignees: assignee(1) }),
+        makeProjectTask({ id: 21, zoneId: 695, projectDeliverableId: PD, budgetHours: 8, assignees: assignee(1) }),
+      ],
+    });
+
+    const res = await svc.scanProjectOverload(PROJECT_ID);
+
+    expect(res.flaggedTasks).toHaveLength(1);
+    expect(res.flaggedTasks[0]).toMatchObject({
+      taskId: 21,
+      infeasibleReason: 'overload',
+      deliverableId: 501,
+      zoneId: 693,
+      zoneName: 'Building A',
+    });
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// §12 (2026-11-14) · S2 — a manually-overridden task with no usable
+// stored start
+//
+// The backward pass used `estimatedStartDate ?? startDate ?? anchor`, so
+// a manual task with no stored start "started" on the anchor — after its
+// own end — and its predecessors were chained from there. Rows whose
+// stored start is after their stored end (left by an end-only edit) had
+// the same effect.
+// ════════════════════════════════════════════════════════════════════
+describe('SchedulerService — §12 · override-skipped task without a usable stored start', () => {
+  const TUE_1110 = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+  const WED_1104 = new Date(Date.UTC(2026, 10, 4)); // Wed 2026-11-04
+
+  // Chain 1 → 2 (manual) → 3, anchor Tue 11-10. Task 2 is 2 wd.
+  async function runChain(override: Partial<Task>) {
+    const { prisma } = makePrisma({
+      tasks: [
+        makeTask({ id: 1, budgetHours: 8 }),
+        makeTask({ id: 2, budgetHours: 16, dueDateOverridden: true, ...override }),
+        makeTask({ id: 3, budgetHours: 16 }),
+      ],
+      deps: [
+        { taskId: 2, dependsOnId: 1 },
+        { taskId: 3, dependsOnId: 2 },
+      ],
+      deliverable: { id: 30, targetDate: TUE_1110, zoneId: 1, projectDeliverableId: 30 },
+    });
+    const out = await newService(prisma).scheduleDeliverableDryRun({ deliverableId: 30 });
+    return new Map(out.scheduled.map((s) => [s.taskId, s]));
+  }
+
+  it('no stored start → start is derived from the stored end, never the anchor; the predecessor chains from it', async () => {
+    const byId = await runChain({ estimatedStartDate: null, startDate: null, endDate: WED_1104 });
+
+    // Task 2: end stays the stored Wed 11-04; start = walk 2 wd back
+    // (inclusive) → Tue 11-03. The old code put the start on 11-10.
+    expect(byId.get(2)!.skippedByOverride).toBe(true);
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-04');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-03');
+
+    // Task 1 (1 wd): end = prevWorkingDay(Tue 11-03) = Mon 11-02. Chained
+    // from the anchor-as-start it would have ended on Mon 11-09.
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-02');
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-02');
+
+    // Task 3 is untouched by any of this.
+    expect(iso(byId.get(3)!.endDate)).toBe('2026-11-10');
+    expect(iso(byId.get(3)!.startDate)).toBe('2026-11-09');
+
+    // Invariant: nothing the engine emits starts after it ends.
+    for (const s of byId.values()) {
+      expect(s.startDate.getTime()).toBeLessThanOrEqual(s.endDate.getTime());
+    }
+  });
+
+  it('a stored start that is AFTER the stored end is treated like a missing start', async () => {
+    // The staging rows: an end-only edit pulled the due date before the
+    // estimated start (e.g. start 2027-01-25 / end 2027-01-11).
+    const byId = await runChain({
+      estimatedStartDate: new Date(Date.UTC(2026, 10, 9)), // Mon 11-09 — after the end
+      endDate: WED_1104,
+    });
+
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-04');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-03'); // derived, not 11-09
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-02'); // chained from the derived start
+  });
+
+  it('a usable stored start is still preferred over deriving — the estimate, else the actual start', async () => {
+    // Estimate on/before the end → used as-is (unchanged behaviour).
+    const kept = await runChain({
+      estimatedStartDate: new Date(Date.UTC(2026, 10, 2)), // Mon 11-02
+      endDate: WED_1104,
+    });
+    expect(iso(kept.get(2)!.startDate)).toBe('2026-11-02');
+    expect(iso(kept.get(1)!.endDate)).toBe('2026-11-01'); // prevWorkingDay(Mon 11-02) = Sun 11-01
+
+    // Estimate after the end, actual start usable → the actual start,
+    // exactly as a missing estimate already fell through to it.
+    const actual = await runChain({
+      estimatedStartDate: new Date(Date.UTC(2026, 10, 9)),
+      startDate: new Date(Date.UTC(2026, 10, 2)),
+      endDate: WED_1104,
+    });
+    expect(iso(actual.get(2)!.startDate)).toBe('2026-11-02');
+  });
+
+  it('derived start is on or before the end even when the manual end is a rest day', async () => {
+    // Manual end on Fri 11-06 (rest day), 1 wd, no stored start →
+    // start snaps back to Thu 11-05.
+    const byId = await runChain({
+      budgetHours: 8,
+      estimatedStartDate: null,
+      startDate: null,
+      endDate: new Date(Date.UTC(2026, 10, 6)),
+    });
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-06');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-05');
+  });
+
+  // ─── preview / commit coherence ─────────────────────────────────────
+  //
+  // Zone 9, deliverable 40, anchor Tue 11-10. 31 → 32 (31 precedes 32).
+  //   31: ordinary task, nothing stored            → will move.
+  //   32: manual, end Wed 11-04, NO stored start   → skipped.
+  //   33: manual, start Mon 11-09 / end Wed 11-04  → skipped (bad row).
+  function coherenceFixture() {
+    const one = (id: number) => [{ user: { id, dailyStandardHours: 8 } }];
+    return makeProjectPrisma({
+      zones: [{ id: 9, parentId: null, name: 'Zone 9' }],
+      targets: [{ id: 601, zoneId: 9, projectDeliverableId: 40, targetDate: TUE_1110 }],
+      tasks: [
+        makeProjectTask({ id: 31, zoneId: 9, projectDeliverableId: 40, budgetHours: 8, assignees: one(1) }),
+        makeProjectTask({
+          id: 32,
+          zoneId: 9,
+          projectDeliverableId: 40,
+          budgetHours: 16,
+          dueDateOverridden: true,
+          estimatedStartDate: null,
+          endDate: WED_1104,
+          assignees: one(2),
+        }),
+        makeProjectTask({
+          id: 33,
+          zoneId: 9,
+          projectDeliverableId: 40,
+          budgetHours: 8,
+          dueDateOverridden: true,
+          estimatedStartDate: new Date(Date.UTC(2026, 10, 9)),
+          endDate: WED_1104,
+          assignees: one(3),
+        }),
+      ],
+      deps: [{ taskId: 32, dependsOnId: 31 }],
+    });
+  }
+
+  it('previewReschedule: a skipped task does not move and its "after" dates are its stored dates', async () => {
+    const { svc } = coherenceFixture();
+
+    const { preview, projectSummary } = await svc.previewReschedule(PROJECT_ID);
+    const byId = new Map(preview.map((r) => [r.taskId, r]));
+
+    // 32 — stored start is null and STAYS null; no invented dates.
+    expect(byId.get(32)).toMatchObject({
+      skippedByOverride: true,
+      willMove: false,
+      beforeStart: null,
+      afterStart: null,
+      beforeEnd: '2026-11-04',
+      afterEnd: '2026-11-04',
+      delta: { startDays: null, endDays: 0 },
+    });
+    // 33 — the inverted stored pair is reported as stored, not "fixed".
+    expect(byId.get(33)).toMatchObject({
+      skippedByOverride: true,
+      willMove: false,
+      afterStart: '2026-11-09',
+      afterEnd: '2026-11-04',
+      delta: { startDays: 0, endDays: 0 },
+    });
+    // 31 — moves, and is chained from 32's DERIVED start (Tue 11-03):
+    // end = prevWorkingDay(11-03) = Mon 11-02.
+    expect(byId.get(31)).toMatchObject({
+      skippedByOverride: false,
+      willMove: true,
+      afterStart: '2026-11-02',
+      afterEnd: '2026-11-02',
+    });
+    expect(projectSummary.movedTasks).toBe(1);
+  });
+
+  it('saveAndUpdateDueDates agrees with the preview: skipped tasks are never written, approved or not', async () => {
+    // Preview-approved path — even with the manual rows ticked.
+    const approved = coherenceFixture();
+    const res = await approved.svc.saveAndUpdateDueDates(PROJECT_ID, 7, { taskIds: [31, 32, 33] });
+    expect(res.autoApplied).toEqual([{ taskId: 31, newStart: '2026-11-02', newEnd: '2026-11-02' }]);
+    expect(approved.updates.map((u) => u.id)).toEqual([31]);
+
+    // Unfiltered path — the manual rows go to the review list instead.
+    const plain = coherenceFixture();
+    const res2 = await plain.svc.saveAndUpdateDueDates(PROJECT_ID, 7);
+    expect(res2.autoApplied.map((a) => a.taskId)).toEqual([31]);
+    expect(res2.requiresReview.map((r) => [r.taskId, r.reason, r.currentEnd, r.proposedEnd])).toEqual([
+      [32, 'manual', '2026-11-04', '2026-11-04'],
+      [33, 'manual', '2026-11-04', '2026-11-04'],
+    ]);
+    expect(plain.updates.map((u) => u.id)).toEqual([31]);
   });
 });

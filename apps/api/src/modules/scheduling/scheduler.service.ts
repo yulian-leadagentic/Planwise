@@ -1,6 +1,11 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExecutionPlanningService } from '../execution-planning/execution-planning.service';
+import {
+  createTargetScopeMemo,
+  loadTargetScopeZoneIds,
+  type TargetScopeMemo,
+} from './target-scope.util';
 
 /**
  * T3 · Working-Day Scheduling Engine
@@ -17,6 +22,11 @@ import { ExecutionPlanningService } from '../execution-planning/execution-planni
  *
  * Algorithm overview:
  *   1. Load the DAG under ZoneDeliverableTarget (deliverableId; optional zoneId).
+ *      §12 (2026-11-14) · "under" = the target's zone AND its sub-zones,
+ *      minus sub-trees that carry their own dated target for the same
+ *      deliverable (closest ancestor-or-self target wins — see
+ *      `target-scope.util.ts`). Edges between tasks of different zones
+ *      inside that scope are ordinary in-scope edges.
  *   2. Load holiday / rest-day sources (org CalendarDay + HrSettings
  *      .weeklyRestDays). Resolve per-assignee dailyStandardHours when a
  *      task has one.
@@ -28,6 +38,9 @@ import { ExecutionPlanningService } from '../execution-planning/execution-planni
  *      startDate = walkBack(endDate, duration).
  *      `dueDateOverridden` short-circuits — the task's stored dates
  *      are preserved and the surrounding chain respects them.
+ *      §12 (2026-11-14) · when such a task has no usable stored start
+ *      (none, or one that is after its own end) the chain uses
+ *      walkBack(storedEnd, duration) instead — never the anchor.
  *   5. Forward pass (base = max(project.startDate, today)): topo
  *      order; earliestStart = max(nextWorkingDay(preds.earliestFinish), base);
  *      earliestFinish = walkForward(earliestStart, duration).
@@ -77,7 +90,17 @@ export interface ScheduledTask {
   startDate: Date;         // Task.estimatedStartDate (working-day aligned)
   endDate: Date;           // Task.endDate (working-day aligned OR the raw anchor when non-working — see §Convention below)
   workingDaysDuration: number;
-  skippedByOverride: boolean; // true if dueDateOverridden preserved the stored dates
+  /**
+   * true if dueDateOverridden preserved the stored dates — the commit
+   * paths never write such a task.
+   * §12 (2026-11-14) · For these rows `startDate` / `endDate` are the
+   * dates the CHAIN is built around, which equal the stored ones only
+   * when the stored ones are usable: a missing end reads as the anchor,
+   * and a missing start — or a stored start that is after the end —
+   * reads as walkBack(end, duration). Never start > end. A consumer that
+   * needs the stored values (the reschedule preview) reads the task row.
+   */
+  skippedByOverride: boolean;
   assigneeId: number | null;  // first assignee (same convention as duration); null = unassigned
   /**
    * D2 (resource leveling + spec rule 13): true when the task cannot be
@@ -207,6 +230,14 @@ export interface SaveAndUpdateDueDatesResult {
  * the amber "חורג מיעד" marker. `hoursLogged` mirrors the review
  * classification used by `saveAndUpdateDueDates` (same TimeEntry
  * groupBy).
+ *
+ * §12 (2026-11-14) · `skippedByOverride` — the task carries a manual
+ * due date (`dueDateOverridden`), so the commit this preview precedes
+ * will NOT write it, approved or not. Such a row never moves: its
+ * "after" dates ARE its stored dates (null stays null) and `willMove`
+ * is false. Before this flag the row showed the dates the scheduler
+ * merely chained around (the anchor in place of a missing start) and
+ * was counted as moving.
  */
 export interface ReschedulePreviewItem {
   taskId: number;
@@ -221,6 +252,7 @@ export interface ReschedulePreviewItem {
   willMove: boolean;
   violatesTarget: boolean;
   hoursLogged: boolean;
+  skippedByOverride: boolean;
 }
 
 export interface ReschedulePreviewResult {
@@ -265,8 +297,17 @@ export class SchedulerService {
     private readonly eps: ExecutionPlanningService,
   ) {}
 
-  async scheduleDeliverableDryRun(inputs: ScheduleInputs): Promise<ScheduleResult> {
-    return this.scheduleDeliverable(inputs, { writeBack: false });
+  /**
+   * §12 (2026-11-14) · `scopeMemo` is for the project-wide loops only —
+   * they dry-run every target of one project in one request and share
+   * the zone tree / dated-target lookups through it. Single-target
+   * callers leave it out.
+   */
+  async scheduleDeliverableDryRun(
+    inputs: ScheduleInputs,
+    scopeMemo?: TargetScopeMemo,
+  ): Promise<ScheduleResult> {
+    return this.scheduleDeliverable(inputs, { writeBack: false, scopeMemo });
   }
 
   /**
@@ -368,12 +409,18 @@ export class SchedulerService {
       },
     });
 
+    // §12 (2026-11-14) · Each target now schedules its zone AND its
+    // sub-zones (minus sub-trees with their own dated target), so a
+    // flagged row's `zoneId` / `zoneName` — taken from the TARGET below —
+    // name the Deliverable Planning row the task is scheduled under,
+    // which for a sub-zone task is an ancestor of the task's own zone.
+    const scopeMemo = createTargetScopeMemo();
     const flaggedTasks: OverloadFlaggedTask[] = [];
     const taskIdsFlagged = new Set<number>();
     for (const t of targets) {
       let result: ScheduleResult;
       try {
-        result = await this.scheduleDeliverableDryRun({ deliverableId: t.id });
+        result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo);
       } catch (err) {
         this.logger.warn(
           `scanProjectOverload: dryRun failed for deliverableId=${t.id} — ${(err as Error).message}`,
@@ -421,7 +468,7 @@ export class SchedulerService {
     for (const t of targets) {
       let result: ScheduleResult;
       try {
-        result = await this.scheduleDeliverableDryRun({ deliverableId: t.id });
+        result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo);
       } catch {
         continue;
       }
@@ -468,6 +515,9 @@ export class SchedulerService {
     // De-dup — a single Task could appear once per deliverable scan
     // if it lives under multiple targets. In practice Task → one
     // (projectDeliverable, zone), so this is defensive.
+    // §12 (2026-11-14) · still defensive: target scopes are disjoint
+    // (closest ancestor-or-self target wins), so a task is scheduled
+    // by exactly one target.
     const seen = new Set<number>();
     const deduped: OverloadFlaggedTask[] = [];
     for (const row of flaggedTasks) {
@@ -595,11 +645,16 @@ export class SchedulerService {
 
     // Per-deliverable dry-run — collect scheduled rows + the
     // deliverable's targetDate for the violatesTarget comparison.
+    // §12 (2026-11-14) · Target scopes are disjoint (a sub-zone task is
+    // scheduled by its closest ancestor-or-self target only), so each
+    // task lands in these maps once and iteration order cannot change
+    // which target's dates it gets.
+    const scopeMemo = createTargetScopeMemo();
     const taskToScheduled = new Map<number, ScheduledTask>();
     const taskToDeliverableTarget = new Map<number, Date | null>();
     for (const t of targets) {
       try {
-        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id });
+        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo);
         for (const s of result.scheduled) {
           taskToScheduled.set(s.taskId, s);
           taskToDeliverableTarget.set(s.taskId, t.targetDate ?? null);
@@ -673,12 +728,22 @@ export class SchedulerService {
       if (!meta) continue;
       const beforeStart = meta.estimatedStartDate ?? null;
       const beforeEnd = meta.endDate ?? null;
-      const afterStart = s.startDate ?? null;
-      const afterEnd = s.endDate ?? null;
+      // §12 (2026-11-14) · A manually-overridden task is never written
+      // by the commit (`saveAndUpdateDueDates` skips it with or without
+      // an approved `taskIds` filter), so the preview must not promise a
+      // move: "after" IS the stored row (null stays null). The
+      // scheduler's own dates for such a task are only what the chain
+      // was built around — the anchor for a missing end, a derived start
+      // for a missing one — and showing them here read as "will move to
+      // dates nobody will ever write".
+      const skippedByOverride = s.skippedByOverride === true;
+      const afterStart = skippedByOverride ? beforeStart : s.startDate ?? null;
+      const afterEnd = skippedByOverride ? beforeEnd : s.endDate ?? null;
 
       // Compare at the day granularity (Prisma @db.Date → midnight UTC).
       const willMove =
-        fmt(beforeStart) !== fmt(afterStart) || fmt(beforeEnd) !== fmt(afterEnd);
+        !skippedByOverride &&
+        (fmt(beforeStart) !== fmt(afterStart) || fmt(beforeEnd) !== fmt(afterEnd));
 
       const target = taskToDeliverableTarget.get(taskId) ?? null;
       const violatesTarget =
@@ -708,6 +773,7 @@ export class SchedulerService {
         willMove,
         violatesTarget,
         hoursLogged: hasHoursLogged.has(taskId),
+        skippedByOverride,
       });
     }
 
@@ -753,10 +819,14 @@ export class SchedulerService {
 
     // Dry-run per deliverable. We keep the target meta so the review
     // rows can carry deliverable/zone names without a second query.
+    // §12 (2026-11-14) · A target's `scheduled` now covers its sub-zones
+    // too; scopes are disjoint, so a task is partitioned exactly once
+    // below. Review rows keep the TARGET's zone id / name (the DP row).
+    const scopeMemo = createTargetScopeMemo();
     const perDeliverable: Array<{ target: (typeof targets)[number]; scheduled: ScheduledTask[] }> = [];
     for (const t of targets) {
       try {
-        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id });
+        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo);
         perDeliverable.push({ target: t, scheduled: result.scheduled });
       } catch (err) {
         this.logger.warn(
@@ -856,9 +926,17 @@ export class SchedulerService {
         if (taskFilter) {
           if (!taskFilter.has(s.taskId)) continue;
           // Explicit PM approval via preview. Write proposed dates
-          // regardless of classification — skippedByOverride's
-          // "proposed" == "current" so that branch is a no-op write;
-          // we skip it to avoid pointless row touches.
+          // regardless of classification — except a manually-overridden
+          // task, which is NEVER written here.
+          // §12 (2026-11-14) · The old reason given ("proposed ==
+          // current, a no-op write") only holds when both stored dates
+          // are usable; with a missing / inverted stored start the
+          // scheduler's dates for the row are stand-ins for the chain,
+          // not a proposal. `previewReschedule` now reports these rows
+          // as `skippedByOverride`, `willMove: false`, after == stored,
+          // so preview and commit agree: a manual due date changes only
+          // through an explicit per-task path (`applyReviewed`, the
+          // task editor, `force-apply-target`).
           if (s.skippedByOverride) continue;
           taskToCommit.set(s.taskId, { newStart: s.startDate, newEnd: s.endDate });
           continue;
@@ -1040,7 +1118,7 @@ export class SchedulerService {
 
   private async scheduleDeliverable(
     inputs: ScheduleInputs,
-    opts: { writeBack: boolean; actorId?: number },
+    opts: { writeBack: boolean; actorId?: number; scopeMemo?: TargetScopeMemo },
   ): Promise<ScheduleResult> {
     // 1. Resolve deliverable + anchor.
     const deliverable = await this.prisma.zoneDeliverableTarget.findUnique({
@@ -1061,12 +1139,36 @@ export class SchedulerService {
     // 2. Load tasks under this (projectDeliverable × zone) with assignees.
     //    We intentionally include completed tasks — the scheduler's
     //    output lets a UI prompt the PM about them separately.
+    //
+    //    §12 (2026-11-14) · "Under this zone" used to be an EXACT
+    //    `zoneId` match, but the Deliverable Planning row for a top zone
+    //    lists the tasks of its sub-zones as well — those were shown and
+    //    never scheduled (staging: target on zone 693, task BIM-021 in
+    //    its child zone 695 missing from dry-run, preview and commit).
+    //    The scope is now the zone + its descendants, minus every
+    //    sub-tree rooted at a descendant zone that has its own dated
+    //    target for this deliverable (that target schedules it), so each
+    //    task is scheduled by exactly one target. A null zone stays an
+    //    exact match: tasks with no zone have no tree to walk.
     const zoneId = inputs.zoneId ?? deliverable.zoneId;
     const projectDeliverableId = deliverable.projectDeliverableId;
+    const scopeZoneIds =
+      zoneId == null
+        ? null
+        : await loadTargetScopeZoneIds(
+            this.prisma,
+            {
+              projectId:
+                deliverable.projectDeliverable?.project?.id ?? deliverable.zone?.projectId ?? null,
+              projectDeliverableId,
+              rootZoneId: zoneId,
+            },
+            opts.scopeMemo,
+          );
     const tasks = (await this.prisma.task.findMany({
       where: {
         projectDeliverableId,
-        zoneId,
+        zoneId: scopeZoneIds == null ? null : { in: scopeZoneIds },
         deletedAt: null,
         isArchived: false,
       },
@@ -1093,6 +1195,10 @@ export class SchedulerService {
     // 3. Load dependency edges whose BOTH ends are inside the loaded set.
     //    D1-Lag (2026-11-03): each edge now carries lag/lagUnit — the
     //    forward/backward passes consult them per edge.
+    //    §12 (2026-11-14) · The loaded set spans the target's sub-zones,
+    //    so an edge between tasks of two different zones of the scope is
+    //    an in-scope edge. An edge into another target's scope stays
+    //    outside, as before.
     const deps = await this.prisma.taskDependency.findMany({
       where: { taskId: { in: taskIds }, dependsOnId: { in: taskIds } },
       select: { taskId: true, dependsOnId: true, lag: true, lagUnit: true },
@@ -1185,12 +1291,31 @@ export class SchedulerService {
 
       // Respect manual override — do NOT touch the task's stored dates.
       if (task.dueDateOverridden) {
-        const sd = task.estimatedStartDate ?? task.startDate ?? anchorDate;
-        const ed = task.endDate ?? anchorDate;
+        // End = the stored end; a task with none still falls back to the
+        // anchor (unchanged).
+        const ed = this.stripTime(task.endDate ?? anchorDate);
+        // §12 (2026-11-14) · Start. The old `estimatedStartDate ??
+        // startDate ?? anchorDate` put a task with no stored start AT THE
+        // ANCHOR — after its own end (staging: start 2027-02-14, end
+        // 2027-02-04) — and its predecessors were then chained from that
+        // start. A stored start that is itself after the end (rows left
+        // by an end-only edit that moved the due date before the start)
+        // is the same problem. Use the first stored start that is on or
+        // before the end — the estimate, then the actual start — and
+        // otherwise derive it the way a scheduled task gets its start:
+        // walk the duration back from the end. `walkWorkingDaysBack`
+        // never returns a day after `ed`, so start ≤ end always holds
+        // and predecessors chain from a sane date. Nothing is written
+        // for this task either way (`skippedByOverride`).
+        const storedStart =
+          [task.estimatedStartDate, task.startDate]
+            .map((d) => (d ? this.stripTime(d) : null))
+            .find((d): d is Date => d !== null && d.getTime() <= ed.getTime()) ?? null;
+        const sd = storedStart ?? walkWorkingDaysBack(ed, dur, isWorkingDay);
         scheduled.set(taskId, {
           taskId,
-          startDate: this.stripTime(sd),
-          endDate: this.stripTime(ed),
+          startDate: sd,
+          endDate: ed,
           workingDaysDuration: dur,
           skippedByOverride: true,
           assigneeId,

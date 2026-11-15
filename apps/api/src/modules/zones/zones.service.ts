@@ -170,7 +170,13 @@ export class ZonesService {
       data: {
         projectId: dto.projectId,
         parentId: dto.parentId ?? null,
-        zoneType: (dto as any).zoneType || "zone",
+        // §12 (2026-11-14) · The old fallback was the legacy code "zone",
+        // which the `ZoneType` enum no longer has — creating a zone
+        // WITHOUT a type therefore failed in Prisma (500) exactly like an
+        // invalid type did. `building` is the column default and what
+        // every other writer in this service falls back to. A provided
+        // value is already validated / normalised by CreateZoneDto.
+        zoneType: dto.zoneType || 'building',
         name: dto.name,
         code: dto.code,
         areaSqm: dto.areaSqm,
@@ -201,7 +207,10 @@ export class ZonesService {
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.code !== undefined) data.code = dto.code;
     if (dto.description !== undefined) data.description = dto.description;
-    if (dto.zoneType !== undefined) data.zoneType = dto.zoneType;
+    // §12 (2026-11-14) · `!= null`: the column is NOT NULL, so a null
+    // that reaches this method without passing the DTO must mean
+    // "leave it", not a Prisma error.
+    if (dto.zoneType != null) data.zoneType = dto.zoneType;
     if (dto.areaSqm !== undefined) data.areaSqm = dto.areaSqm;
     if (dto.isTypical !== undefined) data.isTypical = dto.isTypical;
     if (dto.typicalCount !== undefined) data.typicalCount = dto.typicalCount;

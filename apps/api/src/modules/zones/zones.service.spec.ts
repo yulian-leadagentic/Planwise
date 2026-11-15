@@ -422,3 +422,52 @@ describe('ZonesService.applyProjectTemplate · #196 pure-slot inlining', () => {
     expect(datas.map((d) => d.sortOrder)).toEqual([400, 401]);
   });
 });
+
+// ─── §12 (2026-11-14) · zoneType on create / update ───────────────────
+//
+// The DTO now validates / normalises a PROVIDED zoneType
+// (dto/create-zone.dto.spec.ts). These cover the service side: what is
+// written when none is provided. The create fallback used to be the
+// legacy code "zone", which the `ZoneType` enum no longer has, so a
+// create without a type failed in Prisma just like an invalid one.
+describe('ZonesService — zoneType written by create / update (§12)', () => {
+  function makeCrudService() {
+    const prisma: any = {
+      zone: {
+        findFirst: jest.fn(async () => null), // no parent lookup hit, no last sibling
+        create: jest.fn(async ({ data }: CreateCall) => ({ id: 501, ...data })),
+        update: jest.fn(async ({ where, data }: any) => ({ id: where.id, ...data })),
+      },
+    };
+    const service = new ZonesService(prisma, { materializeFromTasks: jest.fn() } as any);
+    return { service, prisma };
+  }
+
+  it('create without a zoneType falls back to "building" (the column default), never the legacy "zone"', async () => {
+    const { service, prisma } = makeCrudService();
+
+    await service.create({ projectId: 59, name: 'Tower A' } as any);
+
+    expect(prisma.zone.create.mock.calls[0][0].data.zoneType).toBe('building');
+  });
+
+  it('create writes the provided (already validated) zoneType as-is', async () => {
+    const { service, prisma } = makeCrudService();
+
+    await service.create({ projectId: 59, name: 'Level 1', zoneType: 'level' } as any);
+
+    expect(prisma.zone.create.mock.calls[0][0].data.zoneType).toBe('level');
+  });
+
+  it('update leaves the type alone when zoneType is absent or null, and writes it when provided', async () => {
+    const { service, prisma } = makeCrudService();
+    prisma.zone.findFirst.mockResolvedValue({ id: 7, zoneType: 'site' }); // findOne
+
+    await service.update(7, { name: 'Renamed' } as any);
+    await service.update(7, { zoneType: null } as any);
+    await service.update(7, { zoneType: 'wing' } as any);
+
+    const written = prisma.zone.update.mock.calls.map((c: any) => c[0].data);
+    expect(written).toEqual([{ name: 'Renamed' }, {}, { zoneType: 'wing' }]);
+  });
+});

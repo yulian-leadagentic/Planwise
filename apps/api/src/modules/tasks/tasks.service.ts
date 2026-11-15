@@ -7,6 +7,7 @@ import { ActivityLogService } from '../../common/services/activity-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ProjectDeliverablesService } from '../project-deliverables/project-deliverables.service';
 import { taskCompletionValue } from '../../common/task-completion';
+import { resolveStartForMovedEnd } from '../../common/task-dates';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
@@ -682,13 +683,42 @@ export class TasksService {
       newEndDate?.getTime() !== (existing as any).endDate?.getTime() &&
       manualDueDate === true;
 
+    // §12 (2026-11-14) · Invariant: an update never leaves
+    // `estimatedStartDate` AFTER `endDate`.
+    //
+    // Every due-date editor in the web (task drawer, planning grid cell,
+    // the Deliverable-Planning tasks modal, executive review) PATCHes
+    // `{ endDate }` alone. Moving the due date before the stored
+    // estimated start left the start where it was — staging had 12 tasks
+    // stored as e.g. start 2027-01-25 / end 2027-01-11 after a target was
+    // pulled two weeks earlier through the tasks modal, and the
+    // reschedule preview then showed those rows as-is.
+    //
+    // So when the request changes `endDate` to a non-null day, does not
+    // carry `estimatedStartDate`, and the stored start would end up
+    // after the new end, the start moves with it: the task keeps its
+    // previous length, or gets the budget-based length
+    // `forceApplyTargetToTask` uses when it has no valid previous one.
+    // Nothing else is touched — an end moved later, or earlier but still
+    // on/after the start, is a deliberate lengthen/shorten, and a caller
+    // that sends `estimatedStartDate` itself keeps full control of it
+    // (requests carrying both dates are not second-guessed here).
+    const movedEstimatedStart = resolveStartForMovedEnd({
+      newEnd: newEndDate,
+      startProvided: estimatedStartDate !== undefined,
+      storedStart: existing.estimatedStartDate ?? null,
+      storedEnd: existing.endDate ?? null,
+      // A budget change in the same request is the one that will be stored.
+      budgetHours: dto.budgetHours !== undefined ? dto.budgetHours : existing.budgetHours,
+    });
+
     const updated = await this.prisma.task.update({
       where: { id },
       data: {
         ...rest,
         status: dto.status as any,
         priority: dto.priority as any,
-        estimatedStartDate: dateOrNull(estimatedStartDate as any),
+        estimatedStartDate: movedEstimatedStart ?? dateOrNull(estimatedStartDate as any),
         startDate: dateOrNull(startDate as any),
         endDate: dateOrNull(endDate as any),
         ...(shouldMarkOverride ? { dueDateOverridden: true } : {}),
@@ -738,6 +768,12 @@ export class TasksService {
       });
     }
     const nonStatusKeys = Object.keys(dto).filter((k) => k !== 'status');
+    // §12 (2026-11-14) · The start the server moved along with the due
+    // date (see `movedEstimatedStart`) is a real field change — keep it
+    // visible in the audit trail even though the request did not name it.
+    if (movedEstimatedStart && !nonStatusKeys.includes('estimatedStartDate')) {
+      nonStatusKeys.push('estimatedStartDate');
+    }
     if (nonStatusKeys.length > 0) {
       await this.activityLog.logTaskUpdated({
         actorUserId: userId,

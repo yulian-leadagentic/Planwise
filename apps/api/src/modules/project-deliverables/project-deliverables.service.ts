@@ -2,7 +2,13 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import { budgetBasedEstimatedStart } from '../../common/task-dates';
 import { extractServiceMarker } from '../planning/marker-phase-resolver';
+import {
+  createGoverningTargetDateLookup,
+  loadTargetScopeZoneIds,
+  loadZoneTree,
+} from '../scheduling/target-scope.util';
 import { CreateProjectDeliverableDto } from './dto/create-project-deliverable.dto';
 import { UpdateProjectDeliverableDto } from './dto/update-project-deliverable.dto';
 import { ReorderProjectDeliverablesDto } from './dto/reorder-project-deliverables.dto';
@@ -808,7 +814,29 @@ export class ProjectDeliverablesService {
       // choose to keep or overwrite in a follow-up call.
       if (applyToTasks) {
         const taskFilter: any = { projectDeliverableId: it.id, deletedAt: null, isArchived: false };
-        if (zoneId != null) taskFilter.zoneId = zoneId;
+        if (zoneId != null) {
+          // §12 (2026-11-14) · Same scope as the scheduler (one rule,
+          // `target-scope.util.ts`): the zone AND its sub-zones, minus
+          // sub-trees that keep their own dated target for this
+          // deliverable. The exact `zoneId` match that stood here left
+          // sub-zone tasks — which the DP row for a top zone lists —
+          // without the propagated date. Resolved AFTER the upsert /
+          // descendant clean-up above, so a drag-save that just removed
+          // the sub-zone targets propagates to the whole sub-tree.
+          // A deliverable-level item (no zoneId) is unchanged: it still
+          // matches every task of the deliverable.
+          const pd = await this.prisma.projectDeliverable.findUnique({
+            where: { id: it.id },
+            select: { projectId: true },
+          });
+          taskFilter.zoneId = {
+            in: await loadTargetScopeZoneIds(this.prisma, {
+              projectId: pd?.projectId ?? null,
+              projectDeliverableId: it.id,
+              rootZoneId: zoneId,
+            }),
+          };
+        }
 
         const affectedTasks = await this.prisma.task.findMany({
           where: taskFilter,
@@ -828,13 +856,10 @@ export class ProjectDeliverablesService {
 
           // Est. start = due date − ceil(budgetHours / 40) weeks.
           // 40h ≈ one full working week per the client's brief.
-          const budgetH = Number(t.budgetHours ?? 0);
-          const weeks = budgetH > 0 ? Math.ceil(budgetH / 40) : 1;
-          let estStart: Date | null = null;
-          if (targetDate) {
-            estStart = new Date(targetDate);
-            estStart.setUTCDate(estStart.getUTCDate() - weeks * 7);
-          }
+          // (§12 · formula moved to `common/task-dates.ts`, unchanged.)
+          const estStart: Date | null = targetDate
+            ? budgetBasedEstimatedStart(targetDate, t.budgetHours)
+            : null;
 
           await this.prisma.task.update({
             where: { id: t.id },
@@ -863,25 +888,43 @@ export class ProjectDeliverablesService {
       throw new BadRequestException('Task is not linked to a deliverable');
     }
     // Try the zone-scoped target first; fall back to the deliverable-level target.
+    //
+    // §12 (2026-11-14) · "Zone-scoped" = the target that GOVERNS the
+    // task: the closest zone, going from the task's own zone up through
+    // its ancestors, that has a dated target for this deliverable. The
+    // exact-zone lookup that stood here missed every sub-zone task — the
+    // DP row for a top zone lists them, and the PM's "overwrite with the
+    // target" then wrote the deliverable-level date (often none) instead
+    // of the row's. Same rule as the scheduler (`target-scope.util.ts`).
+    const pd = await this.prisma.projectDeliverable.findUnique({
+      where: { id: task.projectDeliverableId },
+      select: { projectId: true, targetDate: true },
+    });
     let targetDate: Date | null = null;
     if (task.zoneId != null) {
-      const zt = await this.prisma.zoneDeliverableTarget.findUnique({
-        where: { zoneId_projectDeliverableId: { zoneId: task.zoneId, projectDeliverableId: task.projectDeliverableId } },
+      // Dated targets only — a row without a target date is not a
+      // target (it was already skipped by the old `if (zt?.targetDate)`).
+      const datedTargets = await this.prisma.zoneDeliverableTarget.findMany({
+        where: { projectDeliverableId: task.projectDeliverableId, targetDate: { not: null } },
+        select: { projectDeliverableId: true, zoneId: true, targetDate: true },
       });
-      if (zt?.targetDate) targetDate = zt.targetDate;
+      // The zone tree is only needed to walk UP: skip it when the task's
+      // own zone has the target, or when there is no zone target at all.
+      const ownZoneHasTarget = datedTargets.some((z) => z.zoneId === task.zoneId);
+      const zones =
+        !ownZoneHasTarget && datedTargets.length > 0 && pd?.projectId != null
+          ? await loadZoneTree(this.prisma, pd.projectId)
+          : [];
+      targetDate = createGoverningTargetDateLookup(zones, datedTargets)(
+        task.projectDeliverableId,
+        task.zoneId,
+      );
     }
     if (!targetDate) {
-      const pd = await this.prisma.projectDeliverable.findUnique({
-        where: { id: task.projectDeliverableId },
-        select: { targetDate: true },
-      });
       targetDate = pd?.targetDate ?? null;
     }
 
-    const budgetH = Number(task.budgetHours ?? 0);
-    const weeks = budgetH > 0 ? Math.ceil(budgetH / 40) : 1;
-    const estStart = targetDate ? new Date(targetDate) : null;
-    if (estStart) estStart.setUTCDate(estStart.getUTCDate() - weeks * 7);
+    const estStart = targetDate ? budgetBasedEstimatedStart(targetDate, task.budgetHours) : null;
 
     return this.prisma.task.update({
       where: { id: taskId },

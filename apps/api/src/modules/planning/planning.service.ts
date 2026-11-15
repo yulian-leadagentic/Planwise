@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { withQueryTimeout } from '../../common/query-timeout';
 import { extractServiceMarker, resolvePhasesByMarkerNames } from './marker-phase-resolver';
+import { createGoverningTargetDateLookup } from '../scheduling/target-scope.util';
 
 /**
  * QA5 UI-15 — identity key for the typical-rank cache. Tasks don't
@@ -247,13 +248,27 @@ export class PlanningService {
       },
     });
     const deliverableTargetById = new Map<number, Date | null>();
-    const zoneDeliverableTargetById = new Map<string, Date | null>();
     for (const d of deliverableRows) {
       deliverableTargetById.set(d.id, d.targetDate ?? null);
-      for (const zt of d.zoneTargets) {
-        zoneDeliverableTargetById.set(`${d.id}:${zt.zoneId}`, zt.targetDate ?? null);
-      }
     }
+    // §12 (2026-11-14) · "Per-(zone × deliverable) target" = the target
+    // that GOVERNS the task: the closest zone, from the task's own zone
+    // up through its ancestors, with a dated target for the deliverable.
+    // The lookup that stood here keyed on the task's exact zoneId, so a
+    // task in a sub-zone of a targeted top zone — which is how the
+    // Deliverable Planning screen plans it — showed the deliverable-level
+    // date, or none. One rule with the scheduler and
+    // `forceApplyTargetToTask` (`scheduling/target-scope.util.ts`).
+    const governingZoneTargetDate = createGoverningTargetDateLookup(
+      flatZones,
+      deliverableRows.flatMap((d) =>
+        d.zoneTargets.map((zt) => ({
+          projectDeliverableId: d.id,
+          zoneId: zt.zoneId,
+          targetDate: zt.targetDate,
+        })),
+      ),
+    );
 
     // Build a flat zoneId → name lookup from the zone tree. Used to
     // resolve each task's full zone breadcrumb so the planning grid
@@ -342,7 +357,7 @@ export class PlanningService {
       let deliverableTargetDate: Date | null = null;
       if (t.projectDeliverableId != null) {
         if (t.zoneId != null) {
-          deliverableTargetDate = zoneDeliverableTargetById.get(`${t.projectDeliverableId}:${t.zoneId}`) ?? null;
+          deliverableTargetDate = governingZoneTargetDate(t.projectDeliverableId, t.zoneId);
         }
         if (!deliverableTargetDate) {
           deliverableTargetDate = deliverableTargetById.get(t.projectDeliverableId) ?? null;

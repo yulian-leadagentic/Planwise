@@ -5,6 +5,7 @@ import { TasksService } from './tasks.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ProjectDeliverablesService } from '../project-deliverables/project-deliverables.service';
 
 /**
  * Unit tests for the parts of TasksService that carry real security and
@@ -74,6 +75,16 @@ describe('TasksService', () => {
         {
           provide: NotificationsService,
           useValue: { create: jest.fn() },
+        },
+        // §12 (2026-11-14) · TasksService has injected
+        // ProjectDeliverablesService since DP-EMPTY-3 (c14ad26,
+        // 2026-11-08) but this module never provided it, so `compile()`
+        // threw and EVERY spec in this file failed in `beforeEach`.
+        // Only `create()` calls it (materializeFromTasks) — a no-op stub
+        // is enough for the paths covered here.
+        {
+          provide: ProjectDeliverablesService,
+          useValue: { materializeFromTasks: jest.fn() },
         },
       ],
     }).compile();
@@ -281,6 +292,138 @@ describe('TasksService', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
 
       expect(prisma.task.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── §12 (2026-11-14) · estimatedStartDate never ends up after endDate ──
+  //
+  // Every due-date editor in the web PATCHes `{ endDate }` alone. Moving
+  // the due date before the stored estimated start used to leave the
+  // start behind — staging had tasks stored as start 2027-01-25 / end
+  // 2027-01-11 after a target was pulled two weeks earlier through the
+  // Deliverable-Planning tasks modal.
+  describe('update — an end-only edit keeps estimatedStartDate ≤ endDate (§12)', () => {
+    const TASK_ID = 88;
+    const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+    const iso = (v: Date | null | undefined) => (v ? v.toISOString().slice(0, 10) : v);
+    const stored = (over: Record<string, unknown> = {}) => ({
+      id: TASK_ID,
+      projectId: 1,
+      code: 'BIM-021',
+      name: 'Model level 1',
+      status: 'in_progress',
+      isPersonal: false,
+      zoneId: 695,
+      budgetHours: 8,
+      estimatedStartDate: d('2027-01-18'),
+      endDate: d('2027-01-25'), // 7 calendar days long
+      ...over,
+    });
+    /** Runs the update and returns the `data` handed to Prisma. */
+    async function patch(existing: Record<string, unknown>, dto: Record<string, unknown>) {
+      prisma.task.findFirst.mockResolvedValue(existing);
+      prisma.task.update.mockImplementation(async ({ data }: any) => ({ ...existing, ...data }));
+      await service.update(TASK_ID, dto as any, 7);
+      return prisma.task.update.mock.calls[0][0].data;
+    }
+
+    it('end moved BEFORE the stored start → the start moves too and the task keeps its length', async () => {
+      // The tasks-modal payload: `{ endDate, manualDueDate }`, two weeks earlier.
+      const data = await patch(stored(), { endDate: '2027-01-11', manualDueDate: true });
+
+      expect(iso(data.endDate)).toBe('2027-01-11');
+      expect(iso(data.estimatedStartDate)).toBe('2027-01-04'); // still 7 days
+      expect(data.dueDateOverridden).toBe(true); // the manual flag is unaffected
+      expect('manualDueDate' in data).toBe(false);
+    });
+
+    it('accepts a full ISO timestamp for the new end (compared by UTC day)', async () => {
+      const data = await patch(stored(), { endDate: '2027-01-11T00:00:00.000Z' });
+      expect(iso(data.estimatedStartDate)).toBe('2027-01-04');
+    });
+
+    it('end moved earlier but still on/after the start → a shorten; the start is not touched', async () => {
+      const data = await patch(stored(), { endDate: '2027-01-20' });
+
+      expect(iso(data.endDate)).toBe('2027-01-20');
+      expect(data.estimatedStartDate).toBeUndefined(); // Prisma leaves the column alone
+
+      // Boundary: the end lands exactly ON the start.
+      prisma.task.update.mockClear();
+      const sameDay = await patch(stored(), { endDate: '2027-01-18' });
+      expect(sameDay.estimatedStartDate).toBeUndefined();
+    });
+
+    it('end moved later → a lengthen; the start is not touched', async () => {
+      const data = await patch(stored(), { endDate: '2027-02-08' });
+      expect(data.estimatedStartDate).toBeUndefined();
+    });
+
+    it('a request that carries estimatedStartDate keeps full control of it — even a start after the end, even null', async () => {
+      const both = await patch(stored(), { endDate: '2027-01-11', estimatedStartDate: '2027-01-15' });
+      expect(iso(both.estimatedStartDate)).toBe('2027-01-15'); // not rejected, not rewritten
+
+      prisma.task.update.mockClear();
+      const cleared = await patch(stored(), { endDate: '2027-01-11', estimatedStartDate: null });
+      expect(cleared.estimatedStartDate).toBeNull();
+    });
+
+    it('no valid previous length → the budget-based length forceApplyTargetToTask uses', async () => {
+      // (a) already stored inverted (start after end): end-only edit to a
+      //     day that is still before the start → due − ceil(100h/40) = 3 weeks.
+      const inverted = await patch(
+        stored({ estimatedStartDate: d('2027-01-25'), endDate: d('2027-01-11'), budgetHours: 100 }),
+        { endDate: '2027-01-18' },
+      );
+      expect(iso(inverted.estimatedStartDate)).toBe('2026-12-28');
+
+      // (b) no stored end at all, no budget → one week.
+      prisma.task.update.mockClear();
+      const noEnd = await patch(stored({ endDate: null, budgetHours: null }), { endDate: '2027-01-11' });
+      expect(iso(noEnd.estimatedStartDate)).toBe('2027-01-04');
+
+      // (c) a budget change in the same request is the one that counts.
+      prisma.task.update.mockClear();
+      const rebudgeted = await patch(stored({ endDate: null }), { endDate: '2027-01-11', budgetHours: 80 });
+      expect(iso(rebudgeted.estimatedStartDate)).toBe('2026-12-28'); // 80h → 2 weeks
+    });
+
+    it('never invents a start: no stored start, a cleared end, or an unchanged end leave it alone', async () => {
+      const noStart = await patch(stored({ estimatedStartDate: null }), { endDate: '2027-01-11' });
+      expect(noStart.estimatedStartDate).toBeUndefined();
+
+      prisma.task.update.mockClear();
+      const cleared = await patch(stored(), { endDate: null });
+      expect(cleared.endDate).toBeNull();
+      expect(cleared.estimatedStartDate).toBeUndefined();
+
+      // Re-sending the stored end of an already-inverted row is not an
+      // end change — only a real move repairs it.
+      prisma.task.update.mockClear();
+      const resent = await patch(
+        stored({ estimatedStartDate: d('2027-01-25'), endDate: d('2027-01-11') }),
+        { endDate: '2027-01-11' },
+      );
+      expect(resent.estimatedStartDate).toBeUndefined();
+
+      // An update with no dates at all.
+      prisma.task.update.mockClear();
+      const rename = await patch(stored(), { name: 'Renamed' });
+      expect(rename.estimatedStartDate).toBeUndefined();
+      expect(rename.endDate).toBeUndefined();
+    });
+
+    it('records the moved start in the activity log next to the fields the request named', async () => {
+      const activityLog = (service as any).activityLog;
+
+      await patch(stored(), { endDate: '2027-01-11', manualDueDate: true });
+
+      expect(activityLog.logTaskUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({
+          entityId: TASK_ID,
+          changedFields: ['endDate', 'manualDueDate', 'estimatedStartDate'],
+        }),
+      );
     });
   });
 

@@ -138,3 +138,270 @@ describe('ProjectDeliverablesService.setTarget — empty-ZDT prevention', () => 
     expect('estimatedDurationWeeks' in args.create).toBe(false);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════
+// §12 (2026-11-14) · A (deliverable × zone) target owns the tasks of the
+// zone AND its sub-zones — same rule as the scheduler
+// (`scheduling/target-scope.util.ts`): closest ancestor-or-self dated
+// target wins.
+//
+//   693 Building A ── 695 Level 1 ── 696 Wing
+//                  └─ 697 Level 2
+//   700 Building B
+//
+// Where-aware, stateful Prisma mock: the ZDT "table" is mutated by
+// upsert / deleteMany so the scope is resolved against what the batch
+// itself just wrote, as in production.
+// ════════════════════════════════════════════════════════════════════
+type ZoneRow = { id: number; parentId: number | null; path: string; name: string };
+type ZdtRow = { zoneId: number; projectDeliverableId: number; targetDate: Date | null };
+type TaskRow = {
+  id: number;
+  name: string;
+  zoneId: number | null;
+  projectDeliverableId: number;
+  budgetHours: number | null;
+  endDate: Date | null;
+  dueDateOverridden: boolean;
+};
+
+const PD_ID = 230;
+const PROJECT_ID = 59;
+const day = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+const isoDay = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+
+const ZONES: ZoneRow[] = [
+  { id: 693, parentId: null, path: '693', name: 'Building A' },
+  { id: 695, parentId: 693, path: '693/695', name: 'Level 1' },
+  { id: 696, parentId: 695, path: '693/695/696', name: 'Wing' },
+  { id: 697, parentId: 693, path: '693/697', name: 'Level 2' },
+  { id: 700, parentId: null, path: '700', name: 'Building B' },
+];
+
+function task(id: number, zoneId: number | null, extra: Partial<TaskRow> = {}): TaskRow {
+  return {
+    id,
+    name: `Task ${id}`,
+    zoneId,
+    projectDeliverableId: PD_ID,
+    budgetHours: 8,
+    endDate: null,
+    dueDateOverridden: false,
+    ...extra,
+  };
+}
+
+function makeScopedService(fx: { zdts?: ZdtRow[]; tasks: TaskRow[]; pdTargetDate?: Date | null }) {
+  const zdts: ZdtRow[] = [...(fx.zdts ?? [])];
+  const updates = new Map<number, any>();
+  const zoneMatches = (taskZoneId: number | null, cond: any): boolean => {
+    if (cond === undefined) return true;
+    if (cond === null) return taskZoneId === null;
+    if (typeof cond === 'object') return taskZoneId !== null && cond.in.includes(taskZoneId);
+    return taskZoneId === cond;
+  };
+  const findZdt = (zoneId: number, projectDeliverableId: number) =>
+    zdts.find((z) => z.zoneId === zoneId && z.projectDeliverableId === projectDeliverableId);
+
+  const prisma: any = {
+    projectDeliverable: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: PD_ID,
+        projectId: PROJECT_ID,
+        name: 'BIM model',
+        targetDate: fx.pdTargetDate ?? null,
+        targetMonths: null,
+        estimatedDurationWeeks: null,
+      }),
+      update: jest.fn().mockResolvedValue({ id: PD_ID }),
+    },
+    zone: {
+      findUnique: jest.fn().mockImplementation(async ({ where }: any) => ZONES.find((z) => z.id === where.id) ?? null),
+      findMany: jest.fn().mockImplementation(async ({ where }: any) => {
+        // "Option X" descendant clean-up (path prefix) vs the §12 zone
+        // tree (all live zones of the project).
+        if (where?.path?.startsWith) return ZONES.filter((z) => z.path.startsWith(where.path.startsWith));
+        return where?.projectId === PROJECT_ID ? ZONES.map((z) => ({ id: z.id, parentId: z.parentId })) : [];
+      }),
+    },
+    zoneDeliverableTarget: {
+      findUnique: jest.fn().mockImplementation(async ({ where }: any) => {
+        const key = where.zoneId_projectDeliverableId;
+        const hit = findZdt(key.zoneId, key.projectDeliverableId);
+        return hit ? { ...hit, targetMonths: null, estimatedDurationWeeks: null } : null;
+      }),
+      findMany: jest.fn().mockImplementation(async ({ where }: any) =>
+        zdts.filter(
+          (z) =>
+            z.projectDeliverableId === where.projectDeliverableId &&
+            (!(where.targetDate && 'not' in where.targetDate) || z.targetDate != null),
+        ),
+      ),
+      upsert: jest.fn().mockImplementation(async ({ where, create, update }: any) => {
+        const key = where.zoneId_projectDeliverableId;
+        const hit = findZdt(key.zoneId, key.projectDeliverableId);
+        if (hit) hit.targetDate = update.targetDate;
+        else zdts.push({ zoneId: create.zoneId, projectDeliverableId: create.projectDeliverableId, targetDate: create.targetDate });
+      }),
+      deleteMany: jest.fn().mockImplementation(async ({ where }: any) => {
+        for (let i = zdts.length - 1; i >= 0; i--) {
+          if (zdts[i].projectDeliverableId === where.projectDeliverableId && zoneMatches(zdts[i].zoneId, where.zoneId)) {
+            zdts.splice(i, 1);
+          }
+        }
+        return { count: 0 };
+      }),
+    },
+    task: {
+      findMany: jest.fn().mockImplementation(async ({ where }: any) =>
+        fx.tasks.filter(
+          (t) => t.projectDeliverableId === where.projectDeliverableId && zoneMatches(t.zoneId, where.zoneId),
+        ),
+      ),
+      findFirst: jest.fn().mockImplementation(async ({ where }: any) => fx.tasks.find((t) => t.id === where.id) ?? null),
+      update: jest.fn().mockImplementation(async ({ where, data }: any) => {
+        updates.set(where.id, data);
+        return { id: where.id, ...data };
+      }),
+    },
+  };
+  const service = new ProjectDeliverablesService(prisma as any, { write: jest.fn() } as any);
+  return { service, prisma, updates, zdts };
+}
+
+describe('ProjectDeliverablesService.batchSetTargets — §12 · propagation covers sub-zones', () => {
+  const TASKS = () => [
+    task(1, 693),
+    task(21, 695),
+    task(22, 696),
+    task(23, 697),
+    task(24, 695, { dueDateOverridden: true, endDate: day('2026-12-20') }),
+    task(99, 700),
+  ];
+
+  it('propagates to the zone and its sub-zones, except a sub-tree that keeps its own dated target', async () => {
+    const { service, prisma, updates } = makeScopedService({
+      // Level 2 has its own target for this deliverable → stays with it.
+      zdts: [{ zoneId: 697, projectDeliverableId: PD_ID, targetDate: day('2026-12-06') }],
+      tasks: TASKS(),
+    });
+
+    // Months path: 2026-10-01 + 1 month = Sun 2026-11-01 (no snap).
+    const res = await service.batchSetTargets([{ id: PD_ID, zoneId: 693, months: 1 }], '2026-10-01', true, 7);
+
+    expect(prisma.task.findMany.mock.calls[0][0].where).toMatchObject({
+      projectDeliverableId: PD_ID,
+      zoneId: { in: [693, 695, 696] },
+    });
+    // 1 (zone itself), 21 + 22 (sub-zones) get the date; start = due − 1 week (8h).
+    expect([...updates.keys()].sort((a, b) => a - b)).toEqual([1, 21, 22]);
+    for (const id of [1, 21, 22]) {
+      expect(isoDay(updates.get(id).endDate)).toBe('2026-11-01');
+      expect(isoDay(updates.get(id).estimatedStartDate)).toBe('2026-10-25');
+    }
+    // 24 is a manual date inside the scope → reported, never written.
+    expect(res.overriddenTasks).toEqual([
+      { taskId: 24, taskName: 'Task 24', currentDue: '2026-12-20', targetDate: '2026-11-01' },
+    ]);
+  });
+
+  it('an explicit (drag) date clears the sub-zone targets first, so the whole sub-tree follows', async () => {
+    const { service, updates, zdts } = makeScopedService({
+      zdts: [{ zoneId: 697, projectDeliverableId: PD_ID, targetDate: day('2026-12-06') }],
+      tasks: TASKS(),
+    });
+
+    await service.batchSetTargets(
+      [{ id: PD_ID, zoneId: 693, months: null, targetDate: '2026-11-15' }], // a Sunday
+      undefined,
+      true,
+      7,
+    );
+
+    expect(zdts.map((z) => z.zoneId)).toEqual([693]); // Level 2's own target is gone
+    expect([...updates.keys()].sort((a, b) => a - b)).toEqual([1, 21, 22, 23]);
+    expect(isoDay(updates.get(23).endDate)).toBe('2026-11-15');
+  });
+
+  it('a deliverable-level item (no zone) is unchanged: every task of the deliverable, no tree lookup', async () => {
+    const { service, prisma, updates } = makeScopedService({ tasks: TASKS() });
+
+    await service.batchSetTargets([{ id: PD_ID, months: 1 }], '2026-10-01', true, 7);
+
+    expect('zoneId' in prisma.task.findMany.mock.calls[0][0].where).toBe(false);
+    expect(prisma.zone.findMany).not.toHaveBeenCalled();
+    expect([...updates.keys()].sort((a, b) => a - b)).toEqual([1, 21, 22, 23, 99]);
+  });
+
+  it('applyToTasks=false (what the DP tab sends) touches no task and resolves no scope', async () => {
+    const { service, prisma } = makeScopedService({ tasks: TASKS() });
+
+    await service.batchSetTargets([{ id: PD_ID, zoneId: 693, months: 1 }], '2026-10-01', false, 7);
+
+    expect(prisma.task.findMany).not.toHaveBeenCalled();
+    expect(prisma.task.update).not.toHaveBeenCalled();
+    expect(prisma.zone.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProjectDeliverablesService.forceApplyTargetToTask — §12 · closest ancestor-or-self target', () => {
+  const TOP = { zoneId: 693, projectDeliverableId: PD_ID, targetDate: day('2026-11-15') };
+
+  it('a sub-zone task takes the target of the top zone it is planned under', async () => {
+    const { service, prisma } = makeScopedService({
+      zdts: [TOP],
+      tasks: [task(22, 696, { dueDateOverridden: true, endDate: day('2026-12-20') })],
+      pdTargetDate: day('2027-03-07'), // deliverable-level fallback must NOT win
+    });
+
+    await service.forceApplyTargetToTask(22);
+
+    const { data } = prisma.task.update.mock.calls[0][0];
+    expect(isoDay(data.endDate)).toBe('2026-11-15');
+    expect(isoDay(data.estimatedStartDate)).toBe('2026-11-08'); // 8h → one week
+    expect(data.dueDateOverridden).toBe(false);
+  });
+
+  it('a dated target on a closer zone wins over the ancestor', async () => {
+    const { service, prisma } = makeScopedService({
+      zdts: [TOP, { zoneId: 695, projectDeliverableId: PD_ID, targetDate: day('2026-11-29') }],
+      tasks: [task(22, 696), task(21, 695)],
+    });
+
+    await service.forceApplyTargetToTask(22); // zone 696 → parent 695 has the closer target
+    expect(isoDay(prisma.task.update.mock.calls[0][0].data.endDate)).toBe('2026-11-29');
+
+    await service.forceApplyTargetToTask(21); // own zone
+    expect(isoDay(prisma.task.update.mock.calls[1][0].data.endDate)).toBe('2026-11-29');
+    // Own-zone hit needs no zone tree; the first call needed exactly one.
+    expect(prisma.zone.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('a date-less row on the task zone is not a target — the ancestor target applies', async () => {
+    const { service, prisma } = makeScopedService({
+      zdts: [TOP, { zoneId: 695, projectDeliverableId: PD_ID, targetDate: null }],
+      tasks: [task(21, 695)],
+    });
+
+    await service.forceApplyTargetToTask(21);
+
+    expect(isoDay(prisma.task.update.mock.calls[0][0].data.endDate)).toBe('2026-11-15');
+  });
+
+  it('falls back to the deliverable-level target when no zone on the way up has one', async () => {
+    const { service, prisma } = makeScopedService({
+      zdts: [TOP], // Building A only
+      tasks: [task(99, 700), task(5, null, { budgetHours: 100 })],
+      pdTargetDate: day('2027-03-07'),
+    });
+
+    await service.forceApplyTargetToTask(99); // Building B — another tree
+    expect(isoDay(prisma.task.update.mock.calls[0][0].data.endDate)).toBe('2027-03-07');
+
+    await service.forceApplyTargetToTask(5); // zone-less task — no zone target lookup at all
+    const { data } = prisma.task.update.mock.calls[1][0];
+    expect(isoDay(data.endDate)).toBe('2027-03-07');
+    expect(isoDay(data.estimatedStartDate)).toBe('2027-02-14'); // 100h → ceil(100/40) = 3 weeks
+    expect(prisma.zoneDeliverableTarget.findMany).toHaveBeenCalledTimes(1); // only for task 99
+  });
+});
