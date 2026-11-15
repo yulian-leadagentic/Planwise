@@ -15,6 +15,10 @@
  * `isCompleteIsoDate`, `taskProgressCounts`, `mergeRowOrder`,
  * `moveRowKey`.
  *
+ * §12 (2026-11-14) added `canReorderOnto`, `ganttBarBox`,
+ * `resolveGrouping`, `ganttRangeCaption`, `withPriorDrafts`,
+ * `earliestIsoMs`, `taskStartForSave` and `taskDatesPatch`.
+ *
  * §10 (2026-11-13) · Principle: the SAVED `targetDate` is the single
  * source of truth for display. Months is only an input device — a
  * months-derived preview is shown only while the user has a pending
@@ -413,6 +417,214 @@ export function moveRowKey(
   }
   if (at === -1) at = rest.length;
   return [...rest.slice(0, at), fromKey, ...rest.slice(at)];
+}
+
+/**
+ * §12 (2026-11-14) · Drag-reorder is a WITHIN-GROUP operation: a row can
+ * only be dropped on another row of its own group. The saved order is
+ * one flat list, but a row is always drawn inside its group — so a drop
+ * on a foreign group changed the flat order and the row landed somewhere
+ * unrelated to the drop point. `groupOf` maps row key → group key (every
+ * row shares one key when the Gantt is not grouped).
+ */
+export function canReorderOnto(
+  groupOf: ReadonlyMap<string, string>,
+  fromKey: string | null,
+  toKey: string,
+): boolean {
+  if (!fromKey || fromKey === toKey) return false;
+  const from = groupOf.get(fromKey);
+  return from !== undefined && from === groupOf.get(toKey);
+}
+
+/**
+ * §12 (2026-11-14) · Horizontal box of a Gantt row's bar. A real duration
+ * keeps the geometry it always had (left edge at the start, at least
+ * `minWidthPx` wide). A ZERO-week bar had no width at all — it rendered
+ * as a sliver whose drag / resize zones were clipped away — so it gets
+ * `zeroWidthPx`, grown LEFTWARD: its right edge stays on the target date,
+ * the one position on the bar that has to be truthful.
+ */
+export function ganttBarBox(
+  startPx: number,
+  targetPx: number,
+  durationWeeks: number,
+  opts: { minWidthPx: number; zeroWidthPx: number },
+): { leftPx: number; widthPx: number } {
+  if (durationWeeks <= 0) return { leftPx: targetPx - opts.zeroWidthPx, widthPx: opts.zeroWidthPx };
+  return { leftPx: startPx, widthPx: Math.max(opts.minWidthPx, targetPx - startPx) };
+}
+
+export type GroupDim = 'zone' | 'deliverable' | 'service';
+
+/**
+ * §12 (2026-11-14) · What the Group / Sub-group picks mean for the views.
+ * Primary "No grouping" used to fall back to Deliverable, i.e. it looked
+ * exactly like picking Deliverable. It now means NO group level at all:
+ * a flat list of rows, no group headers, nothing to collapse. The
+ * sub-group pick is ignored in that case (the control hides it — a
+ * sub-group of nothing has no meaning), and each row is labelled by its
+ * full identity, Deliverable · Zone, which is what `outerDim` / `innerDim`
+ * carry for the column headers.
+ */
+export function resolveGrouping(
+  primary: GroupDim | null,
+  secondary: GroupDim | null,
+): { grouped: boolean; outerDim: GroupDim; innerDim: GroupDim | null } {
+  if (primary == null) return { grouped: false, outerDim: 'deliverable', innerDim: 'zone' };
+  return { grouped: true, outerDim: primary, innerDim: secondary === primary ? null : secondary };
+}
+
+const trimNumber = (n: number): string => String(Math.round(n * 10) / 10);
+const plural = (n: string, unit: string): string => `${n} ${unit}${n === '1' ? '' : 's'}`;
+
+/**
+ * §12 (2026-11-14) · Caption next to the Gantt's Years / Grid selectors.
+ * It used to read "Showing ~N years at a time", which was never true:
+ * the Years pick sets how far the TIMELINE runs past the base date (the
+ * total range — `spanDays`, which also holds a one-year look-back and
+ * grows when a target lies later), while how much of it is IN VIEW
+ * depends on the grid and the viewport (`visibleDays`): the Month grid
+ * fits two years or more whatever the pick, Week and Day show a slice.
+ * The in-view part is phrased in the grid's own unit.
+ */
+export function ganttRangeCaption(
+  spanDays: number,
+  visibleDays: number,
+  granularity: 'month' | 'week' | 'day',
+): string {
+  const total = `Timeline spans ${plural(trimNumber(spanDays / 365), 'year')}`;
+  // Not measured yet (first paint) → say only what is known.
+  if (!(visibleDays > 0)) return total;
+  if (visibleDays >= spanDays) return `${total}, all in view`;
+  const months = visibleDays / (365 / 12);
+  const inView =
+    granularity === 'day' ? plural(String(Math.max(1, Math.round(visibleDays))), 'day')
+    : granularity === 'week' ? plural(String(Math.max(1, Math.round(visibleDays / 7))), 'week')
+    : months >= 18 ? plural(trimNumber(months / 12), 'year')
+    : plural(String(Math.max(1, Math.round(months))), 'month');
+  return `${total} · ~${inView} in view`;
+}
+
+/**
+ * §12 (2026-11-14) · Put explicit-date drafts back to what they were
+ * before a drag: the prior draft where there was one, no entry otherwise.
+ * Returns the SAME object when nothing changes.
+ */
+export function withPriorDrafts(
+  drafts: DraftMap,
+  priors: readonly { key: string; priorDraft: string }[],
+): DraftMap {
+  let next = drafts;
+  for (const { key, priorDraft } of priors) {
+    if (priorDraft ? next[key] === priorDraft : !(key in next)) continue;
+    if (next === drafts) next = { ...drafts };
+    if (priorDraft) next[key] = priorDraft;
+    else delete next[key];
+  }
+  return next;
+}
+
+/**
+ * §12 (2026-11-14) · Earliest of a set of ISO dates, as UTC ms (null for
+ * none). The rollup drag's past-date check runs on the dates it actually
+ * WRITES (Sunday-snapped), not on the raw shifted ones.
+ */
+export function earliestIsoMs(isos: Iterable<string>): number | null {
+  let earliest: number | null = null;
+  for (const iso of isos) {
+    const ms = new Date(iso).getTime();
+    if (Number.isFinite(ms) && (earliest == null || ms < earliest)) earliest = ms;
+  }
+  return earliest;
+}
+
+const shiftIsoDays = (iso: string, days: number): string =>
+  new Date(new Date(iso).getTime() + days * 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * §12 (2026-11-14) · The START date the tasks modal saves together with
+ * a task's new due date. Saving only the due date left the stored start
+ * behind: after a target move tasks ended up starting AFTER they ended,
+ * or with stretched durations. `undefined` = send no start key.
+ *
+ *   - cleared due date                     → no start;
+ *   - preview-driven row (not hand-edited) → the start of the dry-run row
+ *     that supplied this very due date;
+ *   - hand-edited row, or no matching dry-run row → the stored start
+ *     moved by the same number of days the due date moved, when both
+ *     stored dates exist;
+ *   - a start later than the due date is never sent.
+ */
+export function taskStartForSave(args: {
+  /** Due date being saved ('' / null = cleared). */
+  nextEnd: string | null | undefined;
+  /** The user typed into this row (it is in `manualEdits`). */
+  manual: boolean;
+  /** Dry-run row for this task, if the scheduler returned one. */
+  preview?: { startDate: string; endDate: string } | null;
+  /** Stored dates before this save. */
+  storedStart: string | null | undefined;
+  storedEnd: string | null | undefined;
+}): string | undefined {
+  const { nextEnd, manual, preview, storedStart, storedEnd } = args;
+  if (!nextEnd || !isCompleteIsoDate(nextEnd)) return undefined;
+  let start: string | undefined;
+  if (!manual && preview && preview.endDate === nextEnd && isCompleteIsoDate(preview.startDate)) {
+    start = preview.startDate;
+  } else if (
+    storedStart && storedEnd && isCompleteIsoDate(storedStart) && isCompleteIsoDate(storedEnd)
+  ) {
+    const deltaDays = Math.round(
+      (new Date(nextEnd).getTime() - new Date(storedEnd).getTime()) / 86_400_000,
+    );
+    start = shiftIsoDays(storedStart, deltaDays);
+  }
+  return start !== undefined && start <= nextEnd ? start : undefined;
+}
+
+/** Body of the `PATCH /tasks/:id` the tasks modal sends for one row. */
+export interface TaskDatesPatch {
+  endDate?: string | null;
+  manualDueDate?: true;
+  estimatedStartDate?: string;
+}
+
+/**
+ * §12 (2026-11-14) · What the tasks modal saves for ONE task row — or
+ * `null` when there is nothing to save for it.
+ *
+ *   - due date changed → `endDate` (null when cleared), `manualDueDate`
+ *     for a hand-edited non-empty date, plus the start from
+ *     `taskStartForSave` when there is one;
+ *   - due date UNCHANGED → normally nothing. The one exception: a row
+ *     that is not hand-edited, whose dry-run row carries this very due
+ *     date but a different START than the stored one. The modal shows
+ *     that proposed start, so Save writes it — start only, without
+ *     `endDate` / `manualDueDate`. Before, such a row was skipped.
+ */
+export function taskDatesPatch(args: {
+  /** The row's due-date draft ('' / null = cleared). */
+  nextEnd: string | null | undefined;
+  manual: boolean;
+  preview?: { startDate: string; endDate: string } | null;
+  storedStart: string | null | undefined;
+  storedEnd: string | null | undefined;
+}): TaskDatesPatch | null {
+  const { manual, preview, storedStart, storedEnd } = args;
+  const end = args.nextEnd || null;
+  if ((storedEnd ?? '') !== (end ?? '')) {
+    const payload: TaskDatesPatch = { endDate: end };
+    if (end && manual) payload.manualDueDate = true;
+    const start = taskStartForSave(args);
+    if (start !== undefined) payload.estimatedStartDate = start;
+    return payload;
+  }
+  // Due date unchanged — only the scheduler's own start may still differ.
+  if (manual || !end || !preview || preview.endDate !== end) return null;
+  const start = taskStartForSave(args);
+  if (start === undefined || start === (storedStart ?? '')) return null;
+  return { estimatedStartDate: start };
 }
 
 /** Snapshot of the server values the drafts are (re)seeded from. */

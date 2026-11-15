@@ -29,6 +29,14 @@ import {
   taskProgressCounts,
   mergeRowOrder,
   moveRowKey,
+  canReorderOnto,
+  ganttBarBox,
+  resolveGrouping,
+  ganttRangeCaption,
+  withPriorDrafts,
+  earliestIsoMs,
+  taskDatesPatch,
+  type TaskDatesPatch,
   isCompleteIsoDate,
   explicitDirtyKeys,
   resetMonthsDraftsToSeed,
@@ -92,6 +100,13 @@ function rowDimLabel(r: any, dim: DPGroupDim): string {
   if (dim === 'deliverable') return r.deliverableName ?? `Deliverable #${r.deliverableId}`;
   if (dim === 'zone') return r.topLevelZoneName ?? '—';
   return (r.serviceName ?? '').trim() || 'No service';
+}
+// §12 (2026-11-14) · The group a row is drawn in. With primary = "No
+// grouping" every row shares ONE key: a single bucket that the views
+// render without a header (and that is never in the collapse set).
+const UNGROUPED_KEY = 'all';
+function rowGroupKey(r: Parameters<typeof rowDimKey>[0], grouped: boolean, outerDim: DPGroupDim): string {
+  return grouped ? rowDimKey(r, outerDim) : UNGROUPED_KEY;
 }
 
 /**
@@ -169,7 +184,117 @@ function useModalTransition(isOpen: boolean, exitMs = 150) {
 // §11 (2026-11-13) · Open `AnimatedModalShell`s, oldest first. Escape is
 // handled by the LAST entry only, so with two shells open the top-most
 // one closes first.
+// §12 (2026-11-14) · The plain confirm overlays (`PlainDialogCard`) join
+// the same stack, so "top-most" holds across every dialog of this tab.
 const openModalShells: symbol[] = [];
+
+/**
+ * §12 (2026-11-14) · The dialog plumbing, lifted out of
+ * `AnimatedModalShell` unchanged so the tab's plain confirm overlays get
+ * exactly the same behaviour:
+ *   - Escape → `onEscape` — top-most open dialog only (`openModalShells`);
+ *   - Tab is trapped inside the card (`useFocusTrap` + the two exits it
+ *     leaves open because the CARD takes the initial focus);
+ *   - on open the card takes focus unless focus is already inside it; on
+ *     close / unmount focus returns to whatever had it before.
+ * `cardMounted` is separate from `open` because an animated shell mounts
+ * its card one render after `open` flips.
+ */
+function useDialogPlumbing(
+  open: boolean,
+  cardMounted: boolean,
+  cardRef: React.RefObject<HTMLDivElement>,
+  onEscape: (() => void) | undefined,
+) {
+  // Latest Escape handler, read at keydown time — keeps the Escape effect
+  // keyed on `open` alone so a re-render never reshuffles the stack.
+  const onEscapeRef = useRef(onEscape);
+  onEscapeRef.current = onEscape;
+
+  useFocusTrap(open, cardRef);
+
+  useEffect(() => {
+    if (!open) return;
+    const id = Symbol('dp-modal-shell');
+    openModalShells.push(id);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (openModalShells[openModalShells.length - 1] !== id) return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onEscapeRef.current?.();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      // `useFocusTrap` only wraps first ↔ last. Because the CARD takes
+      // the initial focus, two more exits need closing: Shift+Tab from
+      // the card itself, and Tab while focus sits outside the card.
+      const card = cardRef.current;
+      const active = document.activeElement;
+      if (!card) return;
+      if (active === card ? !e.shiftKey : card.contains(active)) return;
+      const focusables = getFocusable(card);
+      e.preventDefault();
+      ((e.shiftKey ? focusables[focusables.length - 1] : focusables[0]) ?? card).focus();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      const i = openModalShells.indexOf(id);
+      if (i !== -1) openModalShells.splice(i, 1);
+    };
+  }, [open, cardRef]);
+
+  useEffect(() => {
+    if (!open || !cardMounted) return;
+    const card = cardRef.current;
+    if (!card) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!card.contains(previous)) card.focus({ preventScroll: true });
+    return () => {
+      if (previous && previous !== document.body && document.contains(previous)) {
+        previous.focus({ preventScroll: true });
+      }
+    };
+  }, [open, cardMounted, cardRef]);
+}
+
+/**
+ * §12 (2026-11-14) · Card of a PLAIN (non-animated) confirm overlay —
+ * the conflict prompt, the manual-due-dates confirm and
+ * `PastDateConfirmModal`. They were bare `div`s: no dialog role, Escape
+ * did nothing, focus was neither trapped nor restored. This is the same
+ * card element they always rendered (the caller keeps its overlay, its
+ * classes and its content) plus the shared dialog plumbing. `onEscape`
+ * is the modal's CANCEL action; the caller makes it inert while a save
+ * is in flight.
+ */
+function PlainDialogCard({
+  ariaLabel,
+  onEscape,
+  className,
+  children,
+}: {
+  ariaLabel: string;
+  onEscape: () => void;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+  useDialogPlumbing(true, true, cardRef, onEscape);
+  return (
+    <div
+      ref={cardRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={ariaLabel}
+      tabIndex={-1}
+      onClick={(e) => e.stopPropagation()}
+      className={cn('outline-none focus:outline-none', className)}
+    >
+      {children}
+    </div>
+  );
+}
 
 /**
  * §9 (2026-11-12) · Open/close animation tuned to feel "springy but
@@ -224,58 +349,11 @@ function AnimatedModalShell({
 }) {
   const { shouldRender, dataState } = useModalTransition(open, 140);
   const cardRef = useRef<HTMLDivElement>(null);
-  // Latest Escape handler, read at keydown time — keeps the Escape effect
-  // keyed on `open` alone so a re-render never reshuffles the stack.
-  const onEscapeRef = useRef(onEscape ?? onBackdropClick);
-  onEscapeRef.current = onEscape ?? onBackdropClick;
-
-  useFocusTrap(open, cardRef);
-
-  useEffect(() => {
-    if (!open) return;
-    const id = Symbol('dp-modal-shell');
-    openModalShells.push(id);
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (openModalShells[openModalShells.length - 1] !== id) return;
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onEscapeRef.current?.();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      // `useFocusTrap` only wraps first ↔ last. Because the CARD takes
-      // the initial focus, two more exits need closing: Shift+Tab from
-      // the card itself, and Tab while focus sits outside the card.
-      const card = cardRef.current;
-      const active = document.activeElement;
-      if (!card) return;
-      if (active === card ? !e.shiftKey : card.contains(active)) return;
-      const focusables = getFocusable(card);
-      e.preventDefault();
-      ((e.shiftKey ? focusables[focusables.length - 1] : focusables[0]) ?? card).focus();
-    };
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      const i = openModalShells.indexOf(id);
-      if (i !== -1) openModalShells.splice(i, 1);
-    };
-  }, [open]);
-
-  // Keyed on `shouldRender` too: the card only mounts one render after
-  // `open` flips (see `useModalTransition`).
-  useEffect(() => {
-    if (!open || !shouldRender) return;
-    const card = cardRef.current;
-    if (!card) return;
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (!card.contains(previous)) card.focus({ preventScroll: true });
-    return () => {
-      if (previous && previous !== document.body && document.contains(previous)) {
-        previous.focus({ preventScroll: true });
-      }
-    };
-  }, [open, shouldRender]);
+  // §12 (2026-11-14) · Escape / focus trap / focus restore now live in
+  // `useDialogPlumbing` (shared with the plain confirm overlays). The
+  // card only mounts one render after `open` flips (see
+  // `useModalTransition`), hence `shouldRender` as the "mounted" signal.
+  useDialogPlumbing(open, shouldRender, cardRef, onEscape ?? onBackdropClick);
 
   if (!shouldRender) return null;
   return (
@@ -449,8 +527,12 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   useEffect(() => {
     try { localStorage.setItem(groupingKey, JSON.stringify(grouping)); } catch { /* ignore */ }
   }, [grouping, groupingKey]);
-  const outerDim: DPGroupDim = grouping.primary ?? 'deliverable';
-  const innerDim: DPGroupDim | null = grouping.secondary;
+  // §12 (2026-11-14) · Primary "No grouping" used to fall back to
+  // Deliverable here, so it rendered exactly like picking Deliverable.
+  // `grouped: false` now means a FLAT list in both views — no group
+  // headers, no rollups, nothing to collapse — with each row labelled
+  // Deliverable · Zone (what `outerDim` / `innerDim` then carry).
+  const { grouped, outerDim, innerDim } = resolveGrouping(grouping.primary, grouping.secondary);
 
   // Draft edits keyed by `${deliverableId}:${zoneId}`. Empty string = clear.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -1261,6 +1343,20 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     setTargetDateDrafts({});
     resetMonthsDraftsFor(savedExplicitKeys);
   };
+  // §12 (2026-11-14) · The whole post-persist sequence in one place:
+  // refetch BOTH queries (the saved target lives on the deliverables
+  // query, the per-task target on the planning one), and only THEN drop
+  // the drafts — dropping first would redraw the bars from the old saved
+  // dates until the refetch lands. It has to follow EVERY successful
+  // persist: `previewMutation` also runs it when its reschedule preview
+  // fails after the targets were written.
+  const settleSavedTargets = async (savedExplicitKeys: string[]) => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] }),
+      queryClient.invalidateQueries({ queryKey: ['planning', projectId] }),
+    ]);
+    dropSavedTargetDrafts(savedExplicitKeys);
+  };
   // Same rule for the one row the tasks modal just committed.
   const onModalTargetCommitted = (rowKey: string) => {
     setTargetDateDrafts((prev) => {
@@ -1282,11 +1378,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       // snapped the drag onto the Sunday that was already saved — the
       // rows then come back unchanged and the reconcile effect has no
       // "server date changed" signal to drop the draft on.
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] }),
-        queryClient.invalidateQueries({ queryKey: ['planning', projectId] }),
-      ]);
-      dropSavedTargetDrafts(payload?.explicitKeys ?? []);
+      await settleSavedTargets(payload?.explicitKeys ?? []);
       const updated = payload?.updated ?? 0;
       notify.success(`Saved ${updated} deliverable target${updated === 1 ? '' : 's'}`);
       // Task due-date conflicts are handled up-front by the per-task
@@ -1383,6 +1475,14 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
    * was audit-logged twice). The keys of the rows saved on the explicit
    * branch travel along so its success path can finish the cleanup.
    */
+  // §12 (2026-11-14) · ONE cancel path for the conflict prompt — the
+  // Cancel button, a backdrop click and Escape. Inert while the save is
+  // being applied.
+  const cancelExceed = () => {
+    if (exceedApplying) return;
+    setExceedPrompt(null);
+  };
+
   const confirmExceed = async () => {
     if (!exceedPrompt) return;
     setExceedApplying(true);
@@ -1516,8 +1616,19 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         ? opts.savedExplicitKeys ?? []
         : (await persistTargets()).explicitKeys;
       // Step 2 (§8a): dry-run the project reschedule WITHOUT writing.
-      const resp = await client.post(`/scheduling/projects/${projectId}/preview-reschedule`);
-      return { ...((resp.data?.data ?? resp.data) as PreviewResult), savedExplicitKeys };
+      try {
+        const resp = await client.post(`/scheduling/projects/${projectId}/preview-reschedule`);
+        return { ...((resp.data?.data ?? resp.data) as PreviewResult), savedExplicitKeys };
+      } catch (err) {
+        // §12 (2026-11-14) · The targets ARE saved at this point (step 1,
+        // or the conflict prompt before it) — only the preview failed.
+        // Without the cleanup the rows stayed "unsaved" although they
+        // had been written. The preview error still surfaces (`onError`).
+        try {
+          await settleSavedTargets(savedExplicitKeys);
+        } catch { /* a failed refetch must not mask the preview error */ }
+        throw err;
+      }
     },
     onSuccess: async (data) => {
       // Seed per-row choices: default apply=true for rows that WILL
@@ -1537,11 +1648,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       // target too) and only THEN drop the explicit-date drafts — same
       // reasoning as `save.onSuccess`: clearing before the refetch lands
       // would redraw the bars from the old saved dates.
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['project-deliverables', projectId] }),
-        queryClient.invalidateQueries({ queryKey: ['planning', projectId] }),
-      ]);
-      dropSavedTargetDrafts(data.savedExplicitKeys);
+      await settleSavedTargets(data.savedExplicitKeys);
     },
     onError: (err: any) => notify.apiError(err, 'Failed to preview reschedule'),
     onSettled: () => setPreviewing(false),
@@ -1706,6 +1813,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // groups that were collapsed but hidden by filters — the intent of
   // "expand all" is "leave nothing collapsed").
   const collapseAll = () => {
+    // §12 · A flat (ungrouped) list has nothing to collapse — and the
+    // keys below would silently collapse every Deliverable group for the
+    // moment the user turns grouping back on.
+    if (!grouped) return;
     const keys = new Set<string>();
     for (const r of visibleRows) keys.add(rowDimKey(r, outerDim));
     setCollapsed(keys);
@@ -1735,8 +1846,15 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           with the save. "Apply to all" (Update / Keep) flips the whole
           list at once. */}
       {exceedPrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm" onClick={() => !exceedApplying && setExceedPrompt(null)}>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[720px] max-w-[92vw] max-h-[85vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 backdrop-blur-sm" onClick={cancelExceed}>
+          {/* §12 (2026-11-14) · Real dialog: role + label, Escape = Cancel
+              (inert while the save is being applied), focus trapped and
+              restored. Markup and classes are the card's own, unchanged. */}
+          <PlainDialogCard
+            ariaLabel="Some tasks end after the new deliverable target"
+            onEscape={cancelExceed}
+            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[720px] max-w-[92vw] max-h-[85vh] overflow-hidden flex flex-col"
+          >
             <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
               <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5 text-amber-600" aria-hidden="true" />
@@ -1821,7 +1939,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               <button
                 type="button"
                 disabled={exceedApplying}
-                onClick={() => setExceedPrompt(null)}
+                onClick={cancelExceed}
                 className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
               >
                 Cancel
@@ -1835,14 +1953,21 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                 {exceedApplying ? 'Applying…' : 'Confirm and save'}
               </button>
             </div>
-          </div>
+          </PlainDialogCard>
         </div>
       )}
 
       {/* Overridden-tasks confirm modal (Tier E #10) */}
       {overrideConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setOverrideConfirm(null)}>
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[540px] max-w-[92vw] max-h-[85vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+          {/* §12 (2026-11-14) · Same dialog plumbing as the prompt above.
+              Escape = "Keep all manual dates", inert while an Overwrite
+              is being written. */}
+          <PlainDialogCard
+            ariaLabel="Some tasks have manual due dates"
+            onEscape={() => { if (!forceApply.isPending) setOverrideConfirm(null); }}
+            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[540px] max-w-[92vw] max-h-[85vh] overflow-auto"
+          >
             <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
               <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
                 <AlertTriangle className="w-5 h-5 text-amber-600" />
@@ -1879,7 +2004,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                 Keep all manual dates
               </button>
             </div>
-          </div>
+          </PlainDialogCard>
         </div>
       )}
 
@@ -2000,7 +2125,9 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                 type="button"
                 disabled={reviewCancelDisabled}
                 onClick={cancelReview}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50"
+                // §12 (2026-11-14) · full disabled look: no pointer cursor
+                // and no hover border while the button is inert.
+                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-slate-200 dark:disabled:hover:border-slate-700"
               >
                 ביטול
               </button>
@@ -2127,21 +2254,25 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               §8f: icon-only buttons — labels moved into `title` for
               a11y. Saves ~100px so the action cluster stays inline. */}
           <div className="shrink-0 flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
+            {/* §12 (2026-11-14) · Both are disabled while the list is not
+                grouped — a flat list has no groups to collapse. */}
             <button
               type="button"
               onClick={collapseAll}
+              disabled={!grouped}
               aria-label="Collapse all"
-              className="w-8 h-8 flex items-center justify-center rounded-md text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
-              title="Collapse all — collapse every deliverable group"
+              className="w-8 h-8 flex items-center justify-center rounded-md text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              title={grouped ? 'Collapse all — collapse every deliverable group' : 'Nothing to collapse — the list is not grouped'}
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
             <button
               type="button"
               onClick={expandAll}
+              disabled={!grouped}
               aria-label="Expand all"
-              className="w-8 h-8 flex items-center justify-center rounded-md text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100"
-              title="Expand all — expand every deliverable group"
+              className="w-8 h-8 flex items-center justify-center rounded-md text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 hover:text-slate-900 dark:hover:text-slate-100 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+              title={grouped ? 'Expand all — expand every deliverable group' : 'Nothing to expand — the list is not grouped'}
             >
               <ChevronDown className="h-3.5 w-3.5" />
             </button>
@@ -2219,6 +2350,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           computePreview={computePreview}
           collapsed={collapsed}
           onToggleCollapse={toggleCollapse}
+          grouped={grouped}
           outerDim={outerDim}
           innerDim={innerDim}
           topLevelZoneTypeMap={topLevelZoneInfo.typeMap}
@@ -2240,6 +2372,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           baseDate={baseDate}
           collapsed={collapsed}
           onToggleCollapse={toggleCollapse}
+          grouped={grouped}
           outerDim={outerDim}
           innerDim={innerDim}
           topLevelZoneTypeMap={topLevelZoneInfo.typeMap}
@@ -2273,6 +2406,7 @@ function TableView({
   computePreview,
   collapsed,
   onToggleCollapse,
+  grouped,
   outerDim,
   innerDim,
   topLevelZoneTypeMap,
@@ -2305,6 +2439,11 @@ function TableView({
   // UI-14 · Group + sub-group dims flow in from the parent so the Table
   // can regroup by Zone / Deliverable / Service and relabel the first
   // two columns dynamically. Default stays Deliverable · Zone.
+  // §12 (2026-11-14) · `grouped: false` (primary = "No grouping") → one
+  // flat list: no group header rows, and the first column carries each
+  // row's own deliverable name instead of the "—" it shows under a
+  // header. The dims are then Deliverable · Zone (see `resolveGrouping`).
+  grouped: boolean;
   outerDim: DPGroupDim;
   innerDim: DPGroupDim | null;
   // DP-4 parity (2026-10-21) — top-level zone type (for the Building badge)
@@ -2327,9 +2466,14 @@ function TableView({
   // filter picks (2026-11-08). `openFilter` is the popover-open flag and
   // stays in-memory — a dropdown that re-opens on remount surprises the
   // user more than it helps.
+  // §12 (2026-11-14) · Versioned key (`.v2`). Sets stored before §11 could
+  // hold an old "Select all" — the full value list of that moment — which
+  // went on hiding every row whose value appeared later, until the user
+  // happened to press Select all / Clear. Those sets are no longer read
+  // at all; the old entry is simply left behind in storage.
   const [colFilters, setColFilters] = useProjectTabState<Record<ColKey, string[]>>(
     projectId,
-    'dp-table-col-filters',
+    'dp-table-col-filters.v2',
     { deliverable: [], zone: [], service: [], months: [], duration: [], hours: [], target: [] },
   );
   const [openFilter, setOpenFilter] = useState<null | ColKey>(null);
@@ -2509,7 +2653,7 @@ function TableView({
     type Group = { key: string; label: string; deliverableId: number; serviceName: string | null; zones: any[]; readOnly: boolean; readOnlyReason: string | null };
     const map = new Map<string, Group>();
     for (const r of filtered) {
-      const k = rowDimKey(r, outerDim);
+      const k = rowGroupKey(r, grouped, outerDim);
       if (!map.has(k)) {
         map.set(k, {
           key: k,
@@ -2573,7 +2717,16 @@ function TableView({
     for (const g of groups) {
       const zsign = sort.dir === 'asc' ? 1 : -1;
       const zcmp = (a: string | number, b: string | number) => (a > b ? 1 : a < b ? -1 : 0) * zsign;
-      if (sort.col === 'zone' || sort.col === 'deliverable' || sort.col === 'service') {
+      // §12 (2026-11-14) · Flat list: there is no group order to carry the
+      // Deliverable / Service sort, so the ROWS sort by that column (zone
+      // name as the tiebreak). Grouped, these two columns keep sorting
+      // the groups, and the rows inside by zone name, as before.
+      if (!grouped && (sort.col === 'deliverable' || sort.col === 'service')) {
+        const nameOf = (r: { deliverableName?: string | null; serviceName?: string | null }) =>
+          String((sort.col === 'deliverable' ? r.deliverableName : r.serviceName) ?? '').toLowerCase();
+        g.zones.sort((a, b) =>
+          zcmp(nameOf(a), nameOf(b)) || zcmp(String(a.zoneName ?? '').toLowerCase(), String(b.zoneName ?? '').toLowerCase()));
+      } else if (sort.col === 'zone' || sort.col === 'deliverable' || sort.col === 'service') {
         g.zones.sort((a: any, b: any) => zcmp(a.zoneName.toLowerCase(), b.zoneName.toLowerCase()));
       } else if (sort.col === 'months') {
         g.zones.sort((a: any, b: any) => zcmp(Number(effectiveMonths(a) || 0), Number(effectiveMonths(b) || 0)));
@@ -2586,7 +2739,7 @@ function TableView({
       }
     }
     return groups;
-  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts, outerDim, topLevelZoneSortOrderMap]);
+  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts, grouped, outerDim, topLevelZoneSortOrderMap]);
 
   const toggleSort = (col: typeof sort.col) => {
     setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' }));
@@ -2672,7 +2825,9 @@ function TableView({
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
           {sortedGroups.map((g) => {
-            const isCollapsed = collapsed.has(g.key);
+            // §12 (2026-11-14) · Ungrouped: the single bucket has no header
+            // row and cannot be collapsed.
+            const isCollapsed = grouped && collapsed.has(g.key);
             const rollup = groupRollup(g.zones);
             const groupBodyId = `deliv-group-${g.key}`;
             const subCount = g.zones.length;
@@ -2692,7 +2847,12 @@ function TableView({
                   "name" is the outer-dim label; service column is
                   deliberately left empty under outerDim='deliverable'
                   since the same value already reads twice per row and
-                  looked like a data leak. */}
+                  looked like a data leak.
+                  §12 (2026-11-14) · Not rendered at all when the list is
+                  ungrouped ("No grouping") — it used to appear as a
+                  Deliverable header, exactly as if Deliverable had been
+                  picked. */}
+              {grouped && (
               <tr
                 className="bg-slate-50/70 dark:bg-slate-800/70 group cursor-pointer select-none hover:bg-slate-100/80 dark:hover:bg-slate-800"
                 onClick={() => onToggleCollapse(g.key)}
@@ -2807,6 +2967,7 @@ function TableView({
                   {rollup.latestDate ? <>ends <span className="font-bold text-slate-700 dark:text-slate-200">{rollup.latestDate}</span></> : <span className="text-slate-300 dark:text-slate-600">—</span>}
                 </td>
               </tr>
+              )}
               {!isCollapsed && g.zones.map((r: any) => {
                 const draft = drafts[r.key] ?? '';
                 const durDraft = durationDrafts[r.key] ?? '';
@@ -2833,7 +2994,13 @@ function TableView({
                 const readOnlyHint = r.readOnlyReason ?? 'Not yet planned';
                 return (
                   <tr id={groupBodyId} key={r.key} className={cn('hover:bg-slate-50/40 dark:hover:bg-slate-800/40', isDirty && 'bg-blue-50/30 dark:bg-blue-950/20', r.readOnly && 'bg-amber-50/30 dark:bg-amber-950/10')}>
-                    <td className="px-4 py-2 text-slate-400 dark:text-slate-500">—</td>
+                    {/* §12 (2026-11-14) · Under a group header this cell is
+                        a "—" (the header carries the name). Ungrouped
+                        there is no header, so the row names its own
+                        deliverable here. */}
+                    {grouped
+                      ? <td className="px-4 py-2 text-slate-400 dark:text-slate-500">—</td>
+                      : <td className="px-4 py-2 font-semibold text-slate-700 dark:text-slate-200"><span className="truncate">{r.deliverableName}</span></td>}
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200">
                       {/* UI-14 — the sub-column label switches to the
                           current innerDim; the zone-type badge only
@@ -3115,6 +3282,7 @@ function GanttView({
   baseDate,
   collapsed,
   onToggleCollapse,
+  grouped,
   outerDim,
   innerDim,
   topLevelZoneTypeMap,
@@ -3144,6 +3312,10 @@ function GanttView({
   onToggleCollapse: (key: string) => void;
   // UI-14 · group+sub-group dims. The Gantt label column header reads
   // "<outer> · <sub>" dynamically; rows group by outerDim.
+  // §12 (2026-11-14) · `grouped: false` (primary = "No grouping") → no
+  // group slots at all: a flat list of bars, each labelled Deliverable ·
+  // Zone, reorderable across the whole list.
+  grouped: boolean;
   outerDim: DPGroupDim;
   innerDim: DPGroupDim | null;
   // DP-4 parity (2026-10-21) — top-level zone type (for the Building
@@ -3306,6 +3478,8 @@ function GanttView({
   type GanttZoneSlot = { kind: 'zone'; r: any; zoneIdx: number };
   type GanttSlot = GanttGroup | GanttZoneSlot;
   const displaySlots: GanttSlot[] = useMemo(() => {
+    // §12 (2026-11-14) · Ungrouped → just the rows, in their saved order.
+    if (!grouped) return orderedRows.map((r, idx): GanttSlot => ({ kind: 'zone', r, zoneIdx: idx }));
     const groupOrder: string[] = [];
     const groupZones = new Map<string, { z: any; zoneIdx: number }[]>();
     orderedRows.forEach((r, idx) => {
@@ -3421,7 +3595,15 @@ function GanttView({
       }
     }
     return out;
-  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, outerDim, topLevelZoneSortOrderMap]);
+  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, grouped, outerDim, topLevelZoneSortOrderMap]);
+
+  // §12 (2026-11-14) · Row key → group key, for the within-group reorder
+  // rule (`canReorderOnto`). Ungrouped, every row shares one key.
+  const groupOfRow = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of orderedRows) m.set(r.key, rowGroupKey(r, grouped, outerDim));
+    return m;
+  }, [orderedRows, grouped, outerDim]);
 
   // DPG-6 (2026-10-21) · Viewport-aware timeline width. The horizontal
   // scroller's `clientWidth` is measured via `ResizeObserver` and the
@@ -3726,6 +3908,15 @@ function GanttView({
       setRollupDragInfo({ groupKey: slot.key, deltaDays: snapped });
       const next: Record<string, string> = {};
       appliedTargets.clear();
+      if (snapped === 0) {
+        // §12 (2026-11-14) · Dragged out and back to where it started:
+        // every child gets its PRIOR draft back (or none), like the
+        // single-row drags. It used to write the unchanged date as an
+        // explicit draft on each child, leaving edits behind that the
+        // user never made.
+        setTargetDateDrafts((prev) => withPriorDrafts(prev, snapshot));
+        return;
+      }
       for (const s of snapshot) {
         if (s.curTargetMs == null) continue;
         const newMs = s.curTargetMs + snapped * 86_400_000;
@@ -3760,27 +3951,19 @@ function GanttView({
       // TODAY, roll every child back to its pre-drag draft and open
       // the existing modal; Confirm re-plays the deltas.
       const todayMs = Date.now();
-      let earliestNew = Infinity;
-      for (const s of snapshot) {
-        if (s.curTargetMs == null) continue;
-        const newMs = s.curTargetMs + finalDeltaDays * 86_400_000;
-        if (newMs < earliestNew) earliestNew = newMs;
-      }
+      // §12 (2026-11-14) · Checked against the dates that are actually
+      // WRITTEN (`appliedTargets`, Sunday-snapped) — the raw shifted date
+      // of a legacy non-Sunday child is up to six days earlier, so the
+      // prompt could fire for, and show, a date that is never stored.
+      const earliestNew = earliestIsoMs(appliedTargets.values());
       // §11 A5 (2026-11-13) · Last edit wins, per child: every child that
       // received a new date in this drag has its months draft put back on
       // the server value — on drop, or (past-date path) only when the
       // prompt is confirmed. Same rule as the single-row drags.
       const movedRows = slot.zones.filter((z: any) => appliedTargets.has(z.key));
       const commitExplicitDates = () => setDrafts((prev) => resetMonthsDraftsOfRows(prev, movedRows));
-      if (earliestNew < todayMs) {
-        setTargetDateDrafts((prev) => {
-          const copy = { ...prev };
-          for (const s of snapshot) {
-            if (s.priorDraft) copy[s.key] = s.priorDraft;
-            else delete copy[s.key];
-          }
-          return copy;
-        });
+      if (earliestNew != null && earliestNew < todayMs) {
+        setTargetDateDrafts((prev) => withPriorDrafts(prev, snapshot));
         setPastDateConfirm({
           rowKey: slot.key,
           newTargetMs: earliestNew,
@@ -3874,7 +4057,9 @@ function GanttView({
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200',
                 )}
                 aria-pressed={visibleYears === n}
-                title={`Show ~${n} ${n === 1 ? 'year' : 'years'} at a time`}
+                // §12 (2026-11-14) · said "Show ~N years at a time" — see
+                // the caption at the end of this toolbar.
+                title={`Timeline runs ${n} ${n === 1 ? 'year' : 'years'} past the base date (plus one year back)`}
               >
                 {n}
               </button>
@@ -3953,8 +4138,13 @@ function GanttView({
             <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm ring-2 ring-red-300 ring-inset bg-white dark:bg-slate-900" />Past target</span>
           </div>
         </div>
+        {/* §12 (2026-11-14) · Was "Showing ~N years at a time", which the
+            Years pick never did: it sets how far the timeline RUNS (the
+            total range); how much is in view depends on the grid and the
+            viewport. The caption now states both, from the real numbers
+            (`ganttRangeCaption`). */}
         <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500">
-          Showing ~{visibleYears} {visibleYears === 1 ? 'year' : 'years'} at a time · drag rows to reorder
+          {ganttRangeCaption(spanDays, viewportWidth > 0 ? viewportWidth / PX_PER_DAY : 0, granularity)} · drag rows to reorder
         </span>
       </div>
 
@@ -4111,20 +4301,37 @@ function GanttView({
             // zone slot — UI-14: label text depends on the sub-dim.
             const r = slot.r;
             const typeLabel = zoneTypeLabel(r.zoneType);
-            const rowLabel = innerDim === 'zone' ? r.zoneName
+            // §12 (2026-11-14) · Ungrouped: no header names the
+            // deliverable, so the row label carries both halves.
+            const rowLabel = !grouped ? `${r.deliverableName} · ${r.zoneName}`
+              : innerDim === 'zone' ? r.zoneName
               : innerDim === 'deliverable' ? r.deliverableName
               : innerDim === 'service' ? (r.serviceName ?? '—')
               : `${r.zoneName} · ${r.deliverableName}`;
+            // §12 (2026-11-14) · Reorder is a WITHIN-GROUP operation. A row
+            // of another group is not a drop target: no indicator, the
+            // browser's "no drop" cursor, and no reorder. (The dragged row
+            // itself stays a neutral target, as before.)
+            const canDropHere = canReorderOnto(groupOfRow, dragKey, r.key);
             return (
               <div
                 key={r.key}
                 draggable
                 onDragStart={() => setDragKey(r.key)}
                 onDragEnd={() => { setDragKey(null); setDropIndicatorIdx(null); }}
-                onDragOver={(e) => { e.preventDefault(); setDropIndicatorIdx(slot.zoneIdx); }}
+                onDragOver={(e) => {
+                  if (!canDropHere && dragKey !== r.key) {
+                    // Not calling preventDefault is what refuses the drop.
+                    e.dataTransfer.dropEffect = 'none';
+                    if (dropIndicatorIdx !== null) setDropIndicatorIdx(null);
+                    return;
+                  }
+                  e.preventDefault();
+                  setDropIndicatorIdx(slot.zoneIdx);
+                }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  if (dragKey && dragKey !== r.key) handleReorder(dragKey, slot.zoneIdx);
+                  if (dragKey && canDropHere) handleReorder(dragKey, slot.zoneIdx);
                   setDragKey(null);
                   setDropIndicatorIdx(null);
                 }}
@@ -4133,7 +4340,7 @@ function GanttView({
                   dragKey === r.key && 'opacity-40',
                   dropIndicatorIdx === slot.zoneIdx && dragKey && dragKey !== r.key && 'border-t-2 border-blue-500',
                 )}
-                title="Drag to reorder"
+                title={grouped ? 'Drag to reorder within this group' : 'Drag to reorder'}
                 data-slot-index={i}
               >
                 <span className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 leading-none">⋮⋮</span>
@@ -4530,8 +4737,18 @@ function GanttRow({
 
   // Pixel positions relative to the timeline start.
   const rightPx = ((targetMs - startMs) / 86_400_000) * pxPerDay;
-  const leftPx = ((barStartMs - startMs) / 86_400_000) * pxPerDay;
-  const widthPx = Math.max(4, rightPx - leftPx);
+  // §12 (2026-11-14) · A ZERO-week bar used to be a 4px sliver whose two
+  // 12px edge zones overlapped and were clipped by `overflow-hidden`: it
+  // could be neither moved nor resized. It now renders 36px wide — 12px
+  // per edge handle plus 12px of middle — grown LEFTWARD, so its right
+  // edge still sits on the target date. Real durations are untouched
+  // (`ganttBarBox`).
+  const { leftPx, widthPx } = ganttBarBox(
+    ((barStartMs - startMs) / 86_400_000) * pxPerDay,
+    rightPx,
+    durationWeeks,
+    { minWidthPx: 4, zeroWidthPx: 36 },
+  );
 
   const todayMs = Date.now();
   const isPastTarget = targetMs < todayMs;
@@ -4649,6 +4866,11 @@ function GanttRow({
         // Apply callback re-apply. Server-side audit-logging fires
         // later in batchSetTargets when the user clicks Save.
         setTargetDateDrafts((s) => ({ ...s, [r.key]: initTargetDateDraft }));
+        // §12 (2026-11-14) · A right-edge drag changes the DURATION along
+        // with the target. Only the date used to be reverted here, so a
+        // cancelled prompt left the bar with its old target and the new
+        // duration — an edit nobody confirmed. Apply re-applies both.
+        if (mode === 'right') setDurationDrafts((s) => ({ ...s, [r.key]: initDurDraft }));
         onRequestPastDate(r.key, finalTargetMs, kind, () => {
           setTargetDateDrafts((s) => ({ ...s, [r.key]: lastTargetIso }));
           setDurationDrafts((s) => ({ ...s, [r.key]: lastDurWeeks }));
@@ -4800,8 +5022,11 @@ function GanttRow({
         title={tooltipTitle}
         onPointerDown={startDrag('middle')}
       >
-        <span className="text-white text-[10px] font-bold tabular-nums whitespace-nowrap px-3 truncate pointer-events-none mx-auto">
-          {durationWeeks > 0 ? `${durationWeeks}w · ` : ''}{targetDate}
+        {/* §12 (2026-11-14) · A zero-week bar is drawn wider than its
+            duration (see `ganttBarBox`), so it says what it is: `0w`.
+            The date stays in the tooltip — it does not fit in 36px. */}
+        <span className={cn('text-white text-[10px] font-bold tabular-nums whitespace-nowrap truncate pointer-events-none mx-auto', durationWeeks > 0 && 'px-3')}>
+          {durationWeeks > 0 ? `${durationWeeks}w · ${targetDate}` : '0w'}
         </span>
         {/* Center grip (hover-only). pointer-events-none so the
             middle drag still catches clicks over it. */}
@@ -5098,7 +5323,13 @@ function PastDateConfirmModal({
   const today = new Date().toISOString().slice(0, 10);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onCancel}>
-      <div className="w-[420px] rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700 p-6" onClick={(e) => e.stopPropagation()}>
+      {/* §12 (2026-11-14) · Real dialog — Escape = Cancel (nothing is
+          saved from here, so there is no in-flight state to wait for). */}
+      <PlainDialogCard
+        ariaLabel="Backdated target"
+        onEscape={onCancel}
+        className="w-[420px] rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700 p-6"
+      >
         <div className="flex items-start gap-3 mb-4">
           <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
             <AlertTriangle className="w-5 h-5 text-amber-600" />
@@ -5131,7 +5362,7 @@ function PastDateConfirmModal({
             Apply &amp; log
           </button>
         </div>
-      </div>
+      </PlainDialogCard>
     </div>
   );
 }
@@ -5471,37 +5702,52 @@ function DeliverableTasksModal({
         });
         targetSaved = true;
       }
-      const changed = (row.taskList ?? []).filter((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
-      await Promise.all(
-        changed.map((t: any) => {
-          const nextEnd = drafts[t.id] || null;
-          // §B override hardening (2026-11-09) — this modal is the
-          // per-task due-date editor opened by clicking a Gantt bar:
-          // the PM types a date into a single task's row and saves.
-          // That's explicit user intent, so the BE needs the
-          // `manualDueDate:true` signal to fire `dueDateOverridden`
-          // and stop the scheduler from reshuffling the task later.
-          // Clearing the date (nextEnd = null) stays silent — a null
-          // never fires override regardless of the flag.
-          //
-          // §8c (2026-11-12) — Only fire `manualDueDate:true` for rows
-          // the user actually typed into. Preview-driven draft values
-          // come from the scheduler's own dry-run, so they must NOT
-          // force `dueDateOverridden` (that would freeze the task
-          // against future reschedules even though the user never
-          // typed a value).
-          const payload: Record<string, any> = { endDate: nextEnd };
-          if (nextEnd && manualEdits.has(Number(t.id))) payload.manualDueDate = true;
-          return client.patch(`/tasks/${t.id}`, payload);
-        }),
-      );
-      const dueSummary = `updated ${changed.length} due date${changed.length === 1 ? '' : 's'}`;
+      // §B override hardening (2026-11-09) — this modal is the per-task
+      // due-date editor opened by clicking a Gantt bar: the PM types a
+      // date into a single task's row and saves. That's explicit user
+      // intent, so the BE needs the `manualDueDate:true` signal to fire
+      // `dueDateOverridden` and stop the scheduler from reshuffling the
+      // task later. Clearing the date (endDate = null) stays silent — a
+      // null never fires override regardless of the flag.
+      //
+      // §8c (2026-11-12) — Only fire `manualDueDate:true` for rows the
+      // user actually typed into. Preview-driven draft values come from
+      // the scheduler's own dry-run, so they must NOT force
+      // `dueDateOverridden` (that would freeze the task against future
+      // reschedules even though the user never typed a value).
+      //
+      // §12 (2026-11-14) · Each row's payload is decided by
+      // `taskDatesPatch`:
+      //   - the START goes out with the due date. Saving `endDate` alone
+      //     left the stored `estimatedStartDate` behind — after a target
+      //     move tasks started AFTER they ended, or kept stretched
+      //     durations (`taskStartForSave` picks the start);
+      //   - a preview-driven row whose due date did NOT move but whose
+      //     scheduled start did is saved too (start only). The modal shows
+      //     that proposed start, and the row used to be skipped.
+      const taskList: { id: number; endDate: string | null; estimatedStartDate: string | null }[] = row.taskList ?? [];
+      const patches = taskList.flatMap((t) => {
+        const payload: TaskDatesPatch | null = taskDatesPatch({
+          nextEnd: drafts[t.id] || null,
+          manual: manualEdits.has(Number(t.id)),
+          preview: previewByTaskId.get(Number(t.id)) ?? null,
+          storedStart: t.estimatedStartDate ?? null,
+          storedEnd: t.endDate ?? null,
+        });
+        return payload ? [{ id: t.id, payload }] : [];
+      });
+      await Promise.all(patches.map((p) => client.patch(`/tasks/${p.id}`, p.payload)));
+      // A start-only row counts as updated; the noun stays "due date"
+      // unless one of them is in the batch.
+      const updatedCount = patches.length;
+      const noun = patches.some((p) => !('endDate' in p.payload)) ? 'task date' : 'due date';
+      const dueSummary = `${updatedCount} ${noun}${updatedCount === 1 ? '' : 's'}`;
       notify.success(
         targetSaved
-          ? changed.length > 0
-            ? `Target moved to ${previewTarget} · ${dueSummary}`
+          ? updatedCount > 0
+            ? `Target moved to ${previewTarget} · updated ${dueSummary}`
             : `Target moved to ${previewTarget}`
-          : `Updated ${changed.length} due date${changed.length === 1 ? '' : 's'}`,
+          : `Updated ${dueSummary}`,
       );
       if (targetSaved) {
         // §10 · The saved target lives on the deliverables query, the
@@ -5653,7 +5899,10 @@ function DeliverableTasksModal({
               </>
             ) : null}
           </div>
-          <button type="button" onClick={requestClose} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 text-[18px] leading-none px-1">×</button>
+          {/* §12 (2026-11-14) · × and Cancel are really `disabled` while a
+              save is in flight. `requestClose` already refused the click,
+              but both still looked (and focused) like live buttons. */}
+          <button type="button" onClick={requestClose} disabled={saving} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 text-[18px] leading-none px-1 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-slate-400 dark:disabled:hover:text-slate-500">×</button>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -5719,7 +5968,8 @@ function DeliverableTasksModal({
             <button
               type="button"
               onClick={requestClose}
-              className="px-3.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900"
+              disabled={saving}
+              className="px-3.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-900 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent dark:disabled:hover:bg-transparent"
             >
               Cancel
             </button>

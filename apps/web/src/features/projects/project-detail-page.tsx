@@ -1,6 +1,6 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, MessageSquare } from 'lucide-react';
-import { useState, lazy, Suspense } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ProjectDiscussion } from '@/features/messaging/project-discussion';
 import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
@@ -44,13 +44,24 @@ import { ProjectBriefTiles } from './project-detail/project-brief-tiles';
 import { ProjectTimelineSummary } from './project-detail/project-timeline-summary';
 import { OpenInDriveButton } from '@/features/drive/open-in-drive-button';
 
+// §12 (2026-11-14) · The tab keys double as the URL slugs
+// (`?projectTab=<slug>`), so they are stable by construction. `cost` is
+// only available with the Finance permission.
+const PROJECT_TAB_PARAM = 'projectTab';
+const PROJECT_TAB_SLUGS: readonly Tab[] = ['info', 'planning', 'schedule', 'kanban', 'execution', 'team', 'cost', 'files', 'discussion', 'activity'];
+const DEFAULT_PROJECT_TAB: Tab = 'planning';
+function projectTabFromSlug(slug: string | null, showFinance: boolean): Tab | null {
+  if (slug == null || !PROJECT_TAB_SLUGS.includes(slug as Tab)) return null;
+  if (slug === 'cost' && !showFinance) return null;
+  return slug as Tab;
+}
+
 export function ProjectDetailPage() {
   const confirm = useConfirm();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const projectId = Number(id);
-  const [tab, setTab] = useState<Tab>('planning');
   const [showAddMember, setShowAddMember] = useState(false);
   const [showDiscussionDrawer, setShowDiscussionDrawer] = useState(false);
 
@@ -63,6 +74,50 @@ export function ProjectDetailPage() {
   // see NO_ADMIN_BYPASS in RolesGuard.
   const { can } = usePermissions();
   const showFinance = can('finance', 'read');
+
+  // §12 (2026-11-14) · The active tab lives in the URL as
+  // `?projectTab=<slug>`. It used to be local state only, so a reload
+  // always came back to Planning. The key is the page's OWN: `tab`
+  // belongs to the TaskDrawer and is never read, written or deleted here.
+  //
+  //   - param present → that tab is shown, whatever the navigation (load,
+  //     link, back/forward, replace). Unknown slug, or `cost` without
+  //     Finance → Planning; once the permission arrives the tab follows.
+  //   - param absent  → the current tab is kept (the project picker goes
+  //     to a bare `/projects/:id`) and written back with `replace`, unless
+  //     it is the default: a bare URL IS Planning.
+  //   - tab click     → state + param, `replace: true`; every other search
+  //     param is left as it is.
+  //
+  // `lastTab` only matters while the param is absent; the effect keeps it
+  // equal to the URL's tab, so both paths settle after one write.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get(PROJECT_TAB_PARAM);
+  const tabFromUrl: Tab | null = tabParam == null
+    ? null
+    : projectTabFromSlug(tabParam, showFinance) ?? DEFAULT_PROJECT_TAB;
+  const [lastTab, setLastTab] = useState<Tab>(tabFromUrl ?? DEFAULT_PROJECT_TAB);
+  const tab: Tab = tabFromUrl ?? lastTab;
+  const setTab = (next: Tab) => {
+    setLastTab(next);
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.set(PROJECT_TAB_PARAM, next);
+      return p;
+    }, { replace: true });
+  };
+  useEffect(() => {
+    if (tabFromUrl != null) {
+      if (tabFromUrl !== lastTab) setLastTab(tabFromUrl);
+      return;
+    }
+    if (lastTab === DEFAULT_PROJECT_TAB) return;
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.set(PROJECT_TAB_PARAM, lastTab);
+      return p;
+    }, { replace: true });
+  }, [tabFromUrl, lastTab, setSearchParams]);
 
   if (isLoading) return <PageSkeleton />;
   if (!project) return <p className="py-8 text-center text-slate-400 dark:text-slate-500">Project not found</p>;

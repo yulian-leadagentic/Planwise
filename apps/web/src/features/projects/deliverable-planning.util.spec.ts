@@ -16,6 +16,14 @@ import {
   withoutColFilter,
   isColFilterActive,
   rowPassesColFilter,
+  canReorderOnto,
+  ganttBarBox,
+  resolveGrouping,
+  ganttRangeCaption,
+  withPriorDrafts,
+  earliestIsoMs,
+  taskStartForSave,
+  taskDatesPatch,
   type TargetRowLike,
 } from './deliverable-planning.util';
 
@@ -741,5 +749,341 @@ describe('sameDraftMap', () => {
     // An explicit '' is NOT the same as a missing key (a pending clear).
     expect(sameDraftMap({ a: '' }, {})).toBe(false);
     expect(sameDraftMap({ a: '' }, { b: '' })).toBe(false);
+  });
+});
+
+// ── §12 (2026-11-14) ────────────────────────────────────────────────
+
+describe('canReorderOnto', () => {
+  const groupOf = new Map([
+    ['a1', 'del:1'],
+    ['a2', 'del:1'],
+    ['b1', 'del:2'],
+  ]);
+
+  it('a row can be dropped on another row of its OWN group', () => {
+    expect(canReorderOnto(groupOf, 'a1', 'a2')).toBe(true);
+    expect(canReorderOnto(groupOf, 'a2', 'a1')).toBe(true);
+  });
+
+  it('a row of a different group is not a drop target', () => {
+    expect(canReorderOnto(groupOf, 'a1', 'b1')).toBe(false);
+    expect(canReorderOnto(groupOf, 'b1', 'a2')).toBe(false);
+  });
+
+  it('not onto itself, not without a drag in flight, not for unknown rows', () => {
+    expect(canReorderOnto(groupOf, 'a1', 'a1')).toBe(false);
+    expect(canReorderOnto(groupOf, null, 'a1')).toBe(false);
+    expect(canReorderOnto(groupOf, 'gone', 'a1')).toBe(false);
+    expect(canReorderOnto(groupOf, 'a1', 'gone')).toBe(false);
+    expect(canReorderOnto(groupOf, 'gone', 'also-gone')).toBe(false);
+  });
+
+  it('ungrouped view: every row shares one group, so any row is a target', () => {
+    const flat = new Map([['a1', 'all'], ['b1', 'all']]);
+    expect(canReorderOnto(flat, 'a1', 'b1')).toBe(true);
+  });
+});
+
+describe('ganttBarBox', () => {
+  const opts = { minWidthPx: 4, zeroWidthPx: 36 };
+
+  it('a real duration keeps its geometry: left on the start, right on the target', () => {
+    expect(ganttBarBox(100, 180, 10, opts)).toEqual({ leftPx: 100, widthPx: 80 });
+    // …also when it is narrower than the zero-week width (1 week at month zoom).
+    expect(ganttBarBox(100, 108, 1, opts)).toEqual({ leftPx: 100, widthPx: 8 });
+  });
+
+  it('a real duration thinner than the floor still gets the old minimum width', () => {
+    expect(ganttBarBox(100, 101, 1, opts)).toEqual({ leftPx: 100, widthPx: 4 });
+  });
+
+  it('a ZERO-week bar gets the usable width, grown leftward — its right edge stays on the target', () => {
+    const box = ganttBarBox(180, 180, 0, opts);
+    expect(box).toEqual({ leftPx: 144, widthPx: 36 });
+    expect(box.leftPx + box.widthPx).toBe(180);
+  });
+});
+
+describe('resolveGrouping', () => {
+  it('a primary dim groups by it; the sub-group passes through', () => {
+    expect(resolveGrouping('deliverable', 'zone')).toEqual({ grouped: true, outerDim: 'deliverable', innerDim: 'zone' });
+    expect(resolveGrouping('zone', null)).toEqual({ grouped: true, outerDim: 'zone', innerDim: null });
+    expect(resolveGrouping('service', 'deliverable')).toEqual({ grouped: true, outerDim: 'service', innerDim: 'deliverable' });
+  });
+
+  it('primary "No grouping" → NOT grouped (it used to read as Deliverable)', () => {
+    expect(resolveGrouping(null, null)).toEqual({ grouped: false, outerDim: 'deliverable', innerDim: 'zone' });
+  });
+
+  it('…and a leftover sub-group pick is ignored — there is no group to sub-divide', () => {
+    expect(resolveGrouping(null, 'service')).toEqual({ grouped: false, outerDim: 'deliverable', innerDim: 'zone' });
+  });
+
+  it('a sub-group equal to the primary is dropped', () => {
+    expect(resolveGrouping('zone', 'zone')).toEqual({ grouped: true, outerDim: 'zone', innerDim: null });
+  });
+});
+
+describe('ganttRangeCaption', () => {
+  it('the whole range fits (Month grid, short range) → "all in view"', () => {
+    expect(ganttRangeCaption(730, 730, 'month')).toBe('Timeline spans 2 years, all in view');
+    expect(ganttRangeCaption(730, 900, 'month')).toBe('Timeline spans 2 years, all in view');
+  });
+
+  it('Month grid: what is in view is said in years (or months when short)', () => {
+    // 3-year pick = 4-year timeline (one year of look-back); ~875 days fit.
+    expect(ganttRangeCaption(1460, 875, 'month')).toBe('Timeline spans 4 years · ~2.4 years in view');
+    expect(ganttRangeCaption(1460, 300, 'month')).toBe('Timeline spans 4 years · ~10 months in view');
+  });
+
+  it('Week grid: in weeks', () => {
+    expect(ganttRangeCaption(730, 250, 'week')).toBe('Timeline spans 2 years · ~36 weeks in view');
+  });
+
+  it('Day grid: in days', () => {
+    expect(ganttRangeCaption(730, 41.7, 'day')).toBe('Timeline spans 2 years · ~42 days in view');
+  });
+
+  it('a range stretched by a late target is not rounded to the Years pick', () => {
+    expect(ganttRangeCaption(1205, 250, 'week')).toBe('Timeline spans 3.3 years · ~36 weeks in view');
+  });
+
+  it('singular units, and no in-view part before the viewport is measured', () => {
+    expect(ganttRangeCaption(365, 7, 'week')).toBe('Timeline spans 1 year · ~1 week in view');
+    expect(ganttRangeCaption(730, 0, 'month')).toBe('Timeline spans 2 years');
+  });
+});
+
+describe('withPriorDrafts', () => {
+  it('restores the prior draft where there was one and removes the entry otherwise', () => {
+    const drafts = { a: '2027-02-07', b: '2027-02-14', other: '2027-03-07' };
+    expect(
+      withPriorDrafts(drafts, [{ key: 'a', priorDraft: '2027-01-24' }, { key: 'b', priorDraft: '' }]),
+    ).toEqual({ a: '2027-01-24', other: '2027-03-07' });
+  });
+
+  it('returns the SAME object when everything already is as it was', () => {
+    const drafts = { a: '2027-01-24' };
+    expect(withPriorDrafts(drafts, [{ key: 'a', priorDraft: '2027-01-24' }, { key: 'b', priorDraft: '' }])).toBe(drafts);
+    expect(withPriorDrafts(drafts, [])).toBe(drafts);
+  });
+
+  it('an explicitly stored "" for a row that had no draft is removed too', () => {
+    const out = withPriorDrafts({ a: '' }, [{ key: 'a', priorDraft: '' }]);
+    expect('a' in out).toBe(false);
+  });
+});
+
+describe('earliestIsoMs', () => {
+  it('returns the earliest date as UTC ms', () => {
+    expect(earliestIsoMs(['2027-02-07', '2027-01-24', '2027-03-07'])).toBe(Date.UTC(2027, 0, 24));
+    expect(earliestIsoMs(new Map([['a', '2027-01-31']]).values())).toBe(Date.UTC(2027, 0, 31));
+  });
+
+  it('null for nothing, and unparsable entries are skipped', () => {
+    expect(earliestIsoMs([])).toBeNull();
+    expect(earliestIsoMs(['', 'nope'])).toBeNull();
+    expect(earliestIsoMs(['nope', '2027-01-24'])).toBe(Date.UTC(2027, 0, 24));
+  });
+});
+
+describe('taskStartForSave', () => {
+  const stored = { storedStart: '2027-01-04', storedEnd: '2027-01-11' };
+
+  it('preview-driven row → the start of the dry-run row that supplied the due date', () => {
+    expect(
+      taskStartForSave({
+        nextEnd: '2027-02-08',
+        manual: false,
+        preview: { startDate: '2027-02-02', endDate: '2027-02-08' },
+        ...stored,
+      }),
+    ).toBe('2027-02-02');
+  });
+
+  it('…also when the task has no stored dates yet', () => {
+    expect(
+      taskStartForSave({
+        nextEnd: '2027-02-08',
+        manual: false,
+        preview: { startDate: '2027-02-02', endDate: '2027-02-08' },
+        storedStart: null,
+        storedEnd: null,
+      }),
+    ).toBe('2027-02-02');
+  });
+
+  it('hand-edited row → the stored start moved by the same number of days as the due date', () => {
+    // Due moved +28 days; the dry-run row is ignored for a typed value.
+    expect(
+      taskStartForSave({
+        nextEnd: '2027-02-08',
+        manual: true,
+        preview: { startDate: '2027-01-20', endDate: '2027-02-08' },
+        ...stored,
+      }),
+    ).toBe('2027-02-01');
+    // Moved earlier, across a year boundary.
+    expect(taskStartForSave({ nextEnd: '2026-12-28', manual: true, ...stored })).toBe('2026-12-21');
+  });
+
+  it('hand-edited row with a stored date missing → no start', () => {
+    expect(taskStartForSave({ nextEnd: '2027-02-08', manual: true, storedStart: null, storedEnd: '2027-01-11' })).toBeUndefined();
+    expect(taskStartForSave({ nextEnd: '2027-02-08', manual: true, storedStart: '2027-01-04', storedEnd: null })).toBeUndefined();
+  });
+
+  it('a dry-run row for a DIFFERENT due date did not supply this one → falls back to the shift', () => {
+    expect(
+      taskStartForSave({
+        nextEnd: '2027-02-08',
+        manual: false,
+        preview: { startDate: '2027-03-01', endDate: '2027-03-08' },
+        ...stored,
+      }),
+    ).toBe('2027-02-01');
+    // …and with nothing stored to shift, no start at all.
+    expect(
+      taskStartForSave({
+        nextEnd: '2027-02-08',
+        manual: false,
+        preview: { startDate: '2027-03-01', endDate: '2027-03-08' },
+        storedStart: null,
+        storedEnd: null,
+      }),
+    ).toBeUndefined();
+  });
+
+  it('never a start later than the due date', () => {
+    // An inverted dry-run row.
+    expect(
+      taskStartForSave({
+        nextEnd: '2027-02-08',
+        manual: false,
+        preview: { startDate: '2027-02-10', endDate: '2027-02-08' },
+        storedStart: null,
+        storedEnd: null,
+      }),
+    ).toBeUndefined();
+    // A stored pair that is already inverted (start 01-25 / end 01-11)
+    // stays inverted when shifted → not sent.
+    expect(
+      taskStartForSave({ nextEnd: '2027-01-18', manual: true, storedStart: '2027-01-25', storedEnd: '2027-01-11' }),
+    ).toBeUndefined();
+    // A start ON the due date is fine.
+    expect(taskStartForSave({ nextEnd: '2027-01-18', manual: true, storedStart: '2027-01-11', storedEnd: '2027-01-11' })).toBe('2027-01-18');
+  });
+
+  it('clearing the due date sends no start', () => {
+    expect(taskStartForSave({ nextEnd: null, manual: true, ...stored })).toBeUndefined();
+    expect(taskStartForSave({ nextEnd: '', manual: false, preview: { startDate: '2027-02-02', endDate: '2027-02-08' }, ...stored })).toBeUndefined();
+  });
+});
+
+describe('taskDatesPatch', () => {
+  const stored = { storedStart: '2027-01-04', storedEnd: '2027-01-11' };
+
+  it('due date changed by the preview → endDate + the dry-run start, no manual flag', () => {
+    expect(
+      taskDatesPatch({
+        nextEnd: '2027-02-08',
+        manual: false,
+        preview: { startDate: '2027-02-02', endDate: '2027-02-08' },
+        ...stored,
+      }),
+    ).toEqual({ endDate: '2027-02-08', estimatedStartDate: '2027-02-02' });
+  });
+
+  it('due date UNCHANGED but the dry-run start differs → start-only payload', () => {
+    const patch = taskDatesPatch({
+      nextEnd: '2027-01-11',
+      manual: false,
+      preview: { startDate: '2027-01-06', endDate: '2027-01-11' },
+      ...stored,
+    });
+    expect(patch).toEqual({ estimatedStartDate: '2027-01-06' });
+    expect(patch && 'endDate' in patch).toBe(false);
+    expect(patch && 'manualDueDate' in patch).toBe(false);
+    // …also for a task that had no stored start at all.
+    expect(
+      taskDatesPatch({
+        nextEnd: '2027-01-11',
+        manual: false,
+        preview: { startDate: '2027-01-06', endDate: '2027-01-11' },
+        storedStart: null,
+        storedEnd: '2027-01-11',
+      }),
+    ).toEqual({ estimatedStartDate: '2027-01-06' });
+  });
+
+  it('nothing changed → null', () => {
+    // Dry-run row identical to what is stored.
+    expect(
+      taskDatesPatch({
+        nextEnd: '2027-01-11',
+        manual: false,
+        preview: { startDate: '2027-01-04', endDate: '2027-01-11' },
+        ...stored,
+      }),
+    ).toBeNull();
+    // No dry-run row at all.
+    expect(taskDatesPatch({ nextEnd: '2027-01-11', manual: false, ...stored })).toBeNull();
+    // A task without dates that stays without dates.
+    expect(taskDatesPatch({ nextEnd: '', manual: false, storedStart: null, storedEnd: null })).toBeNull();
+  });
+
+  it('hand-edited row with an unchanged due date → null, even if the dry-run start differs', () => {
+    expect(
+      taskDatesPatch({
+        nextEnd: '2027-01-11',
+        manual: true,
+        preview: { startDate: '2027-01-06', endDate: '2027-01-11' },
+        ...stored,
+      }),
+    ).toBeNull();
+  });
+
+  it('unchanged due date + a dry-run row for a DIFFERENT due date → null (it is not this row\'s schedule)', () => {
+    expect(
+      taskDatesPatch({
+        nextEnd: '2027-01-11',
+        manual: false,
+        preview: { startDate: '2027-01-20', endDate: '2027-01-25' },
+        ...stored,
+      }),
+    ).toBeNull();
+  });
+
+  it('unchanged due date + an inverted dry-run row → null (never a start after the due date)', () => {
+    expect(
+      taskDatesPatch({
+        nextEnd: '2027-01-11',
+        manual: false,
+        preview: { startDate: '2027-01-12', endDate: '2027-01-11' },
+        ...stored,
+      }),
+    ).toBeNull();
+  });
+
+  it('hand-edited due date → endDate + manualDueDate + the stored start shifted by the same days', () => {
+    expect(taskDatesPatch({ nextEnd: '2027-01-18', manual: true, ...stored })).toEqual({
+      endDate: '2027-01-18', manualDueDate: true, estimatedStartDate: '2027-01-11',
+    });
+    // No stored start to shift → no start key.
+    expect(taskDatesPatch({ nextEnd: '2027-01-18', manual: true, storedStart: null, storedEnd: '2027-01-11' })).toEqual({
+      endDate: '2027-01-18', manualDueDate: true,
+    });
+  });
+
+  it('cleared due date → endDate null, no start, no manual flag', () => {
+    expect(taskDatesPatch({ nextEnd: '', manual: true, ...stored })).toEqual({ endDate: null });
+    expect(
+      taskDatesPatch({
+        nextEnd: null,
+        manual: false,
+        preview: { startDate: '2027-02-02', endDate: '2027-02-08' },
+        ...stored,
+      }),
+    ).toEqual({ endDate: null });
   });
 });

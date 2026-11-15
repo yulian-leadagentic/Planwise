@@ -184,7 +184,7 @@ export function TaskFilesTab({
               </span>
             </div>
             <NavLinkWithReturn
-              to={`/projects/${projectId}?tab=files`}
+              to={`/projects/${projectId}?projectTab=files`}
               returnLabel={backLabel ?? `task #${taskId}`}
               className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
               title="Open the project's Files tab to upload or manage"
