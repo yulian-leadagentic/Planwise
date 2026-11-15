@@ -683,6 +683,33 @@ export class TasksService {
       newEndDate?.getTime() !== (existing as any).endDate?.getTime() &&
       manualDueDate === true;
 
+    // §14 (2026-11-15) · The same request can also RELEASE a manual due
+    // date — until now nothing in this method could, so a task the PM
+    // had once dated by hand stayed pinned for the scheduler forever
+    // (staging: a deliverable target moved from 2028 to 2029, three
+    // manual tasks stayed in Nov–Dec 2026). `dueDateOverridden` goes
+    // back to false when either holds:
+    //   a. the request clears the due date (`endDate: null`). "Clear"
+    //      used to leave the flag set — exactly the garbage state rule 2
+    //      above describes (`endDate=null AND dueDateOverridden=true`):
+    //      no manual date left to protect, yet the task was still
+    //      treated as manually dated; or
+    //   b. the request says `manualDueDate: false` — "this due date is
+    //      scheduler-owned again" — with or without an `endDate` next
+    //      to it (a new end sent with it is stored as an ordinary,
+    //      non-manual date).
+    // `manualDueDate` left out (and no cleared end) → the flag is not
+    // touched, exactly as before; that is what every automatic caller
+    // sends. The two rules cannot both fire — marking needs a non-null
+    // end AND `manualDueDate: true`, releasing needs a null end OR
+    // `manualDueDate: false`; the `!shouldMarkOverride` guard only
+    // spells out that the marking rule above has precedence.
+    const shouldReleaseOverride =
+      !shouldMarkOverride &&
+      ((endDate !== undefined && newEndDate === null) || manualDueDate === false);
+    // Only a flag that really flips is a change worth an audit line.
+    const releasesStoredOverride = shouldReleaseOverride && existing.dueDateOverridden === true;
+
     // §12 (2026-11-14) · Invariant: an update never leaves
     // `estimatedStartDate` AFTER `endDate`.
     //
@@ -722,6 +749,8 @@ export class TasksService {
         startDate: dateOrNull(startDate as any),
         endDate: dateOrNull(endDate as any),
         ...(shouldMarkOverride ? { dueDateOverridden: true } : {}),
+        // §14 (2026-11-15) · see `shouldReleaseOverride` above.
+        ...(shouldReleaseOverride ? { dueDateOverridden: false } : {}),
       },
       include: {
         zone: true,
@@ -773,6 +802,12 @@ export class TasksService {
     // visible in the audit trail even though the request did not name it.
     if (movedEstimatedStart && !nonStatusKeys.includes('estimatedStartDate')) {
       nonStatusKeys.push('estimatedStartDate');
+    }
+    // §14 (2026-11-15) · Same for a manual due date that this update
+    // handed back to the scheduler: the request names `endDate` or
+    // `manualDueDate`, never the column that actually flipped.
+    if (releasesStoredOverride && !nonStatusKeys.includes('dueDateOverridden')) {
+      nonStatusKeys.push('dueDateOverridden');
     }
     if (nonStatusKeys.length > 0) {
       await this.activityLog.logTaskUpdated({

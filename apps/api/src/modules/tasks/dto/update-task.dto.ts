@@ -64,12 +64,26 @@ export class UpdateTaskDto extends PartialType(CreateTaskDto) {
    * affordances) MUST leave this flag unset so `dueDateOverridden` is
    * NOT fired and the scheduler keeps re-chaining the task.
    *
+   * §14 (2026-11-15) · Three states, not two:
+   *   - `true`  → with a changed, non-null `endDate` in the same
+   *               request: the date is a manual one
+   *               (`dueDateOverridden = true`). Unchanged.
+   *   - `false` → "this due date is scheduler-owned again":
+   *               `dueDateOverridden = false`, with or without an
+   *               `endDate` in the same request. The only way to hand a
+   *               manually-dated task back to the scheduler without
+   *               clearing its date.
+   *   - unset   → `dueDateOverridden` is left exactly as stored.
+   * Independently of this field, an explicit `endDate: null` clears
+   * `dueDateOverridden` too — a task without a due date has no manual
+   * date.
+   *
    * Stripped from the DTO before Prisma writes (schema does not carry
    * this field — it is a transport-only signal).
    */
   @ApiPropertyOptional({
     description:
-      'Explicit-user-intent flag. Only true when the PM manually edits a single task\'s due date; automatic writes must leave it unset so dueDateOverridden stays false.',
+      'Due-date ownership signal (transport-only, not a stored field). true — sent with a changed, non-null endDate when the PM manually edits a single task\'s due date: dueDateOverridden becomes true. false — the due date is scheduler-owned again: dueDateOverridden becomes false, with or without an endDate in the same request. Omitted — dueDateOverridden is left as stored; automatic writes must omit it. An explicit endDate: null also sets dueDateOverridden to false.',
   })
   @IsOptional()
   @IsBoolean()

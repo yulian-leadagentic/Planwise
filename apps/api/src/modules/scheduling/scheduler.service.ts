@@ -41,6 +41,12 @@ import {
  *      §12 (2026-11-14) · when such a task has no usable stored start
  *      (none, or one that is after its own end) the chain uses
  *      walkBack(storedEnd, duration) instead — never the anchor.
+ *      §14 (2026-11-15) · a task is pinned this way only when it HAS a
+ *      stored end date and the caller did not release it
+ *      (`releaseOverrideTaskIds` — the PM-approved preview / commit
+ *      round-trip only; automatic callers never send it). A released
+ *      task, and a flagged task with no stored end (nothing manual to
+ *      protect), is scheduled exactly like a never-overridden one.
  *   5. Forward pass (base = max(project.startDate, today)): topo
  *      order; earliestStart = max(nextWorkingDay(preds.earliestFinish), base);
  *      earliestFinish = walkForward(earliestStart, duration).
@@ -94,13 +100,26 @@ export interface ScheduledTask {
    * true if dueDateOverridden preserved the stored dates — the commit
    * paths never write such a task.
    * §12 (2026-11-14) · For these rows `startDate` / `endDate` are the
-   * dates the CHAIN is built around, which equal the stored ones only
-   * when the stored ones are usable: a missing end reads as the anchor,
-   * and a missing start — or a stored start that is after the end —
-   * reads as walkBack(end, duration). Never start > end. A consumer that
-   * needs the stored values (the reschedule preview) reads the task row.
+   * dates the CHAIN is built around: `endDate` is the stored end, and
+   * `startDate` is the stored start only when that one is usable — a
+   * missing start, or a stored start that is after the end, reads as
+   * walkBack(end, duration). Never start > end. A consumer that needs
+   * the stored values (the reschedule preview) reads the task row.
+   * §14 (2026-11-15) · true only for a task that was really PINNED in
+   * this run: flagged, with a stored end date, and not released by the
+   * caller. A released task and a flagged task without a stored end
+   * are scheduled normally and carry `false` here.
    */
   skippedByOverride: boolean;
+  /**
+   * §14 (2026-11-15) · The STORED `Task.dueDateOverridden` ("manual due
+   * date"), whatever this run did with the task. `manual &&
+   * !skippedByOverride` = the dates on this row are computed ones for a
+   * task that is still flagged manual in the database — released for
+   * this run via `releaseOverrideTaskIds`, or flagged without a stored
+   * end. A commit that writes such a row clears the flag with it.
+   */
+  manual: boolean;
   assigneeId: number | null;  // first assignee (same convention as duration); null = unassigned
   /**
    * D2 (resource leveling + spec rule 13): true when the task cannot be
@@ -186,6 +205,9 @@ export interface AllOverloadScanResult {
  * three categories (spec §D4c):
  *   (א) manual        — `dueDateOverridden === true` (rule 10:
  *                       preserved); PM must confirm the overwrite.
+ *                       §14 (2026-11-15) · only a task the scheduler
+ *                       actually pinned (`skippedByOverride`): flagged
+ *                       AND holding a stored end date.
  *   (ב) overload      — the engine flagged `infeasible === true`
  *                       (rule 13: never force; surface to PM).
  *   (ג) hours-logged — a `TimeEntry` with minutes>0 and
@@ -238,6 +260,17 @@ export interface SaveAndUpdateDueDatesResult {
  * is false. Before this flag the row showed the dates the scheduler
  * merely chained around (the anchor in place of a missing start) and
  * was counted as moving.
+ *
+ * §14 (2026-11-15) · `manual` — the STORED `dueDateOverridden` flag,
+ * released or not. The preview takes `releaseOverrideTaskIds`: a manual
+ * task named there is scheduled like any other, so its row carries
+ * `manual: true`, `skippedByOverride: false`, the COMPUTED "after"
+ * dates and an ordinary `willMove` (false when the computed dates equal
+ * the stored ones — approving such a row still returns the task to
+ * automatic scheduling). A manual task that is not released is the §12
+ * row above with `manual: true`. A flagged task with no stored end date
+ * is never pinned: `manual: true`, `skippedByOverride: false`, with or
+ * without a release.
  */
 export interface ReschedulePreviewItem {
   taskId: number;
@@ -253,6 +286,7 @@ export interface ReschedulePreviewItem {
   violatesTarget: boolean;
   hoursLogged: boolean;
   skippedByOverride: boolean;
+  manual: boolean;
 }
 
 export interface ReschedulePreviewResult {
@@ -288,6 +322,26 @@ const DEFAULT_WEEKLY_REST_DAYS = [5, 6]; // Fri + Sat (Israeli work-week), align
 const DEFAULT_DAILY_STANDARD_HOURS = 8;
 const DAY_MS = 86400000;
 
+/**
+ * §14 (2026-11-15) · Caller-supplied set of task ids whose manual due
+ * date (`dueDateOverridden`) is released for ONE scheduler run — see
+ * `scheduleDeliverable`. Only the PM-approved preview / commit
+ * round-trip sends it; every automatic caller runs with `NO_RELEASE`,
+ * so "rule 10" (an automatic write never touches a manual date) holds
+ * for them unchanged.
+ */
+export interface ReleaseOverrideOptions {
+  releaseOverrideTaskIds?: Iterable<number> | null;
+}
+
+const NO_RELEASE: ReadonlySet<number> = new Set<number>();
+
+/** Ids → a Set (a Set is passed through, so the project-wide loops build it once). */
+function toReleaseSet(ids: Iterable<number> | null | undefined): ReadonlySet<number> {
+  if (ids == null) return NO_RELEASE;
+  return ids instanceof Set ? ids : new Set(ids);
+}
+
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
@@ -302,12 +356,22 @@ export class SchedulerService {
    * they dry-run every target of one project in one request and share
    * the zone tree / dated-target lookups through it. Single-target
    * callers leave it out.
+   *
+   * §14 (2026-11-15) · `options.releaseOverrideTaskIds` — manual tasks
+   * to schedule as if they were not overridden (what-if for the review
+   * the PM is about to approve). Each returned row says what happened:
+   * `manual` = the stored flag, `skippedByOverride` = pinned in this run.
    */
   async scheduleDeliverableDryRun(
     inputs: ScheduleInputs,
     scopeMemo?: TargetScopeMemo,
+    options?: ReleaseOverrideOptions,
   ): Promise<ScheduleResult> {
-    return this.scheduleDeliverable(inputs, { writeBack: false, scopeMemo });
+    return this.scheduleDeliverable(inputs, {
+      writeBack: false,
+      scopeMemo,
+      releaseOverrideTaskIds: toReleaseSet(options?.releaseOverrideTaskIds),
+    });
   }
 
   /**
@@ -323,11 +387,15 @@ export class SchedulerService {
    *                       the engine cannot schedule them.
    *   - 'no-target-row' : the (zone × deliverable) pair has never had a
    *                       target saved — nothing to anchor a schedule to.
+   *
+   * §14 (2026-11-15) · `releaseOverrideTaskIds` is forwarded to the
+   * dry-run (see there). Ids outside the pair's scope match nothing.
    */
   async scheduleProjectDeliverableDryRun(args: {
     projectDeliverableId: number;
     zoneId: number | null | undefined;
     anchorDate?: Date;
+    releaseOverrideTaskIds?: number[];
   }): Promise<ScheduleResult> {
     if (args.zoneId == null) {
       return this.emptyResult('no-zone');
@@ -344,7 +412,14 @@ export class SchedulerService {
     if (!zdt) {
       return this.emptyResult('no-target-row');
     }
-    return this.scheduleDeliverableDryRun({ deliverableId: zdt.id, anchorDate: args.anchorDate });
+    const inputs: ScheduleInputs = { deliverableId: zdt.id, anchorDate: args.anchorDate };
+    // §14 (2026-11-15) · Nothing to release → the plain dry-run call,
+    // exactly as before.
+    return args.releaseOverrideTaskIds && args.releaseOverrideTaskIds.length > 0
+      ? this.scheduleDeliverableDryRun(inputs, undefined, {
+          releaseOverrideTaskIds: args.releaseOverrideTaskIds,
+        })
+      : this.scheduleDeliverableDryRun(inputs);
   }
 
   /**
@@ -615,8 +690,21 @@ export class SchedulerService {
    * instead reuses the existing dry-run, which the production commit
    * also calls first. Zero drift: the preview IS the same scheduler
    * output the subsequent commit will consume.
+   *
+   * §14 (2026-11-15) · `options.releaseOverrideTaskIds` — manual tasks
+   * (`dueDateOverridden`) the scheduler treats as released for this
+   * preview, so the PM sees where they WOULD land when the dates are
+   * derived back from the target. Every row carries `manual` (the
+   * stored flag) so the modal can mark them. Nothing is released in
+   * the database here; the commit that follows must be sent the same
+   * set next to the approved `taskIds` to write what this preview
+   * showed. Ids that are not scheduled tasks of the project match
+   * nothing.
    */
-  async previewReschedule(projectId: number): Promise<ReschedulePreviewResult> {
+  async previewReschedule(
+    projectId: number,
+    options?: { releaseOverrideTaskIds?: number[] },
+  ): Promise<ReschedulePreviewResult> {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       select: { id: true },
@@ -650,11 +738,17 @@ export class SchedulerService {
     // task lands in these maps once and iteration order cannot change
     // which target's dates it gets.
     const scopeMemo = createTargetScopeMemo();
+    // §14 (2026-11-15) · One release set for every target of the run.
+    const releaseOverrideTaskIds = toReleaseSet(
+      Array.isArray(options?.releaseOverrideTaskIds) ? options!.releaseOverrideTaskIds : null,
+    );
     const taskToScheduled = new Map<number, ScheduledTask>();
     const taskToDeliverableTarget = new Map<number, Date | null>();
     for (const t of targets) {
       try {
-        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo);
+        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo, {
+          releaseOverrideTaskIds,
+        });
         for (const s of result.scheduled) {
           taskToScheduled.set(s.taskId, s);
           taskToDeliverableTarget.set(s.taskId, t.targetDate ?? null);
@@ -733,9 +827,13 @@ export class SchedulerService {
       // an approved `taskIds` filter), so the preview must not promise a
       // move: "after" IS the stored row (null stays null). The
       // scheduler's own dates for such a task are only what the chain
-      // was built around — the anchor for a missing end, a derived start
-      // for a missing one — and showing them here read as "will move to
-      // dates nobody will ever write".
+      // was built around — a derived start for a missing one — and
+      // showing them here read as "will move to dates nobody will ever
+      // write".
+      // §14 (2026-11-15) · That is the row of a manual task that is
+      // still PINNED. One the caller released (or one flagged without a
+      // stored end) comes back `skippedByOverride: false` and takes the
+      // ordinary branch: computed "after" dates, ordinary `willMove`.
       const skippedByOverride = s.skippedByOverride === true;
       const afterStart = skippedByOverride ? beforeStart : s.startDate ?? null;
       const afterEnd = skippedByOverride ? beforeEnd : s.endDate ?? null;
@@ -774,6 +872,7 @@ export class SchedulerService {
         violatesTarget,
         hoursLogged: hasHoursLogged.has(taskId),
         skippedByOverride,
+        manual: s.manual === true,
       });
     }
 
@@ -787,10 +886,23 @@ export class SchedulerService {
     };
   }
 
+  /**
+   * §14 (2026-11-15) · `options.releaseOverrideTaskIds` — the manual
+   * tasks the preceding `previewReschedule` was asked to release.
+   * Honoured ONLY together with `options.taskIds` (the PM-approved
+   * subset): the scheduler runs with the same release set, so what is
+   * written is exactly what the preview showed, and an approved task
+   * that is released gets its computed dates AND `dueDateOverridden:
+   * false` in one update — also when those dates equal the stored
+   * ones (approving a manual row = "back to automatic"). A released
+   * task the PM did not approve is not written and stays manual.
+   * Without `taskIds` the set is ignored: the automatic path never
+   * releases a manual date (rule 10).
+   */
   async saveAndUpdateDueDates(
     projectId: number,
     actorId?: number,
-    options?: { taskIds?: number[] },
+    options?: { taskIds?: number[]; releaseOverrideTaskIds?: number[] },
   ): Promise<SaveAndUpdateDueDatesResult> {
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
@@ -799,6 +911,19 @@ export class SchedulerService {
     if (!project) {
       throw new NotFoundException(`Project ${projectId} not found`);
     }
+
+    // §8a · Optional preview-approved filter — see the partition loop
+    // below for what it does to each task.
+    const taskFilter: Set<number> | null = Array.isArray(options?.taskIds)
+      ? new Set(options!.taskIds)
+      : null;
+    // §14 (2026-11-15) · The release set rides on the approved filter
+    // and is dropped without one.
+    const releaseOverrideTaskIds = toReleaseSet(
+      taskFilter && Array.isArray(options?.releaseOverrideTaskIds)
+        ? options!.releaseOverrideTaskIds
+        : null,
+    );
 
     // Load every ZoneDeliverableTarget under the project — same shape
     // as the overload scan but with projectDeliverable name/zone for
@@ -826,7 +951,9 @@ export class SchedulerService {
     const perDeliverable: Array<{ target: (typeof targets)[number]; scheduled: ScheduledTask[] }> = [];
     for (const t of targets) {
       try {
-        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo);
+        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo, {
+          releaseOverrideTaskIds,
+        });
         perDeliverable.push({ target: t, scheduled: result.scheduled });
       } catch (err) {
         this.logger.warn(
@@ -881,7 +1008,24 @@ export class SchedulerService {
 
     // Partition: auto-commit vs. review. We iterate per-deliverable so
     // the review row keeps its deliverable/zone context.
-    const taskToCommit = new Map<number, { newStart: Date; newEnd: Date }>();
+    //
+    // §14 (2026-11-15) · `releaseOverride` — the row carries COMPUTED
+    // dates for a task that is still flagged manual in the database
+    // (`manual && !skippedByOverride`), so writing it must clear the
+    // flag in the same update; left set, the computed date would be
+    // pinned from then on as if the PM had typed it. Two ways to get
+    // here: the PM approved a released manual row (filter path), or the
+    // task is flagged with no stored end date (either path).
+    const taskToCommit = new Map<
+      number,
+      { newStart: Date; newEnd: Date; releaseOverride: boolean }
+    >();
+    const queueCommit = (s: ScheduledTask) =>
+      taskToCommit.set(s.taskId, {
+        newStart: s.startDate,
+        newEnd: s.endDate,
+        releaseOverride: s.manual === true,
+      });
     const requiresReview: ReviewRequiredTask[] = [];
     const seenReviewTaskIds = new Set<number>();
 
@@ -917,9 +1061,8 @@ export class SchedulerService {
     // explicitly. Tasks NOT in the filter are left untouched (no
     // auto-commit, no review row). When the filter is absent the
     // original three-way partition runs unchanged.
-    const taskFilter: Set<number> | null = Array.isArray(options?.taskIds)
-      ? new Set(options!.taskIds)
-      : null;
+    // (`taskFilter` is resolved at the top — §14 needs it before the
+    // dry-run to decide whether the release set applies.)
 
     for (const { target, scheduled } of perDeliverable) {
       for (const s of scheduled) {
@@ -927,7 +1070,7 @@ export class SchedulerService {
           if (!taskFilter.has(s.taskId)) continue;
           // Explicit PM approval via preview. Write proposed dates
           // regardless of classification — except a manually-overridden
-          // task, which is NEVER written here.
+          // task that is still pinned, which is NEVER written here.
           // §12 (2026-11-14) · The old reason given ("proposed ==
           // current, a no-op write") only holds when both stored dates
           // are usable; with a missing / inverted stored start the
@@ -937,8 +1080,15 @@ export class SchedulerService {
           // so preview and commit agree: a manual due date changes only
           // through an explicit per-task path (`applyReviewed`, the
           // task editor, `force-apply-target`).
+          // §14 (2026-11-15) · …or through this one, when the PM both
+          // released the task for the preview (`releaseOverrideTaskIds`)
+          // and approved its row (`taskIds`): the scheduler then did not
+          // pin it, so it is not `skippedByOverride` and falls through
+          // to the write below, which also clears the flag. Approved but
+          // not released → still pinned → still skipped here. Released
+          // but not approved → stopped by the filter above.
           if (s.skippedByOverride) continue;
-          taskToCommit.set(s.taskId, { newStart: s.startDate, newEnd: s.endDate });
+          queueCommit(s);
           continue;
         }
         // (א) manual override — the scheduler short-circuits on
@@ -962,26 +1112,33 @@ export class SchedulerService {
           continue;
         }
         // Safe to auto-commit.
-        taskToCommit.set(s.taskId, { newStart: s.startDate, newEnd: s.endDate });
+        queueCommit(s);
       }
     }
 
     const autoApplied: Array<{ taskId: number; newStart: string; newEnd: string }> = [];
+    let overridesReleased = 0;
     if (taskToCommit.size > 0) {
       await this.prisma.$transaction(async (tx) => {
-        for (const [taskId, { newStart, newEnd }] of taskToCommit) {
+        for (const [taskId, { newStart, newEnd, releaseOverride }] of taskToCommit) {
           await tx.task.update({
             where: { id: taskId },
             data: {
               estimatedStartDate: newStart,
               endDate: newEnd,
-              // Rule 10: never flip dueDateOverridden back to false
-              // here. Auto-scheduling writes the computed date but
-              // leaves override state alone — a PM who had previously
-              // picked a manual date for this task would have landed in
-              // the review path above.
+              // Rule 10: auto-scheduling never flips dueDateOverridden
+              // back to false for a task that HAS a manual date — such
+              // a task is pinned and never reaches this write (it lands
+              // in the review path above, or is skipped by the filter).
+              // §14 (2026-11-15) · The flag is cleared only for a row
+              // that is written while still flagged: a released manual
+              // task the PM approved, or a flagged task that had no
+              // stored end date (see `releaseOverride` above). Every
+              // other row leaves the column out of the update.
+              ...(releaseOverride ? { dueDateOverridden: false } : {}),
             },
           });
+          if (releaseOverride) overridesReleased++;
         }
       });
       for (const [taskId, { newStart, newEnd }] of taskToCommit) {
@@ -995,7 +1152,9 @@ export class SchedulerService {
 
     this.logger.log(
       `saveAndUpdateDueDates · projectId=${projectId} actor=${actorId ?? 'system'} ` +
-        `scanned=${targets.length} autoApplied=${autoApplied.length} requiresReview=${requiresReview.length}`,
+        `scanned=${targets.length} autoApplied=${autoApplied.length} requiresReview=${requiresReview.length}` +
+        // §14 (2026-11-15) · manual due dates returned to the scheduler by this commit.
+        (overridesReleased > 0 ? ` overridesReleased=${overridesReleased}` : ''),
     );
 
     return {
@@ -1116,9 +1275,20 @@ export class SchedulerService {
     return { applied };
   }
 
+  /**
+   * §14 (2026-11-15) · `opts.releaseOverrideTaskIds` — tasks whose
+   * manual due date is NOT pinned in this run (see the backward pass).
+   * Passed by the dry-run entry points only; the single-target commit
+   * (`scheduleDeliverableAndCommit`) never releases anything.
+   */
   private async scheduleDeliverable(
     inputs: ScheduleInputs,
-    opts: { writeBack: boolean; actorId?: number; scopeMemo?: TargetScopeMemo },
+    opts: {
+      writeBack: boolean;
+      actorId?: number;
+      scopeMemo?: TargetScopeMemo;
+      releaseOverrideTaskIds?: ReadonlySet<number>;
+    },
   ): Promise<ScheduleResult> {
     // 1. Resolve deliverable + anchor.
     const deliverable = await this.prisma.zoneDeliverableTarget.findUnique({
@@ -1283,17 +1453,31 @@ export class SchedulerService {
     const scheduled = new Map<number, ScheduledTask>();
     const backwardOrder = [...topoOrder].reverse();
     const anchorDate = this.stripTime(anchor);
+    const released = opts.releaseOverrideTaskIds ?? NO_RELEASE;
 
     for (const taskId of backwardOrder) {
       const task = tasks.find((t) => t.id === taskId)!;
       const dur = durationByTask.get(taskId)!;
       const assigneeId = task.assignees?.[0]?.user?.id ?? null;
+      // §14 (2026-11-15) · The stored flag, reported on the row as-is.
+      const manual = task.dueDateOverridden === true;
 
       // Respect manual override — do NOT touch the task's stored dates.
-      if (task.dueDateOverridden) {
-        // End = the stored end; a task with none still falls back to the
-        // anchor (unchanged).
-        const ed = this.stripTime(task.endDate ?? anchorDate);
+      //
+      // §14 (2026-11-15) · A task is PINNED only when all three hold:
+      //   1. it is flagged (`dueDateOverridden`),
+      //   2. it has a stored end date — the manual date itself. A flagged
+      //      task without one (the state an old "Clear" left behind) has
+      //      nothing to protect; it used to be pinned ON THE ANCHOR and
+      //      never written, i.e. stuck with no date for good,
+      //   3. the caller did not release it for this run.
+      // Anything else falls through and is scheduled exactly like a
+      // never-overridden task — here, and in every later step, because
+      // those all key off `skippedByOverride` (leveling, the
+      // predecessor-conflict check, float / critical path, write-back).
+      if (manual && task.endDate != null && !released.has(taskId)) {
+        // End = the stored end.
+        const ed = this.stripTime(task.endDate);
         // §12 (2026-11-14) · Start. The old `estimatedStartDate ??
         // startDate ?? anchorDate` put a task with no stored start AT THE
         // ANCHOR — after its own end (staging: start 2027-02-14, end
@@ -1318,6 +1502,7 @@ export class SchedulerService {
           endDate: ed,
           workingDaysDuration: dur,
           skippedByOverride: true,
+          manual: true,
           assigneeId,
         });
         continue;
@@ -1357,6 +1542,7 @@ export class SchedulerService {
         endDate,
         workingDaysDuration: dur,
         skippedByOverride: false,
+        manual,
         assigneeId,
       });
     }
@@ -1493,6 +1679,16 @@ export class SchedulerService {
               // Task.startDate (ACTUAL start) is left untouched by the
               // scheduler. Only `estimatedStartDate` moves on
               // re-schedule.
+              //
+              // §14 (2026-11-15) · A row written here while still
+              // flagged manual is a flagged task that had NO stored end
+              // date (this path never gets a release set, and a flagged
+              // task with an end was skipped above). It now receives a
+              // computed end; left flagged, that computed date would be
+              // pinned from the next run on as if the PM had typed it —
+              // so the flag goes with the write. A task that does carry
+              // a manual date is never touched (rule 10).
+              ...(s.manual ? { dueDateOverridden: false } : {}),
             },
           });
         }

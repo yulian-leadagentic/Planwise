@@ -18,6 +18,19 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 
 /**
+ * §14 (2026-11-15) · Hand-validation for the id lists in the inline
+ * (untyped) bodies below — the global ValidationPipe has no DTO class
+ * to check them against. Same rule the `taskIds` filter always used:
+ * an array keeps its integer entries, anything else reads as "not
+ * sent". Never throws: a stray id simply matches no task downstream.
+ */
+function integerIdsOrUndefined(raw: unknown): number[] | undefined {
+  return Array.isArray(raw)
+    ? raw.filter((n): n is number => Number.isInteger(n))
+    : undefined;
+}
+
+/**
  * T3 · Scheduling endpoints
  * -------------------------------------------------------------------
  * Two explicit entry points — a dry-run that computes without side
@@ -66,19 +79,27 @@ export class SchedulingController {
   // Empty outcomes return 200 with `scheduled: []` and
   // `feasibility.reason` = 'no-zone' (no zoneId — deliverable-level
   // target) or 'no-target-row' (pair has no saved target yet).
+  //
+  // §14 (2026-11-15) · Optional `releaseOverrideTaskIds`: manual tasks
+  // (`dueDateOverridden`) to schedule as if they were not overridden.
+  // Every `scheduled[]` row carries `manual` (the stored flag) and
+  // `skippedByOverride` (pinned in THIS run), so the caller can tell a
+  // released manual row (`manual && !skippedByOverride`) from a pinned
+  // one. Still no writes — nothing is released in the database.
   @Post('project-deliverables/:id/schedule/dry-run')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({
     summary:
-      '§10 · Compute a working-day schedule for a (ProjectDeliverable × Zone) pair without writing. Body { zoneId, anchorDate? } — the ZoneDeliverableTarget is resolved server-side; optional anchorDate simulates a different target date for the dry-run only.',
+      '§10 · Compute a working-day schedule for a (ProjectDeliverable × Zone) pair without writing. Body { zoneId, anchorDate?, releaseOverrideTaskIds? } — the ZoneDeliverableTarget is resolved server-side; optional anchorDate simulates a different target date for the dry-run only. §14 · optional releaseOverrideTaskIds (task ids) schedules those manually-dated tasks as if they were not overridden; each scheduled row reports manual (stored dueDateOverridden) and skippedByOverride (pinned in this run).',
   })
   async dryRunForProjectDeliverable(
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
-    @Body() body?: { zoneId?: number | null; anchorDate?: string },
+    @Body()
+    body?: { zoneId?: number | null; anchorDate?: string; releaseOverrideTaskIds?: number[] },
   ) {
     // Inline body type → the global ValidationPipe has nothing to
-    // validate against, so guard the two fields by hand.
+    // validate against, so guard the fields by hand.
     let zoneId: number | null = null;
     const rawZoneId: unknown = body?.zoneId;
     if (rawZoneId != null) {
@@ -111,6 +132,7 @@ export class SchedulingController {
       projectDeliverableId: id,
       zoneId,
       anchorDate,
+      releaseOverrideTaskIds: integerIdsOrUndefined(body?.releaseOverrideTaskIds),
     });
   }
 
@@ -157,23 +179,29 @@ export class SchedulingController {
   // scheduler across every deliverable in the project, auto-commits
   // the safe rows, and returns the problematic rows (manual override,
   // overload, hours-logged) for PM review.
+  //
+  // §14 (2026-11-15) · `releaseOverrideTaskIds` — the manual tasks the
+  // preview that preceded this call was asked to release. Only read
+  // together with `taskIds`: an approved task that is also released is
+  // written with its computed dates and loses `dueDateOverridden`.
+  // Sent without `taskIds` it is ignored (the automatic path keeps
+  // every manual date).
 
   @Post('scheduling/projects/:projectId/save-and-update-due-dates')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({
     summary:
-      'D4 · Reschedule all deliverables in a project; auto-commit safe tasks, return the problematic ones for PM review. Optional { taskIds } (§8a) limits the write to a PM-approved subset after a preview-reschedule round-trip.',
+      'D4 · Reschedule all deliverables in a project; auto-commit safe tasks, return the problematic ones for PM review. Optional { taskIds } (§8a) limits the write to a PM-approved subset after a preview-reschedule round-trip. §14 · optional { releaseOverrideTaskIds } (honoured only together with taskIds; send the same list the preview was given) releases the manual due date of those tasks: an approved + released task gets its computed dates and dueDateOverridden=false; a released task that is not in taskIds is left untouched.',
   })
   saveAndUpdateDueDates(
     @Param('projectId', ParseIntPipe) projectId: number,
     @CurrentUser() user: any,
-    @Body() body?: { taskIds?: number[] },
+    @Body() body?: { taskIds?: number[]; releaseOverrideTaskIds?: number[] },
   ) {
-    const taskIds =
-      Array.isArray(body?.taskIds)
-        ? body!.taskIds.filter((n): n is number => Number.isInteger(n))
-        : undefined;
-    return this.scheduler.saveAndUpdateDueDates(projectId, user?.id, { taskIds });
+    return this.scheduler.saveAndUpdateDueDates(projectId, user?.id, {
+      taskIds: integerIdsOrUndefined(body?.taskIds),
+      releaseOverrideTaskIds: integerIdsOrUndefined(body?.releaseOverrideTaskIds),
+    });
   }
 
   // ─── §8a · Preview reschedule ──────────────────────────────────────
@@ -186,14 +214,27 @@ export class SchedulingController {
   // `{ taskIds }` subset. Same `projects:write` guard as the live
   // commit path (the preview still accesses project-level scheduling
   // data a read-only viewer should not be able to drive from the UI).
+  //
+  // §14 (2026-11-15) · Optional body `{ releaseOverrideTaskIds }`: the
+  // manual tasks to preview as released (dates derived back from the
+  // target like any other task). Every preview row carries `manual`
+  // (the stored `dueDateOverridden`); a released row has
+  // `skippedByOverride: false` and computed "after" dates. To commit
+  // what was shown, send the same list to `save-and-update-due-dates`
+  // next to the approved `taskIds`.
   @Post('scheduling/projects/:projectId/preview-reschedule')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({
     summary:
-      '§8a · Dry-run the project-wide reschedule and return a per-task diff (no writes).',
+      '§8a · Dry-run the project-wide reschedule and return a per-task diff (no writes). §14 · optional body { releaseOverrideTaskIds } previews those manually-dated tasks as released; each row reports manual (stored dueDateOverridden) and skippedByOverride (still pinned).',
   })
-  previewReschedule(@Param('projectId', ParseIntPipe) projectId: number) {
-    return this.scheduler.previewReschedule(projectId);
+  previewReschedule(
+    @Param('projectId', ParseIntPipe) projectId: number,
+    @Body() body?: { releaseOverrideTaskIds?: number[] },
+  ) {
+    return this.scheduler.previewReschedule(projectId, {
+      releaseOverrideTaskIds: integerIdsOrUndefined(body?.releaseOverrideTaskIds),
+    });
   }
 
   @Post('scheduling/projects/:projectId/apply-reviewed')

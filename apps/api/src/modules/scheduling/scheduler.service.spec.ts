@@ -1550,3 +1550,395 @@ describe('SchedulerService — §12 · override-skipped task without a usable st
     expect(plain.updates.map((u) => u.id)).toEqual([31]);
   });
 });
+
+// ════════════════════════════════════════════════════════════════════
+// §14 (2026-11-15) · Releasing a manual due date
+//
+// A hand-typed due date sets `Task.dueDateOverridden`, and the scheduler
+// then pins the task: staging had a deliverable target moved from 2028
+// to 2029 while three manual tasks stayed in Nov–Dec 2026, with no way
+// to hand them back from the review. The PM-approved round-trip can now
+// name tasks to release (`releaseOverrideTaskIds`): the preview
+// schedules them like any other task and flags them `manual`, and the
+// commit writes — and un-flags — only the ones the PM approved.
+// Automatic paths never release anything (rule 10).
+//
+// Also here (S8): a flagged task with NO stored end date has no manual
+// date to protect, so it is never pinned.
+// ════════════════════════════════════════════════════════════════════
+describe('SchedulerService — §14 · releasing a manual due date', () => {
+  const TUE_1110 = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+  const MON_1102 = new Date(Date.UTC(2026, 10, 2)); // Mon 2026-11-02
+  const WED_1104 = new Date(Date.UTC(2026, 10, 4)); // Wed 2026-11-04
+
+  /** Scheduled rows without the stored-flag marker — for "same as a never-overridden task". */
+  const withoutManual = (rows: Array<{ taskId: number; manual: boolean }>) =>
+    [...rows]
+      .sort((a, b) => a.taskId - b.taskId)
+      .map((row) => {
+        const { manual, ...rest } = row;
+        expect(typeof manual).toBe('boolean'); // every row carries the marker
+        return rest;
+      });
+
+  // ─── the engine ────────────────────────────────────────────────────
+  //
+  // Chain 1 → 2 → 3, anchor Tue 11-10, one assignee at 8h/day.
+  //   1: 1 wd · 2: 2 wd, hand-dated Mon 11-02 … Wed 11-04 · 3: 2 wd.
+  // `extra` adds tasks (used to make the assignee's days contended).
+  function chain(task2: Partial<Task>, extra: Task[] = []) {
+    const { prisma, updates } = makePrisma({
+      tasks: [
+        makeTask({ id: 1, budgetHours: 8 }),
+        makeTask({
+          id: 2,
+          budgetHours: 16,
+          dueDateOverridden: true,
+          estimatedStartDate: MON_1102,
+          endDate: WED_1104,
+          ...task2,
+        }),
+        makeTask({ id: 3, budgetHours: 16 }),
+        ...extra,
+      ],
+      deps: [
+        { taskId: 2, dependsOnId: 1 },
+        { taskId: 3, dependsOnId: 2 },
+      ],
+      deliverable: { id: 30, targetDate: TUE_1110, zoneId: 1, projectDeliverableId: 30 },
+    });
+    return { prisma, updates, svc: newService(prisma) };
+  }
+  const rowsById = <T extends { taskId: number }>(out: { scheduled: T[] }) =>
+    new Map(out.scheduled.map((s) => [s.taskId, s]));
+
+  it('a released task is scheduled like a never-overridden one and its predecessor chains from the computed start', async () => {
+    const out = await chain({}).svc.scheduleDeliverableDryRun({ deliverableId: 30 }, undefined, {
+      releaseOverrideTaskIds: [2, 999], // 999: not a task of this target — matches nothing
+    });
+    const byId = rowsById(out);
+
+    // Task 2 — derived back from task 3's start (Mon 11-09):
+    //   end = prevWorkingDay(Mon 11-09) = Sun 11-08; 2 wd back over
+    //   Fri/Sat → start Thu 11-05. The stored 11-02 … 11-04 is ignored.
+    expect(byId.get(2)).toMatchObject({ manual: true, skippedByOverride: false });
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-08');
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-05');
+    // …and it takes part in float / critical path like any other task.
+    expect(typeof byId.get(2)!.float).toBe('number');
+
+    // Task 1 — chained from the COMPUTED start: prevWorkingDay(Thu 11-05).
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-04');
+    expect(iso(byId.get(1)!.startDate)).toBe('2026-11-04');
+    expect(byId.get(1)).toMatchObject({ manual: false, skippedByOverride: false });
+    expect(byId.get(3)).toMatchObject({ manual: false, skippedByOverride: false });
+
+    // The whole result is what the same tasks give when task 2 was
+    // never overridden — only the stored-flag marker differs.
+    const twin = await chain({ dueDateOverridden: false }).svc.scheduleDeliverableDryRun({ deliverableId: 30 });
+    expect(withoutManual(out.scheduled)).toEqual(withoutManual(twin.scheduled));
+    expect(twin.scheduled.every((s) => s.manual === false)).toBe(true);
+    expect(out.feasibility).toEqual(twin.feasibility);
+  });
+
+  it('a task that is not released stays pinned — with no release set, an empty one, or one naming other tasks', async () => {
+    for (const options of [undefined, {}, { releaseOverrideTaskIds: [] }, { releaseOverrideTaskIds: [1, 3] }]) {
+      const out = await chain({}).svc.scheduleDeliverableDryRun({ deliverableId: 30 }, undefined, options);
+      const byId = rowsById(out);
+
+      expect(byId.get(2)).toMatchObject({ manual: true, skippedByOverride: true });
+      expect(iso(byId.get(2)!.endDate)).toBe('2026-11-04');
+      expect(iso(byId.get(2)!.startDate)).toBe('2026-11-02');
+      expect(byId.get(2)!.float).toBeUndefined();
+      // Task 1 is chained around the manual dates: prevWorkingDay(Mon 11-02) = Sun 11-01.
+      expect(iso(byId.get(1)!.endDate)).toBe('2026-11-01');
+      // Releasing a task that is not manual changes nothing about it.
+      expect(byId.get(1)).toMatchObject({ manual: false, skippedByOverride: false });
+    }
+  });
+
+  it('a released task joins resource leveling and the infeasible check exactly like a never-overridden one', async () => {
+    // Task 4 (1 wd, no dependencies) shares the assignee and also ends
+    // on the anchor, so the days before it are contended:
+    //   3 takes Tue 11-10 + Mon 11-09 · 4 spills to Sun 11-08 ·
+    //   2 (ends Sun 11-08, now full) packs Thu 11-05 + Wed 11-04 ·
+    //   → 2 starts on its predecessor's end day → predecessor-conflict.
+    const extra = () => [makeTask({ id: 4, budgetHours: 8 })];
+
+    const released = await chain({}, extra()).svc.scheduleDeliverableDryRun({ deliverableId: 30 }, undefined, {
+      releaseOverrideTaskIds: [2],
+    });
+    const twin = await chain({ dueDateOverridden: false }, extra()).svc.scheduleDeliverableDryRun({ deliverableId: 30 });
+
+    expect(withoutManual(released.scheduled)).toEqual(withoutManual(twin.scheduled));
+    const r2 = rowsById(released).get(2)!;
+    expect(iso(r2.startDate)).toBe('2026-11-04'); // moved by leveling, not the backward-pass 11-05
+    expect(r2).toMatchObject({ infeasible: true, infeasibleReason: 'predecessor-conflict', manual: true });
+
+    // Pinned, the same task is left out of leveling and of the check.
+    const pinned = await chain({}, extra()).svc.scheduleDeliverableDryRun({ deliverableId: 30 });
+    const p2 = rowsById(pinned).get(2)!;
+    expect(p2.skippedByOverride).toBe(true);
+    expect(iso(p2.startDate)).toBe('2026-11-02');
+    expect(p2.infeasible).toBeUndefined();
+  });
+
+  it('S8: a flagged task with no stored end date is not pinned — it is scheduled, not parked on the anchor', async () => {
+    // "Clear" used to leave `endDate = null` + `dueDateOverridden = true`.
+    // Such a row was pinned with the anchor standing in for its end and
+    // never written by any commit.
+    const out = await chain({ endDate: null }).svc.scheduleDeliverableDryRun({ deliverableId: 30 });
+    const byId = rowsById(out);
+
+    expect(byId.get(2)).toMatchObject({ manual: true, skippedByOverride: false });
+    expect(iso(byId.get(2)!.endDate)).toBe('2026-11-08'); // not the anchor 11-10
+    expect(iso(byId.get(2)!.startDate)).toBe('2026-11-05'); // not the stored 11-02
+    expect(iso(byId.get(1)!.endDate)).toBe('2026-11-04');
+
+    const twin = await chain({ endDate: null, dueDateOverridden: false }).svc.scheduleDeliverableDryRun({
+      deliverableId: 30,
+    });
+    expect(withoutManual(out.scheduled)).toEqual(withoutManual(twin.scheduled));
+  });
+
+  it('the single-target commit never releases a manual date, and un-flags only the flagged task that had no end', async () => {
+    // Manual date present → pinned → not written (rule 10, unchanged).
+    const pinned = chain({});
+    await pinned.svc.scheduleDeliverableAndCommit({ deliverableId: 30 }, 7);
+    expect(pinned.updates.map((u) => u.id).sort((a, b) => a - b)).toEqual([1, 3]);
+    for (const u of pinned.updates) expect('dueDateOverridden' in u.data).toBe(false);
+
+    // Flagged, no stored end → written with its computed dates, and the
+    // flag goes with it (left set, the computed end would be pinned from
+    // the next run on as if someone had typed it).
+    const noEnd = chain({ endDate: null });
+    await noEnd.svc.scheduleDeliverableAndCommit({ deliverableId: 30 }, 7);
+    const byId = new Map(noEnd.updates.map((u) => [u.id, u.data]));
+    expect([...byId.keys()].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    expect(byId.get(2).dueDateOverridden).toBe(false);
+    expect(iso(byId.get(2).endDate)).toBe('2026-11-08');
+    expect(iso(byId.get(2).estimatedStartDate)).toBe('2026-11-05');
+    expect('dueDateOverridden' in byId.get(1)).toBe(false);
+    expect('dueDateOverridden' in byId.get(3)).toBe(false);
+  });
+
+  // ─── preview → commit round-trip ───────────────────────────────────
+  //
+  // Zone 9, deliverable 40, anchor Tue 11-10; one assignee per task.
+  //   31: ordinary, nothing stored, predecessor of 32.
+  //   32: manual, 2 wd, stored Mon 11-02 … Wed 11-04.
+  //   34: manual, 1 wd, stored Tue 11-10 … Tue 11-10 — exactly where the
+  //       scheduler would put it (released, it does not move).
+  //   35: flagged manual but with NO end date (S8).
+  //
+  //                 pinned (no release)        32 + 34 released
+  //   31            Sun 11-01 … Sun 11-01      Sun 11-08 … Sun 11-08
+  //   32            stored                     Mon 11-09 … Tue 11-10
+  //   34            stored                     Tue 11-10 … Tue 11-10
+  //   35            Tue 11-10 … Tue 11-10      (same)
+  function roundTripFixture() {
+    const one = (id: number) => [{ user: { id, dailyStandardHours: 8 } }];
+    return makeProjectPrisma({
+      zones: [{ id: 9, parentId: null, name: 'Zone 9' }],
+      targets: [{ id: 601, zoneId: 9, projectDeliverableId: 40, targetDate: TUE_1110 }],
+      tasks: [
+        makeProjectTask({ id: 31, zoneId: 9, projectDeliverableId: 40, budgetHours: 8, assignees: one(1) }),
+        makeProjectTask({
+          id: 32,
+          zoneId: 9,
+          projectDeliverableId: 40,
+          budgetHours: 16,
+          dueDateOverridden: true,
+          estimatedStartDate: MON_1102,
+          endDate: WED_1104,
+          assignees: one(2),
+        }),
+        makeProjectTask({
+          id: 34,
+          zoneId: 9,
+          projectDeliverableId: 40,
+          budgetHours: 8,
+          dueDateOverridden: true,
+          estimatedStartDate: TUE_1110,
+          endDate: TUE_1110,
+          assignees: one(4),
+        }),
+        makeProjectTask({
+          id: 35,
+          zoneId: 9,
+          projectDeliverableId: 40,
+          budgetHours: 8,
+          dueDateOverridden: true,
+          estimatedStartDate: null,
+          endDate: null,
+          assignees: one(5),
+        }),
+      ],
+      deps: [{ taskId: 32, dependsOnId: 31 }],
+    });
+  }
+  /** The `data` of every task update, by task id, dates as yyyy-MM-dd. */
+  const sortedUpdates = (
+    updates: Array<{ id: number; data: { estimatedStartDate: Date; endDate: Date; dueDateOverridden?: boolean } }>,
+  ) =>
+    [...updates]
+      .sort((a, b) => a.id - b.id)
+      .map((u) => ({
+        id: u.id,
+        ...u.data,
+        estimatedStartDate: iso(u.data.estimatedStartDate),
+        endDate: iso(u.data.endDate),
+      }));
+
+  it('previewReschedule: `manual` is the stored flag on every row; a released row gets computed dates and an ordinary willMove', async () => {
+    const { svc, updates, prisma } = roundTripFixture();
+
+    // No release — the §12 rows, now also marked `manual`.
+    const plain = await svc.previewReschedule(PROJECT_ID);
+    const before = new Map(plain.preview.map((r) => [r.taskId, r]));
+    expect(before.get(31)).toMatchObject({ manual: false, skippedByOverride: false, willMove: true, afterEnd: '2026-11-01' });
+    expect(before.get(32)).toMatchObject({
+      manual: true,
+      skippedByOverride: true,
+      willMove: false,
+      afterStart: '2026-11-02',
+      afterEnd: '2026-11-04',
+    });
+    expect(before.get(34)).toMatchObject({ manual: true, skippedByOverride: true, willMove: false });
+    // S8 — flagged, no end: not pinned even without a release.
+    expect(before.get(35)).toMatchObject({
+      manual: true,
+      skippedByOverride: false,
+      willMove: true,
+      beforeEnd: null,
+      afterStart: '2026-11-10',
+      afterEnd: '2026-11-10',
+    });
+    expect(plain.projectSummary.movedTasks).toBe(2); // 31, 35
+
+    // 32 + 34 released (999 is nobody's task — ignored, no error).
+    const released = await svc.previewReschedule(PROJECT_ID, { releaseOverrideTaskIds: [32, 34, 999] });
+    const after = new Map(released.preview.map((r) => [r.taskId, r]));
+    expect(released.preview).toHaveLength(4);
+    expect(after.get(32)).toMatchObject({
+      manual: true,
+      skippedByOverride: false,
+      willMove: true,
+      beforeStart: '2026-11-02',
+      beforeEnd: '2026-11-04',
+      afterStart: '2026-11-09',
+      afterEnd: '2026-11-10',
+      delta: { startDays: 7, endDays: 6 },
+    });
+    // Released but already where the scheduler puts it: no move — the
+    // row is still marked manual so the modal can offer "back to automatic".
+    expect(after.get(34)).toMatchObject({
+      manual: true,
+      skippedByOverride: false,
+      willMove: false,
+      afterStart: '2026-11-10',
+      afterEnd: '2026-11-10',
+      delta: { startDays: 0, endDays: 0 },
+    });
+    // The predecessor now chains from 32's computed start (Mon 11-09).
+    expect(after.get(31)).toMatchObject({ manual: false, willMove: true, afterStart: '2026-11-08', afterEnd: '2026-11-08' });
+    expect(after.get(35)).toMatchObject({ manual: true, skippedByOverride: false, willMove: true });
+    expect(released.projectSummary.movedTasks).toBe(3); // 31, 32, 35
+
+    // A preview releases nothing in the database.
+    expect(updates).toEqual([]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('the (ProjectDeliverable × Zone) dry-run forwards the release set and reports manual / skippedByOverride per row', async () => {
+    const { svc } = roundTripFixture();
+
+    const out = await svc.scheduleProjectDeliverableDryRun({
+      projectDeliverableId: 40,
+      zoneId: 9,
+      releaseOverrideTaskIds: [32],
+    });
+    const byId = rowsById(out);
+
+    expect(byId.get(32)).toMatchObject({ manual: true, skippedByOverride: false });
+    expect(iso(byId.get(32)!.endDate)).toBe('2026-11-10');
+    expect(byId.get(34)).toMatchObject({ manual: true, skippedByOverride: true }); // not named → pinned
+    expect(byId.get(31)).toMatchObject({ manual: false, skippedByOverride: false });
+    expect(byId.get(35)).toMatchObject({ manual: true, skippedByOverride: false });
+  });
+
+  it('commit with taskIds + release set writes the computed dates and clears the flag — also when the dates did not change', async () => {
+    const { svc, updates } = roundTripFixture();
+
+    const res = await svc.saveAndUpdateDueDates(PROJECT_ID, 7, {
+      taskIds: [31, 32, 34, 999],
+      releaseOverrideTaskIds: [32, 34, 999],
+    });
+
+    expect(sortedUpdates(updates)).toEqual([
+      // Ordinary task: dates only — the flag column is not in the update.
+      { id: 31, estimatedStartDate: '2026-11-08', endDate: '2026-11-08' },
+      { id: 32, estimatedStartDate: '2026-11-09', endDate: '2026-11-10', dueDateOverridden: false },
+      // Same dates as stored, still written and un-flagged.
+      { id: 34, estimatedStartDate: '2026-11-10', endDate: '2026-11-10', dueDateOverridden: false },
+    ]);
+    expect([...res.autoApplied].sort((a, b) => a.taskId - b.taskId)).toEqual([
+      { taskId: 31, newStart: '2026-11-08', newEnd: '2026-11-08' },
+      { taskId: 32, newStart: '2026-11-09', newEnd: '2026-11-10' },
+      { taskId: 34, newStart: '2026-11-10', newEnd: '2026-11-10' },
+    ]);
+    expect(res.requiresReview).toEqual([]);
+  });
+
+  it('a release set without taskIds is ignored — the automatic path keeps every manual date', async () => {
+    const withRelease = roundTripFixture();
+    const res = await withRelease.svc.saveAndUpdateDueDates(PROJECT_ID, 7, { releaseOverrideTaskIds: [32, 34] });
+
+    const plain = roundTripFixture();
+    const expected = await plain.svc.saveAndUpdateDueDates(PROJECT_ID, 7);
+
+    // Identical to a call that never mentioned a release.
+    expect(res).toEqual(expected);
+    expect(sortedUpdates(withRelease.updates)).toEqual(sortedUpdates(plain.updates));
+
+    // …which is: manual rows to the review list, nothing written for them,
+    // and 31 chained around the PINNED 32 (Sun 11-01, not 11-08).
+    expect(res.requiresReview.map((r) => [r.taskId, r.reason, r.currentEnd, r.proposedEnd])).toEqual([
+      [32, 'manual', '2026-11-04', '2026-11-04'],
+      [34, 'manual', '2026-11-10', '2026-11-10'],
+    ]);
+    expect(sortedUpdates(withRelease.updates)).toEqual([
+      { id: 31, estimatedStartDate: '2026-11-01', endDate: '2026-11-01' },
+      // S8 — the flagged task with no end is auto-scheduled and un-flagged.
+      { id: 35, estimatedStartDate: '2026-11-10', endDate: '2026-11-10', dueDateOverridden: false },
+    ]);
+  });
+
+  it('a released task the PM did not approve is not written and stays manual; the approved rows are what the preview showed', async () => {
+    const { svc, updates } = roundTripFixture();
+
+    await svc.saveAndUpdateDueDates(PROJECT_ID, 7, { taskIds: [31], releaseOverrideTaskIds: [32, 34] });
+
+    // 31 gets the date it was SHOWN — chained from 32's computed start —
+    // and nothing at all is written for 32 / 34.
+    expect(sortedUpdates(updates)).toEqual([{ id: 31, estimatedStartDate: '2026-11-08', endDate: '2026-11-08' }]);
+  });
+
+  it('approved but not released → still pinned, never written (the §12 rule)', async () => {
+    const { svc, updates } = roundTripFixture();
+
+    await svc.saveAndUpdateDueDates(PROJECT_ID, 7, { taskIds: [31, 32, 34], releaseOverrideTaskIds: [] });
+
+    expect(sortedUpdates(updates)).toEqual([{ id: 31, estimatedStartDate: '2026-11-01', endDate: '2026-11-01' }]);
+  });
+
+  it('S8: an approved flagged task with no stored end is written and un-flagged without being named in the release set', async () => {
+    const { svc, updates } = roundTripFixture();
+
+    await svc.saveAndUpdateDueDates(PROJECT_ID, 7, { taskIds: [35] });
+
+    expect(sortedUpdates(updates)).toEqual([
+      { id: 35, estimatedStartDate: '2026-11-10', endDate: '2026-11-10', dueDateOverridden: false },
+    ]);
+  });
+});

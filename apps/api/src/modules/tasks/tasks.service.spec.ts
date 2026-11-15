@@ -1,7 +1,8 @@
 import { Test } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException, ValidationPipe } from '@nestjs/common';
 import { TasksService } from './tasks.service';
+import { UpdateTaskDto } from './dto/update-task.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -424,6 +425,159 @@ describe('TasksService', () => {
           changedFields: ['endDate', 'manualDueDate', 'estimatedStartDate'],
         }),
       );
+    });
+  });
+
+  // ─── §14 (2026-11-15) · PATCH /tasks/:id can release a manual due date ──
+  //
+  // `dueDateOverridden` ("manual due date") pins a task for the
+  // scheduler. Until §14 nothing in `update` could clear it: "Clear"
+  // (`endDate: null`) left a task with no date still flagged manual, and
+  // there was no way to say "keep the date, but let the scheduler own it
+  // again".
+  describe('update — releasing a manual due date (§14)', () => {
+    const TASK_ID = 91;
+    const d = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+    const iso = (v: Date | null | undefined) => (v ? v.toISOString().slice(0, 10) : v);
+    /** A task the PM dated by hand. */
+    const manualTask = (over: Record<string, unknown> = {}) => ({
+      id: TASK_ID,
+      projectId: 1,
+      code: 'BIM-030',
+      name: 'Coordinate level 2',
+      status: 'in_progress',
+      isPersonal: false,
+      zoneId: 695,
+      budgetHours: 8,
+      estimatedStartDate: d('2026-11-23'),
+      endDate: d('2026-11-30'),
+      dueDateOverridden: true,
+      ...over,
+    });
+    /** Runs the update and returns the `data` handed to Prisma. */
+    async function patch(existing: Record<string, unknown>, dto: UpdateTaskDto) {
+      prisma.task.update.mockClear();
+      prisma.task.findFirst.mockResolvedValue(existing);
+      prisma.task.update.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+        ...existing,
+        ...data,
+      }));
+      await service.update(TASK_ID, dto, 7);
+      return prisma.task.update.mock.calls[0][0].data;
+    }
+
+    it('an explicit endDate: null clears the flag together with the date', async () => {
+      const data = await patch(manualTask(), { endDate: null });
+
+      expect(data.endDate).toBeNull();
+      expect(data.dueDateOverridden).toBe(false);
+    });
+
+    it('endDate: null clears the flag whatever manualDueDate says — a task without a due date has no manual date', async () => {
+      const withTrue = await patch(manualTask(), { endDate: null, manualDueDate: true });
+      expect(withTrue.endDate).toBeNull();
+      expect(withTrue.dueDateOverridden).toBe(false);
+
+      const withFalse = await patch(manualTask(), { endDate: null, manualDueDate: false });
+      expect(withFalse.dueDateOverridden).toBe(false);
+      expect('manualDueDate' in withFalse).toBe(false);
+    });
+
+    it('manualDueDate: false alone hands the stored date back to the scheduler — the date itself is not touched', async () => {
+      const data = await patch(manualTask(), { manualDueDate: false });
+
+      expect(data.dueDateOverridden).toBe(false);
+      expect(data.endDate).toBeUndefined(); // Prisma leaves the column alone
+      expect(data.estimatedStartDate).toBeUndefined();
+      expect('manualDueDate' in data).toBe(false); // transport-only — never reaches Prisma
+    });
+
+    it('manualDueDate: false next to an endDate stores the new end as an ordinary, non-manual date', async () => {
+      const changed = await patch(manualTask(), { endDate: '2026-12-07', manualDueDate: false });
+      expect(iso(changed.endDate)).toBe('2026-12-07');
+      expect(changed.dueDateOverridden).toBe(false);
+
+      // Also when the end sent is the one already stored.
+      const same = await patch(manualTask(), { endDate: '2026-11-30', manualDueDate: false });
+      expect(iso(same.endDate)).toBe('2026-11-30');
+      expect(same.dueDateOverridden).toBe(false);
+    });
+
+    it('manualDueDate left out → the flag is not part of the update at all (every automatic caller)', async () => {
+      // A changed end, the stored end re-sent, another date, and an update with no dates.
+      for (const dto of [
+        { endDate: '2026-12-07' },
+        { endDate: '2026-11-30' },
+        { estimatedStartDate: '2026-11-16' },
+        { name: 'Renamed' },
+      ]) {
+        const data = await patch(manualTask(), dto);
+        expect('dueDateOverridden' in data).toBe(false);
+      }
+      // Same for a task that is not manual.
+      const plain = await patch(manualTask({ dueDateOverridden: false }), { endDate: '2026-12-07' });
+      expect('dueDateOverridden' in plain).toBe(false);
+    });
+
+    it('manualDueDate: true is unchanged: it marks only together with a changed, non-null end', async () => {
+      const marked = await patch(manualTask({ dueDateOverridden: false }), {
+        endDate: '2026-12-07',
+        manualDueDate: true,
+      });
+      expect(iso(marked.endDate)).toBe('2026-12-07');
+      expect(marked.dueDateOverridden).toBe(true);
+
+      // The stored end re-sent, or no end at all → no mark, and no release either.
+      const resent = await patch(manualTask({ dueDateOverridden: false }), {
+        endDate: '2026-11-30',
+        manualDueDate: true,
+      });
+      expect('dueDateOverridden' in resent).toBe(false);
+      const noEnd = await patch(manualTask(), { manualDueDate: true });
+      expect('dueDateOverridden' in noEnd).toBe(false);
+    });
+
+    it('records the released flag in the activity log — only when a stored manual flag really flips', async () => {
+      const { activityLog } = service as unknown as { activityLog: { logTaskUpdated: jest.Mock } };
+      const lastFields = () => activityLog.logTaskUpdated.mock.calls.at(-1)?.[0].changedFields;
+
+      await patch(manualTask(), { endDate: null });
+      expect(lastFields()).toEqual(['endDate', 'dueDateOverridden']);
+
+      await patch(manualTask(), { manualDueDate: false });
+      expect(lastFields()).toEqual(['manualDueDate', 'dueDateOverridden']);
+
+      // Nothing flipped: the task was not manual to begin with…
+      await patch(manualTask({ dueDateOverridden: false }), { endDate: null });
+      expect(lastFields()).toEqual(['endDate']);
+      // …or the request does not release.
+      await patch(manualTask(), { endDate: '2026-12-07' });
+      expect(lastFields()).toEqual(['endDate']);
+    });
+
+    it('the DTO lets manualDueDate: false and endDate: null through the global ValidationPipe', async () => {
+      // Same options as main.ts. `false` and `null` are the two values a
+      // validator / transformer most easily drops as "not sent".
+      const pipe = new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        transformOptions: { enableImplicitConversion: true },
+      });
+      const meta = { type: 'body' as const, metatype: UpdateTaskDto };
+
+      const released: UpdateTaskDto = await pipe.transform({ manualDueDate: false }, meta);
+      expect(released.manualDueDate).toBe(false);
+
+      const cleared: UpdateTaskDto = await pipe.transform({ endDate: null, manualDueDate: false }, meta);
+      expect(cleared.endDate).toBeNull();
+      expect(cleared.manualDueDate).toBe(false);
+
+      const marked: UpdateTaskDto = await pipe.transform({ endDate: '2026-12-07', manualDueDate: true }, meta);
+      expect(marked.manualDueDate).toBe(true);
+
+      const untouched: UpdateTaskDto = await pipe.transform({ endDate: '2026-12-07' }, meta);
+      expect(untouched.manualDueDate).toBeUndefined();
     });
   });
 
