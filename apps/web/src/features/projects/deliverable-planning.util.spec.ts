@@ -28,6 +28,16 @@ import {
   chainArrowTooltip,
   taskBarTooltip,
   clickGestureTracker,
+  MANUAL_DUE_TEXT,
+  MANUAL_DUE_KEPT_TEXT,
+  MANUAL_DUE_RELEASED_TEXT,
+  manualReviewHint,
+  isReviewRowListed,
+  mergeReviewChoices,
+  reviewCheckedTaskIds,
+  reviewSubtitle,
+  releaseSavePlan,
+  toggledInSet,
   type TargetRowLike,
 } from './deliverable-planning.util';
 
@@ -1233,5 +1243,253 @@ describe('clickGestureTracker', () => {
     const u = clickGestureTracker(100, 3);
     u.move(60);
     expect(u.endsAsClick(100)).toBe(false);
+  });
+});
+
+// ── §14 (2026-11-15) · manual ("pinned") due dates ──────────────────
+
+describe('taskDatesPatch · release', () => {
+  const stored = { storedStart: '2026-11-16', storedEnd: '2026-11-20' };
+  const dryRun = { startDate: '2029-03-05', endDate: '2029-03-09' };
+
+  it('released row whose draft is the dry-run date → dates + manualDueDate: false', () => {
+    expect(
+      taskDatesPatch({ nextEnd: '2029-03-09', manual: false, release: true, preview: dryRun, ...stored }),
+    ).toEqual({ endDate: '2029-03-09', manualDueDate: false, estimatedStartDate: '2029-03-05' });
+  });
+
+  it('released, due date unchanged → { manualDueDate: false } alone (the flag is cleared even if nothing moves)', () => {
+    // No dry-run row.
+    expect(taskDatesPatch({ nextEnd: '2026-11-20', manual: false, release: true, ...stored })).toEqual({
+      manualDueDate: false,
+    });
+    // Dry-run row identical to what is stored.
+    expect(
+      taskDatesPatch({
+        nextEnd: '2026-11-20',
+        manual: false,
+        release: true,
+        preview: { startDate: '2026-11-16', endDate: '2026-11-20' },
+        ...stored,
+      }),
+    ).toEqual({ manualDueDate: false });
+  });
+
+  it('released, due date unchanged but the scheduler start differs → flag + start, no endDate', () => {
+    const patch = taskDatesPatch({
+      nextEnd: '2026-11-20',
+      manual: false,
+      release: true,
+      preview: { startDate: '2026-11-18', endDate: '2026-11-20' },
+      ...stored,
+    });
+    expect(patch).toEqual({ manualDueDate: false, estimatedStartDate: '2026-11-18' });
+    expect(patch && 'endDate' in patch).toBe(false);
+  });
+
+  it('released, due date unchanged, dry-run row for another date → the start is not taken from it', () => {
+    expect(
+      taskDatesPatch({ nextEnd: '2026-11-20', manual: false, release: true, preview: dryRun, ...stored }),
+    ).toEqual({ manualDueDate: false });
+  });
+
+  it('released, due date changed without a matching dry-run row → still released, start shifted', () => {
+    expect(taskDatesPatch({ nextEnd: '2026-11-27', manual: false, release: true, ...stored })).toEqual({
+      endDate: '2026-11-27', manualDueDate: false, estimatedStartDate: '2026-11-23',
+    });
+  });
+
+  it('a TYPED row wins over a release: manualDueDate stays true', () => {
+    expect(taskDatesPatch({ nextEnd: '2026-11-27', manual: true, release: true, ...stored })).toEqual({
+      endDate: '2026-11-27', manualDueDate: true, estimatedStartDate: '2026-11-23',
+    });
+    // …and a typed row whose date ends up unchanged sends nothing.
+    expect(taskDatesPatch({ nextEnd: '2026-11-20', manual: true, release: true, preview: dryRun, ...stored })).toBeNull();
+  });
+
+  it('a cleared due date sends endDate: null only — the server clears the flag for a null date', () => {
+    expect(taskDatesPatch({ nextEnd: '', manual: false, release: true, ...stored })).toEqual({ endDate: null });
+    expect(taskDatesPatch({ nextEnd: null, manual: true, release: false, ...stored })).toEqual({ endDate: null });
+  });
+
+  it('release: false / absent behaves exactly as before', () => {
+    expect(
+      taskDatesPatch({ nextEnd: '2029-03-09', manual: false, release: false, preview: dryRun, ...stored }),
+    ).toEqual({ endDate: '2029-03-09', estimatedStartDate: '2029-03-05' });
+    expect(taskDatesPatch({ nextEnd: '2026-11-20', manual: false, ...stored })).toBeNull();
+    expect(
+      taskDatesPatch({
+        nextEnd: '2026-11-20',
+        manual: false,
+        preview: { startDate: '2026-11-18', endDate: '2026-11-20' },
+        ...stored,
+      }),
+    ).toEqual({ estimatedStartDate: '2026-11-18' });
+  });
+
+  it('a pinned task with no stored due date can still be released', () => {
+    expect(taskDatesPatch({ nextEnd: '', manual: false, release: true, storedStart: null, storedEnd: null })).toEqual({
+      manualDueDate: false,
+    });
+  });
+});
+
+describe('manual-due-date texts', () => {
+  it('the fixed strings', () => {
+    expect(MANUAL_DUE_TEXT).toBe('תאריך ידני — לא זז כשהיעד משתנה');
+    expect(MANUAL_DUE_KEPT_TEXT).toBe('תאריך ידני — נשאר במקומו');
+    expect(MANUAL_DUE_RELEASED_TEXT).toBe('תאריך ידני — יחושב מחדש לפי היעד');
+  });
+
+  it('manualReviewHint: plural, singular, none', () => {
+    expect(manualReviewHint(3)).toBe(
+      '3 משימות עם תאריך ידני. מסומנת = תחושב מחדש לפי היעד ותחזור לתזמון אוטומטי. הסר סימון כדי להשאיר את התאריך הידני.',
+    );
+    expect(manualReviewHint(1)).toBe(
+      'משימה אחת עם תאריך ידני. מסומנת = תחושב מחדש לפי היעד ותחזור לתזמון אוטומטי. הסר סימון כדי להשאיר את התאריך הידני.',
+    );
+    expect(manualReviewHint(0)).toBe('');
+  });
+
+  it('taskBarTooltip: a manual task gets the second line, after the critical suffix', () => {
+    expect(
+      taskBarTooltip({ code: 'CRD-036', name: 'Coordination drawings', startIso: '2026-11-16', endIso: '2026-11-20', critical: false, manual: true }),
+    ).toBe('CRD-036 · Coordination drawings · 2026-11-16 → 2026-11-20\nתאריך ידני — לא זז כשהיעד משתנה');
+    expect(
+      taskBarTooltip({ code: null, name: 'Survey', startIso: '2026-11-16', endIso: '2026-11-20', critical: true, manual: true }),
+    ).toBe('Survey · 2026-11-16 → 2026-11-20 · critical path\nתאריך ידני — לא זז כשהיעד משתנה');
+    // Not manual → one line, as before.
+    expect(
+      taskBarTooltip({ code: null, name: 'Survey', startIso: '2026-11-16', endIso: '2026-11-20', critical: false, manual: false }),
+    ).toBe('Survey · 2026-11-16 → 2026-11-20');
+  });
+});
+
+describe('review rows · manual tasks', () => {
+  const moving = { taskId: 1, willMove: true, manual: false, beforeEnd: '2026-11-20', afterEnd: '2029-03-09' };
+  const still = { taskId: 2, willMove: false, manual: false, beforeEnd: '2026-12-04', afterEnd: '2026-12-04' };
+  const pinned = { taskId: 3, willMove: false, manual: true, beforeEnd: '2026-11-27', afterEnd: '2026-11-27' };
+  const releasedMoving = { taskId: 3, willMove: true, manual: true, beforeEnd: '2026-11-27', afterEnd: '2029-03-02' };
+
+  it('isReviewRowListed: moving rows as before, manual rows ALWAYS', () => {
+    expect(isReviewRowListed(moving)).toBe(true);
+    expect(isReviewRowListed(still)).toBe(false);
+    expect(isReviewRowListed(pinned)).toBe(true);
+    expect(isReviewRowListed(releasedMoving)).toBe(true);
+    // `manual` missing (older server) reads as not manual.
+    expect(isReviewRowListed({ taskId: 9, willMove: false })).toBe(false);
+  });
+
+  it('mergeReviewChoices: initial seed — moving rows checked, manual rows checked ⇔ released', () => {
+    expect(mergeReviewChoices(null, {}, [moving, still, releasedMoving], new Set([3]))).toEqual({
+      1: { apply: true, end: '2029-03-09' },
+      2: { apply: false, end: '2026-12-04' },
+      3: { apply: true, end: '2029-03-02' },
+    });
+    expect(mergeReviewChoices(null, {}, [moving, pinned], new Set())[3]).toEqual({ apply: false, end: '2026-11-27' });
+  });
+
+  it('mergeReviewChoices: a released manual row whose dates do not change is still checked', () => {
+    expect(mergeReviewChoices(null, {}, [pinned], new Set([3]))[3].apply).toBe(true);
+  });
+
+  it('mergeReviewChoices: a re-run keeps the PM\'s choice on a row that still moves', () => {
+    const prevChoices = { 1: { apply: false, end: '2029-03-09' }, 3: { apply: true, end: '2029-03-02' } };
+    const movedElsewhere = { ...moving, afterEnd: '2029-02-23' };
+    // Task 3 was un-released; the server re-ran with it pinned.
+    const out = mergeReviewChoices([moving, releasedMoving], prevChoices, [movedElsewhere, pinned], new Set());
+    expect(out[1]).toEqual({ apply: false, end: '2029-02-23' });
+    expect(out[3]).toEqual({ apply: false, end: '2026-11-27' });
+  });
+
+  it('mergeReviewChoices: a row that newly appears defaults to willMove; one that stops moving is unchecked', () => {
+    const prevChoices = { 1: { apply: true, end: '2029-03-09' }, 2: { apply: false, end: '2026-12-04' } };
+    const nowMoving = { ...still, willMove: true, afterEnd: '2029-03-16' };
+    const noLongerMoving = { ...moving, willMove: false, afterEnd: '2026-11-20' };
+    const out = mergeReviewChoices([moving, still], prevChoices, [noLongerMoving, nowMoving], new Set());
+    expect(out[2]).toEqual({ apply: true, end: '2029-03-16' });
+    expect(out[1]).toEqual({ apply: false, end: '2026-11-20' });
+  });
+
+  it('mergeReviewChoices: the release set, not the old choice, decides a manual row', () => {
+    const prevChoices = { 3: { apply: false, end: '2026-11-27' } };
+    expect(mergeReviewChoices([pinned], prevChoices, [releasedMoving], new Set([3]))[3].apply).toBe(true);
+  });
+
+  it('reviewCheckedTaskIds: listed + checked only; a checked manual row with unchanged dates is sent', () => {
+    const items = [moving, still, pinned];
+    expect(
+      reviewCheckedTaskIds(items, {
+        1: { apply: true, end: '' },
+        2: { apply: true, end: '' }, // not listed → never sent
+        3: { apply: true, end: '' },
+      }),
+    ).toEqual([1, 3]);
+    expect(reviewCheckedTaskIds(items, { 1: { apply: false, end: '' } })).toEqual([]);
+  });
+
+  it('toggledInSet flips membership on a copy', () => {
+    const base = new Set([1, 2]);
+    expect([...toggledInSet(base, 2)]).toEqual([1]);
+    expect([...toggledInSet(base, 3)]).toEqual([1, 2, 3]);
+    expect([...base]).toEqual([1, 2]);
+  });
+});
+
+describe('reviewSubtitle', () => {
+  const idle = { computing: false, recalculating: false };
+
+  it('tasks will move → the moving count, as before (manual rows do not change it)', () => {
+    expect(reviewSubtitle({ ...idle, movingCount: 5, manualCount: 0 })).toBe('5 משימות יזוזו · אשר להחלה');
+    expect(reviewSubtitle({ ...idle, movingCount: 5, manualCount: 3 })).toBe('5 משימות יזוזו · אשר להחלה');
+  });
+
+  it('nothing moves and nothing is manual → "אין שינויים", as before', () => {
+    expect(reviewSubtitle({ ...idle, movingCount: 0, manualCount: 0 })).toBe('אין שינויים');
+  });
+
+  it('nothing moves but manual rows are listed → names them (plural / singular)', () => {
+    expect(reviewSubtitle({ ...idle, movingCount: 0, manualCount: 3 })).toBe('אין משימות שיזוזו · 3 עם תאריך ידני');
+    expect(reviewSubtitle({ ...idle, movingCount: 0, manualCount: 1 })).toBe('אין משימות שיזוזו · משימה אחת עם תאריך ידני');
+  });
+
+  it('computing / recalculating win over the counts', () => {
+    expect(reviewSubtitle({ computing: true, recalculating: false, movingCount: 0, manualCount: 0 })).toBe('מחשב תצוגה מקדימה…');
+    expect(reviewSubtitle({ computing: false, recalculating: true, movingCount: 5, manualCount: 3 })).toBe('מחשב מחדש…');
+    expect(reviewSubtitle({ computing: true, recalculating: true, movingCount: 5, manualCount: 3 })).toBe('מחשב תצוגה מקדימה…');
+  });
+});
+
+describe('releaseSavePlan', () => {
+  const sorted = (s: Set<number>) => [...s].sort((a, b) => a - b);
+
+  it('nothing released → Save never waits, nothing to release', () => {
+    const plan = releaseSavePlan({ released: new Set(), scheduledIds: new Set([1, 2]), dryRunPending: true });
+    expect(plan.waitForDryRun).toBe(false);
+    expect(sorted(plan.releasable)).toEqual([]);
+  });
+
+  it('released rows + a dry-run still pending → Save waits, and nothing is releasable yet', () => {
+    const plan = releaseSavePlan({ released: new Set([3]), scheduledIds: new Set([3]), dryRunPending: true });
+    expect(plan.waitForDryRun).toBe(true);
+    expect(sorted(plan.releasable)).toEqual([]);
+  });
+
+  it('dry-run settled with a row for every released task → all releasable', () => {
+    const plan = releaseSavePlan({ released: new Set([3, 4]), scheduledIds: new Set([1, 3, 4]), dryRunPending: false });
+    expect(plan.waitForDryRun).toBe(false);
+    expect(sorted(plan.releasable)).toEqual([3, 4]);
+  });
+
+  it('dry-run settled WITHOUT a row for a released task → that task is dropped from the release', () => {
+    const plan = releaseSavePlan({ released: new Set([3, 4]), scheduledIds: new Set([1, 4]), dryRunPending: false });
+    expect(plan.waitForDryRun).toBe(false);
+    expect(sorted(plan.releasable)).toEqual([4]);
+  });
+
+  it('dry-run failed (no rows at all) → nothing is released, Save is not blocked', () => {
+    const plan = releaseSavePlan({ released: new Set([3, 4]), scheduledIds: new Set(), dryRunPending: false });
+    expect(plan.waitForDryRun).toBe(false);
+    expect(sorted(plan.releasable)).toEqual([]);
   });
 });

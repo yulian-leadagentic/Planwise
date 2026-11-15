@@ -22,6 +22,11 @@
  * §13 (2026-11-15) added `lagLabelText`, `chainArrowTooltip`,
  * `taskBarTooltip` and `clickGestureTracker`.
  *
+ * §14 (2026-11-15) added the manual-due-date helpers: the `MANUAL_DUE_*`
+ * texts, `manualReviewHint`, `isReviewRowListed`, `mergeReviewChoices`,
+ * `reviewCheckedTaskIds`, `reviewSubtitle`, `releaseSavePlan`,
+ * `toggledInSet`, and the `release` argument of `taskDatesPatch`.
+ *
  * §10 (2026-11-13) · Principle: the SAVED `targetDate` is the single
  * source of truth for display. Months is only an input device — a
  * months-derived preview is shown only while the user has a pending
@@ -586,10 +591,15 @@ export function taskStartForSave(args: {
   return start !== undefined && start <= nextEnd ? start : undefined;
 }
 
-/** Body of the `PATCH /tasks/:id` the tasks modal sends for one row. */
+/**
+ * Body of the `PATCH /tasks/:id` the tasks modal sends for one row.
+ * `manualDueDate`: `true` pins the task (a typed date), `false` releases
+ * a pinned one back to automatic scheduling (§14), absent leaves the
+ * flag alone.
+ */
 export interface TaskDatesPatch {
   endDate?: string | null;
-  manualDueDate?: true;
+  manualDueDate?: boolean;
   estimatedStartDate?: string;
 }
 
@@ -605,29 +615,194 @@ export interface TaskDatesPatch {
  *     date but a different START than the stored one. The modal shows
  *     that proposed start, so Save writes it — start only, without
  *     `endDate` / `manualDueDate`. Before, such a row was skipped.
+ *
+ * §14 (2026-11-15) · `release` — the PM asked for this pinned ("manual")
+ * task to go back to automatic scheduling. Its dates then come from the
+ * dry-run like any other row's, and the payload carries
+ * `manualDueDate: false`: with the dates when the due date changed, on
+ * its own (plus a changed start) when it did not — the flag is cleared
+ * even if nothing moves. A row the PM TYPED into is a manual edit and
+ * wins over a release (`manualDueDate: true`). A cleared due date sends
+ * `endDate: null` as before; the server clears the flag for a null date.
  */
 export function taskDatesPatch(args: {
   /** The row's due-date draft ('' / null = cleared). */
   nextEnd: string | null | undefined;
   manual: boolean;
+  /** §14 · release a pinned task back to automatic scheduling. */
+  release?: boolean;
   preview?: { startDate: string; endDate: string } | null;
   storedStart: string | null | undefined;
   storedEnd: string | null | undefined;
 }): TaskDatesPatch | null {
   const { manual, preview, storedStart, storedEnd } = args;
+  const release = Boolean(args.release) && !manual;
   const end = args.nextEnd || null;
   if ((storedEnd ?? '') !== (end ?? '')) {
     const payload: TaskDatesPatch = { endDate: end };
     if (end && manual) payload.manualDueDate = true;
+    else if (end && release) payload.manualDueDate = false;
     const start = taskStartForSave(args);
     if (start !== undefined) payload.estimatedStartDate = start;
     return payload;
   }
-  // Due date unchanged — only the scheduler's own start may still differ.
-  if (manual || !end || !preview || preview.endDate !== end) return null;
-  const start = taskStartForSave(args);
-  if (start === undefined || start === (storedStart ?? '')) return null;
-  return { estimatedStartDate: start };
+  // Due date unchanged — the scheduler's own start may still differ, and
+  // a release still has to clear the flag.
+  const schedulerStart =
+    !manual && end && preview && preview.endDate === end ? taskStartForSave(args) : undefined;
+  const startChanged = schedulerStart !== undefined && schedulerStart !== (storedStart ?? '');
+  if (release) {
+    return startChanged
+      ? { manualDueDate: false, estimatedStartDate: schedulerStart }
+      : { manualDueDate: false };
+  }
+  return startChanged ? { estimatedStartDate: schedulerStart } : null;
+}
+
+// ── §14 (2026-11-15) · Manual ("pinned") due dates ───────────────────
+//
+// A task whose due date was typed by a person (`dueDateOverridden`) does
+// not move when its deliverable target moves. Nothing on screen said so,
+// and nothing let the PM release it. These are the pure parts of making
+// it visible and releasable; the texts are Hebrew like the "ידני" pill.
+
+/** Hover text of the "ידני" pill / Gantt task bar of a pinned task. */
+export const MANUAL_DUE_TEXT = 'תאריך ידני — לא זז כשהיעד משתנה';
+/** …in a review / tasks list, for a pinned task that stays as it is. */
+export const MANUAL_DUE_KEPT_TEXT = 'תאריך ידני — נשאר במקומו';
+/** …and for one that is about to be recalculated from the target. */
+export const MANUAL_DUE_RELEASED_TEXT = 'תאריך ידני — יחושב מחדש לפי היעד';
+
+/**
+ * The one hint line above the review table when it lists manual tasks
+ * ('' for none). Their checkbox means "release and recalculate".
+ */
+export function manualReviewHint(manualCount: number): string {
+  if (!(manualCount > 0)) return '';
+  const lead = manualCount === 1 ? 'משימה אחת עם תאריך ידני' : `${manualCount} משימות עם תאריך ידני`;
+  return `${lead}. מסומנת = תחושב מחדש לפי היעד ותחזור לתזמון אוטומטי. הסר סימון כדי להשאיר את התאריך הידני.`;
+}
+
+/** The slice of a reschedule-preview item the review helpers need. */
+export interface ReviewItemLike {
+  taskId: number;
+  willMove: boolean;
+  /** The task is stored as manual (`dueDateOverridden`). */
+  manual?: boolean;
+  beforeEnd?: string | null;
+  afterEnd?: string | null;
+}
+export type ReviewChoices = Record<number, { apply: boolean; end: string }>;
+
+/**
+ * Which preview rows the review modal LISTS: the ones that will move, as
+ * before, plus every manual task — moving or not. A pinned task that
+ * stays put used to be invisible there, so the PM could not tell why it
+ * had not followed the target.
+ */
+export function isReviewRowListed(item: ReviewItemLike): boolean {
+  return item.willMove || Boolean(item.manual);
+}
+
+/**
+ * Per-row choices for a (re)computed preview.
+ *   - manual row → checked ⇔ it is in the release set;
+ *   - other row  → keeps the PM's choice when it was listed before and
+ *     still moves; a row that newly appears defaults to `willMove`.
+ * With no previous preview this is the initial seed.
+ */
+export function mergeReviewChoices(
+  prevItems: readonly ReviewItemLike[] | null,
+  prevChoices: ReviewChoices,
+  nextItems: readonly ReviewItemLike[],
+  release: ReadonlySet<number>,
+): ReviewChoices {
+  const wasListed = new Set<number>();
+  for (const item of prevItems ?? []) if (isReviewRowListed(item)) wasListed.add(item.taskId);
+  const out: ReviewChoices = {};
+  for (const item of nextItems) {
+    const prev = prevChoices[item.taskId];
+    const apply = item.manual
+      ? release.has(item.taskId)
+      : item.willMove && prev && wasListed.has(item.taskId)
+        ? prev.apply
+        : item.willMove;
+    out[item.taskId] = { apply, end: item.afterEnd ?? item.beforeEnd ?? '' };
+  }
+  return out;
+}
+
+/**
+ * The task ids the review's confirm writes: every LISTED row that is
+ * checked. A checked manual row is sent even when its dates do not
+ * change — being in both lists is what clears its manual flag.
+ */
+export function reviewCheckedTaskIds(
+  items: readonly ReviewItemLike[],
+  choices: ReviewChoices,
+): number[] {
+  return items
+    .filter((item) => isReviewRowListed(item) && Boolean(choices[item.taskId]?.apply))
+    .map((item) => item.taskId);
+}
+
+/**
+ * The line under the review modal's title. The count is of tasks that
+ * will MOVE, as it always was. With nothing moving but manual tasks
+ * listed it used to read "אין שינויים" above a list with checked rows
+ * and an enabled confirm button — that case now names the manual tasks.
+ */
+export function reviewSubtitle(args: {
+  /** First preview still being computed (nothing to show yet). */
+  computing: boolean;
+  /** Preview being re-run after a manual row was released / kept. */
+  recalculating: boolean;
+  movingCount: number;
+  manualCount: number;
+}): string {
+  if (args.computing) return 'מחשב תצוגה מקדימה…';
+  if (args.recalculating) return 'מחשב מחדש…';
+  if (args.movingCount > 0) return `${args.movingCount} משימות יזוזו · אשר להחלה`;
+  if (args.manualCount > 0) {
+    const manual = args.manualCount === 1 ? 'משימה אחת עם תאריך ידני' : `${args.manualCount} עם תאריך ידני`;
+    return `אין משימות שיזוזו · ${manual}`;
+  }
+  return 'אין שינויים';
+}
+
+/**
+ * Tasks modal · what Save may do with the release set right now.
+ *
+ *   - `waitForDryRun` — rows are released and the dry-run for the current
+ *     (target, release set) has not settled yet (debounce window, or the
+ *     request in flight): Save has to wait. Saving at that moment sent
+ *     `manualDueDate: false` with the OLD date — the task was released
+ *     but never recalculated.
+ *   - `releasable` — the released rows the settled dry-run actually
+ *     returned a row for. A released row WITHOUT one (the dry-run failed,
+ *     or had nothing for it) is not sent as a release at all: it stays
+ *     manual on this save rather than being un-pinned on its stale date.
+ */
+export function releaseSavePlan(args: {
+  released: ReadonlySet<number>;
+  /** Task ids the settled dry-run returned a row for (a Set or a Map). */
+  scheduledIds: { has(id: number): boolean };
+  /** A dry-run for the current (target, release set) is still pending. */
+  dryRunPending: boolean;
+}): { waitForDryRun: boolean; releasable: Set<number> } {
+  const releasable = new Set<number>();
+  if (args.released.size === 0) return { waitForDryRun: false, releasable };
+  if (args.dryRunPending) return { waitForDryRun: true, releasable };
+  for (const id of args.released) if (args.scheduledIds.has(id)) releasable.add(id);
+  return { waitForDryRun: false, releasable };
+}
+
+/** Copy of `set` with `value` flipped in / out. */
+export function toggledInSet<T>(set: ReadonlySet<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
 }
 
 export type LagUnit = 'WORKING_DAYS' | 'CALENDAR_DAYS';
@@ -697,6 +872,9 @@ export function chainArrowTooltip(args: {
  * `<code> · <name> · <start> → <end>` (+ the critical-path suffix it
  * always had). The dates were missing — the bar's position was the only
  * hint of when the task runs.
+ *
+ * §14 (2026-11-15) · A pinned ("manual") task gets a second line saying
+ * so — it is why that bar stays behind when the target moves.
  */
 export function taskBarTooltip(args: {
   code?: string | null;
@@ -704,8 +882,10 @@ export function taskBarTooltip(args: {
   startIso: string;
   endIso: string;
   critical: boolean;
+  manual?: boolean;
 }): string {
-  return `${args.code ? `${args.code} · ` : ''}${args.name} · ${args.startIso} → ${args.endIso}${args.critical ? ' · critical path' : ''}`;
+  const line = `${args.code ? `${args.code} · ` : ''}${args.name} · ${args.startIso} → ${args.endIso}${args.critical ? ' · critical path' : ''}`;
+  return args.manual ? `${line}\n${MANUAL_DUE_TEXT}` : line;
 }
 
 /**

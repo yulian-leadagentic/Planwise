@@ -41,6 +41,16 @@ import {
   chainArrowTooltip,
   taskBarTooltip,
   clickGestureTracker,
+  MANUAL_DUE_TEXT,
+  MANUAL_DUE_KEPT_TEXT,
+  MANUAL_DUE_RELEASED_TEXT,
+  manualReviewHint,
+  isReviewRowListed,
+  mergeReviewChoices,
+  reviewCheckedTaskIds,
+  reviewSubtitle,
+  releaseSavePlan,
+  toggledInSet,
   isCompleteIsoDate,
   explicitDirtyKeys,
   resetMonthsDraftsToSeed,
@@ -264,8 +274,9 @@ function useDialogPlumbing(
 
 /**
  * §12 (2026-11-14) · Card of a PLAIN (non-animated) confirm overlay —
- * the conflict prompt, the manual-due-dates confirm and
- * `PastDateConfirmModal`. They were bare `div`s: no dialog role, Escape
+ * the conflict prompt and `PastDateConfirmModal` (the manual-due-dates
+ * confirm that also used it was removed in §14 — nothing opened it).
+ * They were bare `div`s: no dialog role, Escape
  * did nothing, focus was neither trapped nor restored. This is the same
  * card element they always rendered (the caller keeps its overlay, its
  * classes and its content) plus the shared dialog plumbing. `onEscape`
@@ -915,6 +926,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         // on the Gantt row and as a column in the DeliverableTasksModal.
         float: (t as any).float ?? null,
         onCriticalPath: Boolean((t as any).onCriticalPath),
+        // §14 (2026-11-15) · The task's due date was typed by a person —
+        // it is pinned and does not follow the deliverable target. Drives
+        // the "ידני" pill in the tasks modal and the Gantt bar's tooltip.
+        dueDateOverridden: Boolean((t as { dueDateOverridden?: boolean }).dueDateOverridden),
       }));
       // DPG-1 · Compute the top-level zone ancestor for this row. The
       // `idMap` falls back to the zone's own id when the zone IS a root
@@ -1278,7 +1293,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     return shifted.toISOString().slice(0, 10);
   };
 
-  const [overrideConfirm, setOverrideConfirm] = useState<{ taskId: number; taskName: string; currentDue: string | null; targetDate: string | null }[] | null>(null);
+  // §14 (2026-11-15) · The "Some tasks have manual due dates" dialog and
+  // its `overrideConfirm` state were removed: nothing ever opened it (the
+  // setter was only called with `null`). Manual tasks are now handled in
+  // the review modal and the tasks modal, where they can be released.
   // Per-task conflict prompt for tasks whose current endDate is AFTER
   // the about-to-be-saved deliverable target. Client feedback
   // 2026-08-08: don't block — surface the conflicts, let the PM pick
@@ -1529,9 +1547,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       }
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
       if (exceedNextAction === 'saveAndUpdate') {
-        setPreviewing(true);
         // §11 · already persisted above — do not post the batch twice.
-        previewMutation.mutate({ skipPersist: true, savedExplicitKeys });
+        startReview({ skipPersist: true, savedExplicitKeys });
       }
     } finally {
       setExceedApplying(false);
@@ -1578,6 +1595,11 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     willMove: boolean;
     violatesTarget: boolean;
     hoursLogged: boolean;
+    // §14 (2026-11-15) · `manual` = the task is stored as pinned
+    // (`dueDateOverridden`); `skippedByOverride` = it really stayed
+    // pinned in THIS run (it was not in the release list).
+    manual?: boolean;
+    skippedByOverride?: boolean;
   }
   interface PreviewResult {
     preview: PreviewItem[];
@@ -1604,12 +1626,44 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // typed custom end date is ignored in the §8a flow.
   const [reviewChoices, setReviewChoices] = useState<Record<number, { apply: boolean; end: string }>>({});
 
+  // §14 (2026-11-15) · Manual ("pinned") due dates in the review.
+  // A task whose due date was typed by a person does not follow its
+  // deliverable target, and the review used to hide it (it "will not
+  // move") — the PM moved a target to 2029 and three tasks silently
+  // stayed in 2026. The review now carries a RELEASE SET: the manual
+  // tasks to schedule as if they were not manual. It starts as ALL of
+  // them (default = derive everything from the target); the PM unchecks
+  // a row to keep that manual date. It is posted with every preview and
+  // with the confirm.
+  const manualTaskIds = useMemo(
+    () => tasks.filter((t) => t.dueDateOverridden).map((t) => Number(t.id)),
+    [tasks],
+  );
+  const [reviewRelease, setReviewRelease] = useState<Set<number>>(() => new Set());
+  // True while the preview is re-run after a manual row was toggled.
+  const [reviewRecalc, setReviewRecalc] = useState(false);
+  // The read-only reschedule dry-run. `manual` falls back to the planning
+  // payload's flag in case a server build does not send it yet.
+  const postReschedulePreview = async (release: number[]): Promise<PreviewResult> => {
+    const resp = await client.post(
+      `/scheduling/projects/${projectId}/preview-reschedule`,
+      release.length > 0 ? { releaseOverrideTaskIds: release } : undefined,
+    );
+    const result = (resp.data?.data ?? resp.data) as PreviewResult;
+    const knownManual = new Set(manualTaskIds);
+    return {
+      ...result,
+      preview: (result.preview ?? []).map((p) => ({ ...p, manual: p.manual ?? knownManual.has(p.taskId) })),
+    };
+  };
+
   // §11 (2026-11-13) · Optional variables. `skipPersist` — the caller
   // (the conflict prompt) has ALREADY posted the batch, so step 1 must
   // not post it again; it then passes the explicit-branch row keys of
   // that post as `savedExplicitKeys`. Every other caller passes nothing
   // and gets the default (persist here).
-  type PreviewVars = { skipPersist?: boolean; savedExplicitKeys?: string[] };
+  // §14 · `releaseOverrideTaskIds` — the review's release set for this run.
+  type PreviewVars = { skipPersist?: boolean; savedExplicitKeys?: string[]; releaseOverrideTaskIds?: number[] };
   const previewMutation = useMutation({
     mutationFn: async (vars: PreviewVars | void): Promise<PreviewResult & { savedExplicitKeys: string[] }> => {
       const opts: PreviewVars = vars || {};
@@ -1621,8 +1675,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         : (await persistTargets()).explicitKeys;
       // Step 2 (§8a): dry-run the project reschedule WITHOUT writing.
       try {
-        const resp = await client.post(`/scheduling/projects/${projectId}/preview-reschedule`);
-        return { ...((resp.data?.data ?? resp.data) as PreviewResult), savedExplicitKeys };
+        const result = await postReschedulePreview(opts.releaseOverrideTaskIds ?? []);
+        return { ...result, savedExplicitKeys };
       } catch (err) {
         // §12 (2026-11-14) · The targets ARE saved at this point (step 1,
         // or the conflict prompt before it) — only the preview failed.
@@ -1634,18 +1688,13 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         throw err;
       }
     },
-    onSuccess: async (data) => {
+    onSuccess: async (data, vars) => {
       // Seed per-row choices: default apply=true for rows that WILL
       // move; non-moving rows start unselected so the "Apply approved
       // (N)" count is accurate from the first render.
-      const seed: Record<number, { apply: boolean; end: string }> = {};
-      for (const r of data.preview) {
-        seed[r.taskId] = {
-          apply: r.willMove,
-          end: r.afterEnd ?? r.beforeEnd ?? '',
-        };
-      }
-      setReviewChoices(seed);
+      // §14 · a manual row is checked ⇔ it is in the release set.
+      const release = new Set((vars || {}).releaseOverrideTaskIds ?? []);
+      setReviewChoices(mergeReviewChoices(null, {}, data.preview, release));
       setPreview(data.preview);
       // §10 (2026-11-13) · Step 1 wrote the targets, so refresh both
       // queries (the planning payload carries the per-task deliverable
@@ -1658,11 +1707,23 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     onSettled: () => setPreviewing(false),
   });
 
+  const closeReview = () => {
+    setPreview(null);
+    setReviewChoices({});
+    setReviewRelease(new Set());
+  };
+
   const applyMutation = useMutation({
-    mutationFn: async (taskIds: number[]): Promise<SaveAndUpdateResult> => {
+    // §14 (2026-11-15) · The run uses the release set as sent; only tasks
+    // in `taskIds` are written. A manual task that is in BOTH lists gets
+    // its dates written and its manual flag cleared.
+    mutationFn: async (vars: { taskIds: number[]; releaseOverrideTaskIds: number[] }): Promise<SaveAndUpdateResult> => {
       const resp = await client.post(
         `/scheduling/projects/${projectId}/save-and-update-due-dates`,
-        { taskIds },
+        {
+          taskIds: vars.taskIds,
+          ...(vars.releaseOverrideTaskIds.length > 0 ? { releaseOverrideTaskIds: vars.releaseOverrideTaskIds } : {}),
+        },
       );
       return (resp.data?.data ?? resp.data) as SaveAndUpdateResult;
     },
@@ -1674,8 +1735,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           ? `Applied ${data.autoApplied.length} task date${data.autoApplied.length === 1 ? '' : 's'}`
           : 'Review closed · no task dates changed',
       );
-      setPreview(null);
-      setReviewChoices({});
+      closeReview();
     },
     onError: (err: any) => notify.apiError(err, 'Failed to apply approved task dates'),
   });
@@ -1684,25 +1744,66 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // button and Escape. Inert while the preview is still being computed
   // or the approved dates are being applied (the button is disabled on
   // the same condition).
-  const reviewCancelDisabled = (previewing && !preview) || applyMutation.isPending;
+  // §14 · …and while the preview is being re-run after a manual row was
+  // toggled: a late response must not reopen a cancelled review.
+  const reviewCancelDisabled = (previewing && !preview) || applyMutation.isPending || reviewRecalc;
   const cancelReview = () => {
     if (reviewCancelDisabled) return;
-    setPreview(null);
-    setReviewChoices({});
+    closeReview();
+  };
+
+  // §14 (2026-11-15) · A manual row's checkbox: flip it in the release
+  // set and RE-RUN the preview, so every other row is shown with dates
+  // that are consistent with that task being pinned or released. The
+  // targets are already saved — nothing is persisted again and there is
+  // no toast. Non-manual rows keep their apply choice (`mergeReviewChoices`).
+  // If the re-run fails the set goes back, so what is listed still
+  // matches what Confirm would send.
+  const toggleReviewRelease = async (taskId: number) => {
+    if (!preview || reviewRecalc || applyMutation.isPending) return;
+    const before = reviewRelease;
+    const next = toggledInSet(before, taskId);
+    setReviewRelease(next);
+    setReviewRecalc(true);
+    try {
+      const result = await postReschedulePreview([...next]);
+      setReviewChoices((cur) => mergeReviewChoices(preview, cur, result.preview, next));
+      setPreview(result.preview);
+    } catch (err) {
+      setReviewRelease(before);
+      notify.apiError(err, 'Failed to preview reschedule');
+    } finally {
+      setReviewRecalc(false);
+    }
   };
 
   const confirmReview = () => {
-    if (!preview) return;
-    const taskIds = preview
-      .filter((r) => reviewChoices[r.taskId]?.apply)
-      .map((r) => r.taskId);
+    if (!preview || reviewRecalc) return;
+    // §14 · Listed + checked rows. A checked manual row is sent even when
+    // its dates do not change — that is what clears its manual flag.
+    const taskIds = reviewCheckedTaskIds(preview, reviewChoices);
     if (taskIds.length === 0) {
       // Nothing selected → close the modal without touching the DB.
-      setPreview(null);
-      setReviewChoices({});
+      closeReview();
       return;
     }
-    applyMutation.mutate(taskIds);
+    applyMutation.mutate({ taskIds, releaseOverrideTaskIds: [...reviewRelease] });
+  };
+
+  // §14 (2026-11-15) · What the review modal shows. LISTED rows = the
+  // moving ones plus every manual task (moving or not). The title keeps
+  // counting moving tasks; the confirm button counts checked rows.
+  const reviewRows = (preview ?? []).filter(isReviewRowListed);
+  const reviewMovingCount = (preview ?? []).filter((p) => p.willMove).length;
+  const reviewManualCount = (preview ?? []).filter((p) => p.manual).length;
+  const reviewCheckedCount = preview ? reviewCheckedTaskIds(preview, reviewChoices).length : 0;
+
+  // §14 (2026-11-15) · Every review starts with ALL manual tasks released
+  // (default = derive everything from the target).
+  const startReview = (vars: PreviewVars = {}) => {
+    setReviewRelease(new Set(manualTaskIds));
+    setPreviewing(true);
+    previewMutation.mutate({ ...vars, releaseOverrideTaskIds: manualTaskIds });
   };
 
   const attemptSaveAndUpdate = () => {
@@ -1721,8 +1822,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
       setExceedNextAction('saveAndUpdate');
       return;
     }
-    setPreviewing(true);
-    previewMutation.mutate();
+    startReview();
   };
 
   // When the per-task exceed-prompt confirms, we either stop (plain
@@ -1961,57 +2061,6 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
         </div>
       )}
 
-      {/* Overridden-tasks confirm modal (Tier E #10) */}
-      {overrideConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm" onClick={() => setOverrideConfirm(null)}>
-          {/* §12 (2026-11-14) · Same dialog plumbing as the prompt above.
-              Escape = "Keep all manual dates", inert while an Overwrite
-              is being written. */}
-          <PlainDialogCard
-            ariaLabel="Some tasks have manual due dates"
-            onEscape={() => { if (!forceApply.isPending) setOverrideConfirm(null); }}
-            className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-[540px] max-w-[92vw] max-h-[85vh] overflow-auto"
-          >
-            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-start gap-3">
-              <div className="w-9 h-9 rounded-full bg-amber-50 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-600" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">Some tasks have manual due dates</h3>
-                <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  These tasks were previously set by their assignee or a manager. Keep the manual date, or overwrite with the new target?
-                </p>
-              </div>
-            </div>
-            <div className="p-5 space-y-2">
-              {overrideConfirm.map((t) => (
-                <div key={t.taskId} className="flex items-center gap-2 text-[13px] border border-slate-200 dark:border-slate-700 rounded-lg p-3">
-                  <span className="flex-1 font-medium text-slate-800 dark:text-slate-100 truncate">{t.taskName}</span>
-                  <span className="text-slate-400 dark:text-slate-500 tabular-nums">{t.currentDue ?? '—'}</span>
-                  <span className="text-slate-300 dark:text-slate-600">→</span>
-                  <span className="text-emerald-600 tabular-nums">{t.targetDate ?? '—'}</span>
-                  <button
-                    type="button"
-                    onClick={() => forceApply.mutate(t.taskId)}
-                    className="ml-2 bg-amber-600 hover:bg-amber-700 text-white text-[12px] font-semibold px-2.5 py-1 rounded-md"
-                  >
-                    Overwrite
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
-              <button
-                onClick={() => setOverrideConfirm(null)}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 text-slate-700 dark:text-slate-200 text-[13px] font-semibold px-3.5 py-2 rounded-lg"
-              >
-                Keep all manual dates
-              </button>
-            </div>
-          </PlainDialogCard>
-        </div>
-      )}
-
       {/* §8a · Review modal (Save & update due dates). While the
           preview-reschedule is in flight we show an indeterminate
           pulse bar; once the diff arrives we render the moving tasks
@@ -2038,18 +2087,24 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
                 סקירת עדכון תאריכים
               </h3>
+              {/* §14 (2026-11-15) · "מחשב מחדש…" while the preview is being
+                  re-run after a manual row was released / kept; and with
+                  nothing moving but manual rows listed the line names
+                  them instead of saying "אין שינויים" above a list with
+                  checked rows (`reviewSubtitle`). */}
               <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5" dir="rtl">
-                {previewing && !preview
-                  ? 'מחשב תצוגה מקדימה…'
-                  : (preview?.filter((p) => p.willMove).length ?? 0) === 0
-                    ? 'אין שינויים'
-                    : `${preview!.filter((p) => p.willMove).length} משימות יזוזו · אשר להחלה`}
+                {reviewSubtitle({
+                  computing: previewing && !preview,
+                  recalculating: reviewRecalc,
+                  movingCount: reviewMovingCount,
+                  manualCount: reviewManualCount,
+                })}
               </p>
               {/* Progress bar — indeterminate while previewing,
                   deterministic (100%) once the diff is in hand so the
                   user can see the dry-run completed. */}
               <div className="mt-3 w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                {previewing && !preview ? (
+                {(previewing && !preview) || reviewRecalc ? (
                   <div className="h-full w-full bg-blue-600 rounded-full animate-pulse" />
                 ) : (
                   <div
@@ -2065,7 +2120,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                 <div className="py-6 text-center text-[12px] text-slate-500 dark:text-slate-400">
                   מחשב תצוגה מקדימה… no database writes yet.
                 </div>
-              ) : preview && preview.filter((p) => p.willMove).length === 0 ? (
+              ) : preview && reviewRows.length === 0 ? (
                 <div className="py-6 text-center text-[12px] text-slate-500 dark:text-slate-400" dir="rtl">
                   אין שינויים
                 </div>
@@ -2076,17 +2131,32 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                    actual changes; the extended row carries
                    violatesTarget + hoursLogged markers in the REASON
                    cell. Columns: CODE · TASK · MARKERS · START · DUE
-                   · ACTION. */
+                   · ACTION.
+                   §14 (2026-11-15) · Manual tasks are ALWAYS listed too,
+                   moving or not, with the "ידני" pill and a checkbox in
+                   the Action cell that means "release and recalculate"
+                   (checked ⇔ in the release set). The "nothing will
+                   move" empty state above no longer hides them, and one
+                   hint line explains the checkbox. */
+                <>
+                {reviewManualCount > 0 && (
+                  <p
+                    dir="rtl"
+                    className="mb-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-[12px] text-amber-800 dark:text-amber-200"
+                  >
+                    {manualReviewHint(reviewManualCount)}
+                  </p>
+                )}
                 <TasksEditorTable
                   mode="review"
-                  tasks={(preview ?? [])
-                    .filter((p) => p.willMove)
-                    .map((p) => ({
+                  tasks={reviewRows.map((p) => ({
                       taskId: p.taskId,
                       taskCode: p.code,
                       taskName: p.name,
                       context: null,
-                      reason: null,
+                      reason: p.manual ? 'manual' as const : null,
+                      manual: Boolean(p.manual),
+                      released: reviewRelease.has(p.taskId),
                       currentStart: p.beforeStart,
                       proposedStart: p.afterStart,
                       currentEnd: p.beforeEnd,
@@ -2095,7 +2165,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                       hoursLogged: p.hoursLogged,
                     }))}
                   choices={reviewChoices}
-                  disabled={applyMutation.isPending}
+                  disabled={applyMutation.isPending || reviewRecalc}
+                  onToggleRelease={(taskId) => { void toggleReviewRelease(Number(taskId)); }}
                   onEdit={(taskId, end) =>
                     setReviewChoices((s) => ({
                       ...s,
@@ -2121,6 +2192,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
                     }))
                   }
                 />
+                </>
               )}
             </div>
 
@@ -2137,19 +2209,23 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
               </button>
               <button
                 type="button"
+                // §14 (2026-11-15) · Enabled by CHECKED rows, not by moving
+                // ones: a checked manual row whose dates do not change
+                // still has to be sent (it clears the manual flag).
+                // Disabled while the preview is being re-run.
                 disabled={
                   !preview ||
                   applyMutation.isPending ||
                   (previewing && !preview) ||
-                  preview.filter((p) => p.willMove).length === 0 ||
-                  preview.filter((p) => reviewChoices[p.taskId]?.apply).length === 0
+                  reviewRecalc ||
+                  reviewCheckedCount === 0
                 }
                 onClick={confirmReview}
                 className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg border-none disabled:opacity-50"
               >
                 {applyMutation.isPending
                   ? 'Applying…'
-                  : `החל מאושרים (${preview?.filter((p) => reviewChoices[p.taskId]?.apply).length ?? 0})`}
+                  : `החל מאושרים (${reviewCheckedCount})`}
               </button>
             </div>
           </>
@@ -4670,6 +4746,8 @@ function GanttRow({
     endMs: number;
     lane: number;
     onCriticalPath: boolean;
+    // §14 (2026-11-15) · pinned due date — said in the bar's tooltip.
+    manual: boolean;
     deps: Array<{ predId: number; lag: number; lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS' }>;
   };
   const taskBarItems = useMemo<TaskBarItem[]>(() => {
@@ -4691,6 +4769,7 @@ function GanttRow({
         endMs: hasSpan ? eMs : NaN,
         lane: -1,
         onCriticalPath: Boolean(t.onCriticalPath),
+        manual: Boolean(t.dueDateOverridden),
         deps: (Array.isArray(t.dependencies) ? t.dependencies : [])
           .map((d: any) => ({
             predId: Number(d?.dependsOnId ?? d?.dependsOn?.id ?? 0),
@@ -5179,6 +5258,8 @@ function GanttRow({
               startIso: new Date(it.startMs).toISOString().slice(0, 10),
               endIso: new Date(it.endMs).toISOString().slice(0, 10),
               critical: it.onCriticalPath,
+              // §14 (2026-11-15) · second line for a pinned task.
+              manual: it.manual,
             });
             const clippedLeft = rawLeft < -CLIP_PAD;
             const clippedRight = rawRight > totalWidth + CLIP_PAD;
@@ -5493,6 +5574,34 @@ function DeliverableTasksModal({
   // scheduler and shouldn't fire `dueDateOverridden`.
   const [manualEdits, setManualEdits] = useState<Set<number>>(() => new Set());
 
+  // §14 (2026-11-15) · Manual ("pinned") tasks of this row, and the
+  // modal's RELEASE SET — the pinned tasks the PM wants recalculated
+  // from the target and handed back to automatic scheduling. One
+  // mechanism for everything:
+  //   - the dry-run is posted with the set, so a released task gets
+  //     proposed dates like any other row;
+  //   - changing the target adds every pinned row (default = derive
+  //     everything from the target);
+  //   - each pinned row has one action that flips it ("אוטומטי" /
+  //     "השאר ידני");
+  //   - a row the PM types into, or clears, is a manual edit and leaves
+  //     the set;
+  //   - Save sends `manualDueDate: false` for the rows still in it.
+  // It starts empty — unless the modal opens on a PENDING target (a
+  // dragged bar / pending months edit): that is already a changed target,
+  // so the pinned rows start released, exactly as when the target is
+  // changed in the picker.
+  const manualIds: number[] = useMemo(
+    () => (row.taskList ?? [])
+      .filter((t: { dueDateOverridden?: boolean }) => t.dueDateOverridden)
+      .map((t: { id: number }) => Number(t.id)),
+    [row.taskList],
+  );
+  const [released, setReleased] = useState<Set<number>>(
+    () => new Set(pendingTarget && pendingTarget !== (row.savedDate ?? '') ? manualIds : []),
+  );
+  const releasedIds = useMemo(() => [...released].sort((a, b) => a - b), [released]);
+
   // §8b.1 (2026-11-11) · Open/close animation state. The parent still
   // owns whether the modal is in the tree (`taskModalRow !== null`);
   // this state drives the `AnimatedModalShell` transition. `open`
@@ -5550,7 +5659,18 @@ function DeliverableTasksModal({
   const [targetInput, setTargetInput] = useState<string>(pendingTarget || row.savedDate || '');
   const onTargetInputChange = (raw: string) => {
     setTargetInput(raw);
-    if (isCompleteIsoDate(raw)) setPreviewTarget(snapToSundayIso(raw));
+    if (!isCompleteIsoDate(raw)) return;
+    const next = snapToSundayIso(raw);
+    setPreviewTarget(next);
+    // §14 (2026-11-15) · A changed target releases every pinned row
+    // (default = derive everything from the target). Rows the PM typed
+    // into stay his — a typed date is a manual edit.
+    if (next !== previewTarget) {
+      setReleased((prev) => {
+        const add = manualIds.filter((id) => !prev.has(id) && !manualEdits.has(id));
+        return add.length === 0 ? prev : new Set([...prev, ...add]);
+      });
+    }
   };
   // Every OTHER writer of the target (reset to saved, the §8e chain
   // shift) goes through here so the box stays in sync.
@@ -5577,14 +5697,25 @@ function DeliverableTasksModal({
       endDate: string;
       infeasible?: boolean;
       infeasibleReason?: string;
+      // §14 (2026-11-15) · stored manual flag / really pinned in this run.
+      manual?: boolean;
+      skippedByOverride?: boolean;
     }>;
     // Empty results still come back 200 with `scheduled: []` and a
     // reason: 'no-zone' | 'no-target-row' | 'no-anchor' | 'no-tasks'.
     feasibility?: { status?: string; reason?: string };
   };
   const previewQuery = useQuery({
-    queryKey: ['deliv-preview', row.deliverableId, row.zoneId ?? null, debouncedTarget],
-    enabled: Boolean(row.deliverableId) && Boolean(debouncedTarget) && debouncedTarget !== row.savedDate,
+    // §14 (2026-11-15) · The release set is part of the question: the
+    // same target with a task released is a different schedule. And a
+    // release alone is enough to ask — the dry-run then runs against the
+    // SAVED target, so a pinned task can be handed back to the scheduler
+    // without moving the target.
+    queryKey: ['deliv-preview', row.deliverableId, row.zoneId ?? null, debouncedTarget, releasedIds.join(',')],
+    enabled:
+      Boolean(row.deliverableId) &&
+      Boolean(debouncedTarget) &&
+      (debouncedTarget !== row.savedDate || releasedIds.length > 0),
     // A preview must not hammer the server on errors — the failure is
     // surfaced next to the picker instead (see `previewNote`).
     retry: false,
@@ -5592,6 +5723,7 @@ function DeliverableTasksModal({
       const r = await client.post(dryRunPath, {
         zoneId: row.zoneId ?? null,
         anchorDate: debouncedTarget,
+        ...(releasedIds.length > 0 ? { releaseOverrideTaskIds: releasedIds } : {}),
       });
       // Every API response is wrapped as `{ success, data }`. Reading
       // `r.data.scheduled` directly (the pre-§10 code) was always
@@ -5670,6 +5802,53 @@ function DeliverableTasksModal({
   // drafts when the preview response lands. The dry-run response still
   // populates `previewByTaskId` for the amber "pendingShift" visual
   // cue on each row.
+  // §14 (2026-11-15) · A row the PM types into (or clears) is a manual
+  // edit: it leaves the release set. `ids === 'all'` — the §8e chain
+  // shift below marks every row as hand-edited.
+  const leaveReleaseSet = (ids: number[] | 'all') => {
+    setReleased((prev) => {
+      if (prev.size === 0) return prev;
+      if (ids === 'all') return new Set();
+      if (!ids.some((id) => prev.has(id))) return prev;
+      const next = new Set(prev);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+  };
+
+  // §14 (2026-11-15) · The one per-row action of a pinned task.
+  //   "אוטומטי"   → into the set: a date typed into the row is dropped,
+  //                 the dry-run re-runs and proposes the scheduler's date.
+  //   "השאר ידני" → out of the set: the stored due date goes back into
+  //                 the draft. If that leaves nothing to preview (target
+  //                 unchanged, set empty) the dry-run stops, so the other
+  //                 rows it had filled in go back to their stored dates
+  //                 too — they would otherwise keep proposals for a
+  //                 release that was just taken back.
+  const toggleRelease = (taskId: number | string) => {
+    const id = Number(taskId);
+    const next = toggledInSet(released, id);
+    setReleased(next);
+    if (next.has(id)) {
+      setManualEdits((s) => {
+        if (!s.has(id)) return s;
+        const copy = new Set(s);
+        copy.delete(id);
+        return copy;
+      });
+      return;
+    }
+    const stopsPreview = next.size === 0 && !previewActive;
+    setDrafts((prev) => {
+      const out = { ...prev };
+      for (const t of (row.taskList ?? []) as { id: number; endDate: string | null }[]) {
+        const tid = Number(t.id);
+        if (tid === id || (stopsPreview && !manualEdits.has(tid))) out[tid] = t.endDate ?? '';
+      }
+      return out;
+    });
+  };
+
   const shiftChainBy = (taskId: number | string, newEnd: string) => {
     const id = Number(taskId);
     const tasks: any[] = row.taskList ?? [];
@@ -5677,6 +5856,9 @@ function DeliverableTasksModal({
     const oldDraft =
       (drafts[id] ?? '') ||
       String(edited?.endDate ?? '').slice(0, 10);
+    // §14 · typed into → no longer released (the whole chain when the
+    // shift below moves every row).
+    leaveReleaseSet([id]);
 
     // Row with no prior draft AND no stored endDate: treat as a plain
     // single-row set (nothing to compute Δ against). This is the
@@ -5754,6 +5936,7 @@ function DeliverableTasksModal({
     // response arrives (the amber per-row preview cue still renders
     // from `previewByTaskId`, independent of `drafts`).
     setManualEdits(new Set(tasks.map((t) => Number(t.id))));
+    leaveReleaseSet('all');
   };
 
   const tasksDirty = (row.taskList ?? []).some((t: any) => (t.endDate ?? '') !== (drafts[t.id] ?? ''));
@@ -5762,7 +5945,27 @@ function DeliverableTasksModal({
   // (opened on a pending drag, edited here, or shifted by §8e). Read-
   // only (synthetic) rows have no real deliverable to write against.
   const targetDirty = Boolean(previewTarget) && previewTarget !== (row.savedDate ?? '') && !row.readOnly;
-  const dirty = tasksDirty || targetDirty;
+  // §14 (2026-11-15) · A pending release is something to save even when
+  // no date changed — Save then only clears the task's manual flag. But
+  // only once its dry-run has SETTLED and returned a row for the task
+  // (`releaseSavePlan`):
+  //   - while the dry-run for the current (target, release set) is still
+  //     pending — the debounce window or the request in flight — Save is
+  //     disabled. Pressed at that moment it sent `manualDueDate: false`
+  //     with the OLD date: released, but never recalculated;
+  //   - a released row the dry-run has no row for (it failed, or had
+  //     nothing for that task) is dropped from the release on save — it
+  //     stays manual instead of being un-pinned on a stale date. The
+  //     preview note next to the picker says why nothing was recalculated.
+  const releasePlan = releaseSavePlan({
+    released,
+    scheduledIds: previewByTaskId,
+    dryRunPending: previewTarget !== debouncedTarget || previewQuery.isFetching,
+  });
+  const canSave = tasksDirty || targetDirty || releasePlan.releasable.size > 0;
+  // Footer wording: a requested release counts as unsaved even while it
+  // cannot be saved yet.
+  const dirty = canSave || released.size > 0;
 
   const save = async () => {
     setSaving(true);
@@ -5805,11 +6008,16 @@ function DeliverableTasksModal({
       //   - a preview-driven row whose due date did NOT move but whose
       //     scheduled start did is saved too (start only). The modal shows
       //     that proposed start, and the row used to be skipped.
+      // §14 (2026-11-15) · A row in the release set goes out with
+      // `manualDueDate: false` — with its recalculated dates, or on its
+      // own when nothing moved — which hands the task back to automatic
+      // scheduling.
       const taskList: { id: number; endDate: string | null; estimatedStartDate: string | null }[] = row.taskList ?? [];
       const patches = taskList.flatMap((t) => {
         const payload: TaskDatesPatch | null = taskDatesPatch({
           nextEnd: drafts[t.id] || null,
           manual: manualEdits.has(Number(t.id)),
+          release: releasePlan.releasable.has(Number(t.id)),
           preview: previewByTaskId.get(Number(t.id)) ?? null,
           storedStart: t.estimatedStartDate ?? null,
           storedEnd: t.endDate ?? null,
@@ -5819,8 +6027,12 @@ function DeliverableTasksModal({
       await Promise.all(patches.map((p) => client.patch(`/tasks/${p.id}`, p.payload)));
       // A start-only row counts as updated; the noun stays "due date"
       // unless one of them is in the batch.
+      // §14 · …and a row that was only released (no date key at all)
+      // makes it plain "task".
       const updatedCount = patches.length;
-      const noun = patches.some((p) => !('endDate' in p.payload)) ? 'task date' : 'due date';
+      const noun = patches.some((p) => !('endDate' in p.payload) && !('estimatedStartDate' in p.payload))
+        ? 'task'
+        : patches.some((p) => !('endDate' in p.payload)) ? 'task date' : 'due date';
       const dueSummary = `${updatedCount} ${noun}${updatedCount === 1 ? '' : 's'}`;
       notify.success(
         targetSaved
@@ -5937,6 +6149,8 @@ function DeliverableTasksModal({
                       onClick={() => {
                         setTargetAndInput(row.savedDate ?? '');
                         setManualEdits(new Set());
+                        // §14 · back to saved = nothing released either.
+                        setReleased(new Set());
                         setDrafts(() => {
                           const seed: Record<number, string> = {};
                           for (const t of row.taskList ?? []) seed[t.id] = t.endDate ?? '';
@@ -6022,10 +6236,15 @@ function DeliverableTasksModal({
                   currentEnd: null,
                   proposedEnd: proposedEnd ? String(proposedEnd).slice(0, 10) : null,
                   pendingShift,
+                  // §14 (2026-11-15) · pinned task → "ידני" pill + the
+                  // release action.
+                  manual: Boolean(t.dueDateOverridden),
+                  released: released.has(Number(t.id)),
                 };
               })}
               drafts={drafts}
               disabled={saving}
+              onToggleRelease={toggleRelease}
               onEdit={(taskId, end) => shiftChainBy(taskId, end)}
               onClear={(taskId) => {
                 const id = Number(taskId);
@@ -6034,6 +6253,8 @@ function DeliverableTasksModal({
                   next.add(id);
                   return next;
                 });
+                // §14 · a cleared row is a manual edit — not released.
+                leaveReleaseSet([id]);
                 setDrafts((s) => ({ ...s, [id]: '' }));
               }}
             />
@@ -6053,10 +6274,13 @@ function DeliverableTasksModal({
             >
               Cancel
             </button>
+            {/* §14 (2026-11-15) · Also disabled while a release is waiting
+                for its dry-run (`releasePlan.waitForDryRun`) — the
+                "previewing…" hint by the picker shows why. */}
             <button
               type="button"
               onClick={save}
-              disabled={!dirty || saving}
+              disabled={!canSave || saving || releasePlan.waitForDryRun}
               className="px-3.5 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving ? 'Saving…' : targetDirty ? 'Save target + due dates' : 'Save due dates'}
@@ -6122,12 +6346,24 @@ type TasksEditorRow = {
   // goes through the Save & update flow. Kept optional so the review
   // modal's rows stay untouched.
   pendingShift?: boolean;
+  // §14 (2026-11-15) · `manual` — the task's due date is pinned
+  // (`dueDateOverridden`): it gets the "ידני" pill. `released` — the PM
+  // asked for it to be recalculated from the target (it is in the
+  // modal's release set). Review mode: a manual row's Action cell is a
+  // checkbox (checked ⇔ released) instead of the Keep / Apply toggle,
+  // and a row that is kept reads as staying — its current dates, plain.
+  // Tasks-list mode: the pill sits next to the Due input and one small
+  // action next to Clear flips `released`.
+  manual?: boolean;
+  released?: boolean;
 };
 
 type TasksEditorTableProps = {
   tasks: TasksEditorRow[];
   mode: 'review' | 'tasks-list';
   disabled?: boolean;
+  // §14 · Flip a manual row in / out of the release set (both modes).
+  onToggleRelease?: (taskId: number | string) => void;
   // Edit the Due/End input. Fires in both modes.
   onEdit?: (taskId: number | string, end: string) => void;
   // Review mode — per-row choice state + Keep/Apply handlers.
@@ -6156,6 +6392,7 @@ function TasksEditorTable({
   tasks,
   mode,
   disabled,
+  onToggleRelease,
   onEdit,
   choices,
   onKeepCurrent,
@@ -6163,7 +6400,9 @@ function TasksEditorTable({
   drafts,
   onClear,
 }: TasksEditorTableProps) {
-  const reasonPill = (reason: TasksEditorRow['reason']) => {
+  // §14 (2026-11-15) · `title` — hover text of the pill (the manual pill
+  // says whether the task stays put or will be recalculated).
+  const reasonPill = (reason: TasksEditorRow['reason'], title?: string) => {
     if (!reason) return null;
     const cls =
       reason === 'manual'
@@ -6174,11 +6413,14 @@ function TasksEditorTable({
     const label =
       reason === 'manual' ? 'ידני' : reason === 'overload' ? 'עומס' : 'שעות דווחו';
     return (
-      <span className={cn('inline-flex rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5', cls)}>
+      <span title={title} className={cn('inline-flex rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5', cls)}>
         {label}
       </span>
     );
   };
+  // §14 · What a manual row's pill says on hover, per state and mode.
+  const manualTitle = (t: TasksEditorRow): string =>
+    t.released ? MANUAL_DUE_RELEASED_TEXT : mode === 'review' ? MANUAL_DUE_KEPT_TEXT : MANUAL_DUE_TEXT;
 
   // §8a (2026-11-11) · Preview-mode reason cell. Combines the
   // violatesTarget amber-dot, the hours-logged chip (reused from the
@@ -6186,7 +6428,7 @@ function TasksEditorTable({
   // show, renders the em-dash placeholder — this preserves the cell's
   // visual density across rows.
   const reasonCell = (t: TasksEditorRow) => {
-    const pill = reasonPill(t.reason);
+    const pill = reasonPill(t.reason, t.reason === 'manual' ? manualTitle(t) : undefined);
     const hoursChip =
       t.hoursLogged && t.reason !== 'hours-logged' ? (
         <span className="inline-flex rounded-[5px] text-[11px] font-bold tracking-wide px-2 py-0.5 bg-violet-50 dark:bg-violet-900/30 text-violet-600 dark:text-violet-300">
@@ -6245,6 +6487,10 @@ function TasksEditorTable({
           const seedEnd = t.proposedEnd ?? t.currentEnd ?? '';
           const choice = choices?.[t.taskId] ?? { apply: true, end: seedEnd };
           const draftEnd = drafts?.[t.taskId] ?? '';
+          // §14 (2026-11-15) · Review row of a manual task the PM keeps:
+          // it stays where it is, so its current dates are shown plainly
+          // (no struck-through "before", no input).
+          const keptManual = mode === 'review' && Boolean(t.manual) && !t.released;
           return (
             <tr key={t.taskId} className="align-top hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
               <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
@@ -6263,7 +6509,7 @@ function TasksEditorTable({
               </td>
               <td className="px-3 py-2">
                 <div className="flex items-center gap-1 text-[11px] font-mono tabular-nums">
-                  {mode === 'review' && t.currentStart ? (
+                  {mode === 'review' && t.currentStart && !keptManual ? (
                     <span className="text-slate-400 line-through">{String(t.currentStart).slice(0, 10)}</span>
                   ) : null}
                   <span className={cn(
@@ -6283,7 +6529,11 @@ function TasksEditorTable({
                 ) : null}
               </td>
               <td className="px-3 py-2">
-                {mode === 'review' ? (
+                {keptManual ? (
+                  <span className="font-mono text-xs text-slate-700 dark:text-slate-200 tabular-nums">
+                    {t.currentEnd ? String(t.currentEnd).slice(0, 10) : '—'}
+                  </span>
+                ) : mode === 'review' ? (
                   /* §8c (2026-11-12) · BUG 3 — stacked vertically so
                      the strikethrough current date + the input fit
                      inside the 170px DUE column. Previously the
@@ -6309,23 +6559,50 @@ function TasksEditorTable({
                      user sees the preview value directly. The amber
                      border remains as the visual cue "this was
                      auto-filled by preview" — the ghost caption
-                     below the input has been removed. */
-                  <input
-                    type="date"
-                    value={draftEnd}
-                    disabled={disabled}
-                    onChange={(e) => onEdit?.(t.taskId, e.target.value)}
-                    className={cn(
-                      'rounded-lg border px-2 py-1 text-[13px] font-mono tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50',
-                      t.pendingShift
-                        ? 'border-amber-300 dark:border-amber-700'
-                        : 'border-slate-200 dark:border-slate-700',
-                    )}
-                  />
+                     below the input has been removed.
+                     §14 (2026-11-15) · A pinned task carries the "ידני"
+                     pill next to its date. */
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="date"
+                      value={draftEnd}
+                      disabled={disabled}
+                      onChange={(e) => onEdit?.(t.taskId, e.target.value)}
+                      className={cn(
+                        'rounded-lg border px-2 py-1 text-[13px] font-mono tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50',
+                        t.pendingShift
+                          ? 'border-amber-300 dark:border-amber-700'
+                          : 'border-slate-200 dark:border-slate-700',
+                      )}
+                    />
+                    {t.manual ? reasonPill('manual', manualTitle(t)) : null}
+                  </div>
                 )}
               </td>
               <td className="px-3 py-2">
-                {mode === 'review' ? (
+                {mode === 'review' && t.manual ? (
+                  /* §14 (2026-11-15) · Manual row: a checkbox instead of
+                     the Keep / Apply toggle. Checked = release the task
+                     and recalculate it from the target; unchecked = the
+                     manual date stays. Toggling re-runs the preview. */
+                  <label
+                    dir="rtl"
+                    title={manualTitle(t)}
+                    className={cn(
+                      'inline-flex items-center gap-2 text-[12px] font-semibold text-slate-700 dark:text-slate-200',
+                      disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+                    )}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(t.released)}
+                      disabled={disabled}
+                      onChange={() => onToggleRelease?.(t.taskId)}
+                      className="rounded border-slate-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500"
+                    />
+                    חשב מחדש לפי היעד
+                  </label>
+                ) : mode === 'review' ? (
                   <div className="inline-flex items-center gap-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
                     <button
                       type="button"
@@ -6355,15 +6632,32 @@ function TasksEditorTable({
                     </button>
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    disabled={disabled || !draftEnd}
-                    onClick={() => onClear?.(t.taskId)}
-                    className="rounded-md border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-1 disabled:opacity-40"
-                    title="Clear this task's due date"
-                  >
-                    Clear
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={disabled || !draftEnd}
+                      onClick={() => onClear?.(t.taskId)}
+                      className="rounded-md border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-1 disabled:opacity-40"
+                      title="Clear this task's due date"
+                    >
+                      Clear
+                    </button>
+                    {/* §14 (2026-11-15) · One action per manual row that
+                        flips it in / out of the modal's release set:
+                        "אוטומטי" hands the task back to the scheduler,
+                        "השאר ידני" takes that back. */}
+                    {t.manual ? (
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => onToggleRelease?.(t.taskId)}
+                        className="rounded-md border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-1 disabled:opacity-40"
+                        title={t.released ? 'השאר את התאריך הידני — לא יחושב מחדש' : 'בטל את התאריך הידני וחשב לפי היעד'}
+                      >
+                        {t.released ? 'השאר ידני' : 'אוטומטי'}
+                      </button>
+                    ) : null}
+                  </div>
                 )}
               </td>
             </tr>
