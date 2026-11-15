@@ -33,13 +33,25 @@
  * This script does NOT write. It never calls any `prisma.*.create`,
  * `.update` or `.delete`. It never touches projects or their tasks
  * (`Task` / `TaskDependency`). All destructive side-effects live in
- * the Phase-2 executor:
+ * the Phase-2 executor, which was written (2026-11-15) as an admin
+ * backfill endpoint rather than a second script:
  *
- *   apps/api/scripts/p1-migrate-copies-to-refs.ts  ← TO BE WRITTEN
+ *   POST /admin/backfills/p1-copies-to-refs   (dry-run by default)
+ *   apps/api/src/modules/admin/p1-copies-to-refs.service.ts
  *
- * which will run under Yulian's approval, against a fresh backup, on
- * staging only — same pattern DN-1 followed for the deliverable-FK
- * backfill.
+ * It runs under Yulian's approval, against a fresh backup, on staging
+ * first — same pattern DN-1 followed for the deliverable-FK backfill.
+ *
+ * SHARED RULES (2026-11-15): the marker resolution and the grouping —
+ * the two things this planner decides — are no longer written out
+ * here. They are imported from
+ * `src/modules/admin/p1-copies-to-refs.plan.ts`, the same pure
+ * functions the executor plans with, so what this script reports and
+ * what the endpoint converts cannot drift. Everything below those two
+ * calls (the PlannedSlot shape, the printed plan, the sample tree) is
+ * this script's own and unchanged. The endpoint's dry-run reports more
+ * (drift vs. the deliverable, slot order, extra skip reasons) — use it
+ * for the go / no-go; this script stays as the lightweight CLI view.
  */
 
 // ─── Inline .env loader (dotenv is not a direct apps/api dep) ──────────────
@@ -63,58 +75,16 @@ try {
 
 import { PrismaClient } from '@prisma/client';
 
-// ─── Marker helpers — ports of apps/api/.../marker-phase-resolver.ts and
-//     apps/api/.../templates.service.ts :: resolveDeliverableTemplateByMarker.
-//     MUST stay byte-for-byte equivalent to the service so the Phase-2
-//     executor uses the same resolution rules the dry-run reports.
-
-/** Extract the `<name>` from a task's `[SERVICE:<name>]` description marker, or null. */
-function extractServiceMarker(description: string | null | undefined): string | null {
-  if (!description) return null;
-  const m = description.match(/^\[SERVICE:(.+)\]$/);
-  return m ? m[1] : null;
-}
-
-type MarkerCatalogEntry = { id: number; name: string; phaseId: number | null };
-
-/**
- * Mirror of TemplatesService.resolveDeliverableTemplateByMarker (private).
- * Matches `catalog.name = marker` first, then `name LIKE marker\%` (the
- * `base\detail` rename form). Preference rules:
- *   1. Phase match (if the task has `phaseId`).
- *   2. Prefer exact over prefix.
- *   3. Still > 1 → return null (never guess).
- * Zero candidates → null. Templates-side only: caller feeds a catalog
- * pre-filtered to `type='task_list', deletedAt=null`.
- */
-function resolveDeliverableTemplateByMarker(
-  description: string | null | undefined,
-  taskPhaseId: number | null | undefined,
-  catalog: MarkerCatalogEntry[],
-): number | null {
-  const marker = extractServiceMarker(description);
-  if (!marker) return null;
-
-  const exact = catalog.filter((t) => t.name === marker);
-  const prefix = catalog.filter((t) => t.name.startsWith(`${marker}\\`));
-  const all = [
-    ...exact.map((t) => ({ ...t, matchKind: 'exact' as const })),
-    ...prefix.map((t) => ({ ...t, matchKind: 'prefix' as const })),
-  ];
-  if (all.length === 0) return null;
-  if (all.length === 1) return all[0].id;
-
-  if (taskPhaseId != null) {
-    const samePhase = all.filter((c) => c.phaseId === taskPhaseId);
-    if (samePhase.length === 1) return samePhase[0].id;
-    if (samePhase.length > 1) {
-      const exactPhase = samePhase.find((c) => c.matchKind === 'exact');
-      if (exactPhase) return exactPhase.id;
-    }
-  }
-  if (exact.length === 1) return exact[0].id;
-  return null;
-}
+// ─── Shared planning rules ──────────────────────────────────────────────────
+// Marker resolution (the pure mirror of
+// `TemplatesService.resolveDeliverableTemplateByMarker`) and the grouping
+// used to be written out in this file. They now live in the plan module the
+// Phase-2 executor uses — one implementation for the report and the write.
+import {
+  existingLinkedKeys,
+  groupCopyRows,
+  type MarkerCatalogEntry,
+} from '../src/modules/admin/p1-copies-to-refs.plan';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -216,80 +186,27 @@ async function main() {
     },
   });
 
-  // 3) Pre-pass: resolve legacy `[SERVICE:...]` markers on null-FK rows.
-  //    Produces, per-template, maps { rowId -> resolvedDeliverableTemplateId }
-  //    for later grouping (source='marker'), plus a flat unresolvable list.
+  // 3) Marker resolution + grouping — the SHARED rules (`groupCopyRows`
+  //    in the plan module). Per composing template: rows carrying the FK,
+  //    plus FK-less rows whose `[SERVICE:...]` marker resolves, are
+  //    grouped by (parent zone or root, deliverable); a marker the
+  //    resolver returns null for goes to the flat unresolvable list.
+  const grouped = composing.map((tpl) => ({ tpl, ...groupCopyRows(tpl, catalog) }));
   const legacyUnresolvable: UnresolvableRow[] = [];
-  const markerResolvedTaskIds = new Map<number, number>(); // templateTask.id -> deliverableTemplateId
-  const markerResolvedZoneTaskIds = new Map<number, number>(); // templateZoneTask.id -> deliverableTemplateId
-
-  for (const tpl of composing) {
-    for (const tt of tpl.templateTasks) {
-      if (tt.deliverableTemplateId != null) continue;
-      if (!extractServiceMarker(tt.description)) continue;
-      const resolved = resolveDeliverableTemplateByMarker(
-        tt.description,
-        tt.phaseId,
-        catalog,
-      );
-      if (resolved != null) {
-        markerResolvedTaskIds.set(tt.id, resolved);
-      } else {
-        legacyUnresolvable.push({
-          templateId: tpl.id,
-          templateName: tpl.name,
-          rowId: tt.id,
-          rowKind: 'task',
-          description: tt.description ?? '',
-          phaseId: tt.phaseId,
-          zoneId: null,
-          zoneName: null,
-        });
-      }
-    }
-    for (const tz of tpl.templateZones) {
-      for (const tzt of tz.templateZoneTasks) {
-        if (tzt.deliverableTemplateId != null) continue;
-        if (!extractServiceMarker(tzt.description)) continue;
-        const resolved = resolveDeliverableTemplateByMarker(
-          tzt.description,
-          tzt.phaseId,
-          catalog,
-        );
-        if (resolved != null) {
-          markerResolvedZoneTaskIds.set(tzt.id, resolved);
-        } else {
-          legacyUnresolvable.push({
-            templateId: tpl.id,
-            templateName: tpl.name,
-            rowId: tzt.id,
-            rowKind: 'zone_task',
-            description: tzt.description ?? '',
-            phaseId: tzt.phaseId,
-            zoneId: tz.id,
-            zoneName: tz.name,
-          });
-        }
-      }
-    }
+  let totalFkSourced = 0;
+  let totalMarkerResolved = 0;
+  for (const g of grouped) {
+    legacyUnresolvable.push(...g.legacyUnresolvable);
+    totalFkSourced += g.fkSourced;
+    totalMarkerResolved += g.markerResolved;
   }
 
-  // 4) Deliverable (task_list) side lookups for display names/codes.
-  //    Includes both the FK-sourced deliverableIds and the ones the
-  //    marker resolver returned.
+  // 4) Deliverable (task_list) side lookups for display names/codes —
+  //    every deliverable a group points at (FK-sourced or marker-resolved).
   const deliverableIds = new Set<number>();
-  for (const t of composing) {
-    for (const tt of t.templateTasks) {
-      if (tt.deliverableTemplateId) deliverableIds.add(tt.deliverableTemplateId);
-    }
-    for (const tz of t.templateZones) {
-      for (const tzt of tz.templateZoneTasks) {
-        if (tzt.deliverableTemplateId) deliverableIds.add(tzt.deliverableTemplateId);
-      }
-    }
+  for (const { groups } of grouped) {
+    for (const g of groups) deliverableIds.add(g.deliverableTemplateId);
   }
-  for (const d of markerResolvedTaskIds.values()) deliverableIds.add(d);
-  for (const d of markerResolvedZoneTaskIds.values()) deliverableIds.add(d);
 
   const deliverables =
     deliverableIds.size > 0
@@ -300,94 +217,30 @@ async function main() {
       : [];
   const deliverableById = new Map(deliverables.map((d) => [d.id, d]));
 
-  // 5) Grouping — unchanged key shape; now each row carries a Provenance
-  //    tag so each group's `sources` reports where its rows came from.
+  // 5) Materialize the groups into PlannedSlots. Each row keeps its
+  //    Provenance tag so a group's `sources` reports where its rows came from.
   const plan: PlannedSlot[] = [];
   const skipped: PlannedSlot[] = [];
-  let totalFkSourced = 0;
-  let totalMarkerResolved = 0;
 
-  for (const tpl of composing) {
+  for (const { tpl, groups } of grouped) {
     const zoneById = new Map(tpl.templateZones.map((z) => [z.id, z]));
 
     // Idempotence index: already-linked (parent, deliverable) pairs.
-    const existingLinkedKeys = new Set<GroupKey>();
-    for (const z of tpl.templateZones) {
-      if (!z.linkedTaskTemplateId) continue;
-      const parentKey = z.parentId == null ? 'root' : String(z.parentId);
-      existingLinkedKeys.add(`${tpl.id}:${parentKey}:${z.linkedTaskTemplateId}`);
-    }
+    const linkedKeys = existingLinkedKeys(tpl);
 
-    type Group = {
-      templateTaskRows: SourcedCopyRow[];
-      templateZoneTaskRows: SourcedCopyRow[];
-      parentZoneId: number | null;
-      deliverableTemplateId: number;
-      sources: Set<Provenance>;
-    };
-    const groups = new Map<GroupKey, Group>();
+    for (const group of groups) {
+      const key: GroupKey = group.key;
+      // The printed plan carries {id, source, kind} per row, as before.
+      const strip = (rows: typeof group.templateTaskRows): SourcedCopyRow[] =>
+        rows.map(({ id, source, kind }) => ({ id, source, kind }));
+      const g = {
+        parentZoneId: group.parentZoneId,
+        deliverableTemplateId: group.deliverableTemplateId,
+        sources: group.sources,
+        templateTaskRows: strip(group.templateTaskRows),
+        templateZoneTaskRows: strip(group.templateZoneTaskRows),
+      };
 
-    const ensureGroup = (key: GroupKey, parentZoneId: number | null, deliverableTemplateId: number): Group => {
-      let g = groups.get(key);
-      if (!g) {
-        g = {
-          templateTaskRows: [],
-          templateZoneTaskRows: [],
-          parentZoneId,
-          deliverableTemplateId,
-          sources: new Set<Provenance>(),
-        };
-        groups.set(key, g);
-      }
-      return g;
-    };
-
-    // Root TemplateTasks.
-    for (const tt of tpl.templateTasks) {
-      let deliverableId: number | null = null;
-      let source: Provenance | null = null;
-      if (tt.deliverableTemplateId != null) {
-        deliverableId = tt.deliverableTemplateId;
-        source = 'fk';
-      } else if (markerResolvedTaskIds.has(tt.id)) {
-        deliverableId = markerResolvedTaskIds.get(tt.id)!;
-        source = 'marker';
-      }
-      if (deliverableId == null || source == null) continue;
-
-      const key = `${tpl.id}:root:${deliverableId}`;
-      const g = ensureGroup(key, null, deliverableId);
-      g.templateTaskRows.push({ id: tt.id, source, kind: 'task' });
-      g.sources.add(source);
-      if (source === 'fk') totalFkSourced++;
-      else totalMarkerResolved++;
-    }
-
-    // Zone-scoped TemplateZoneTasks.
-    for (const tz of tpl.templateZones) {
-      for (const tzt of tz.templateZoneTasks) {
-        let deliverableId: number | null = null;
-        let source: Provenance | null = null;
-        if (tzt.deliverableTemplateId != null) {
-          deliverableId = tzt.deliverableTemplateId;
-          source = 'fk';
-        } else if (markerResolvedZoneTaskIds.has(tzt.id)) {
-          deliverableId = markerResolvedZoneTaskIds.get(tzt.id)!;
-          source = 'marker';
-        }
-        if (deliverableId == null || source == null) continue;
-
-        const key = `${tpl.id}:${tz.id}:${deliverableId}`;
-        const g = ensureGroup(key, tz.id, deliverableId);
-        g.templateZoneTaskRows.push({ id: tzt.id, source, kind: 'zone_task' });
-        g.sources.add(source);
-        if (source === 'fk') totalFkSourced++;
-        else totalMarkerResolved++;
-      }
-    }
-
-    // Materialize groups into PlannedSlots.
-    for (const [key, g] of groups) {
       const deliverable = deliverableById.get(g.deliverableTemplateId);
       // Integrity gap: id points at a non-task_list (or deleted) Template.
       // Flag, don't plan a slot for it.
@@ -431,7 +284,7 @@ async function main() {
         },
       };
 
-      if (existingLinkedKeys.has(key)) {
+      if (linkedKeys.has(key)) {
         slot.skipReason = 'already_linked';
         skipped.push(slot);
       } else {

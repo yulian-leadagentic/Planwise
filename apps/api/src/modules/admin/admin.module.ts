@@ -11,6 +11,7 @@ import { AuthorizationModule } from '../../common/authorization.module';
 import { BusinessPartnersModule } from '../business-partners/business-partners.module';
 import { UsersModule } from '../users/users.module';
 import { ProjectDeliverablesModule } from '../project-deliverables/project-deliverables.module';
+import { P1CopiesToRefsService } from './p1-copies-to-refs.service';
 
 @Module({
   // People UX M6 — ReportsController re-uses BusinessPartnersService for
@@ -41,5 +42,11 @@ import { ProjectDeliverablesModule } from '../project-deliverables/project-deliv
     // for the multi-select-chip UI on the user edit modal.
     AdminUsersController,
   ],
+  // P1 (2026-11-15) — planner + executor behind
+  // `POST /admin/backfills/p1-copies-to-refs`. Kept as a service (not
+  // inline in BackfillsController) so the plan is unit-tested and the
+  // dry-run script can share its pure functions. PrismaService comes
+  // from the global PrismaModule, like every controller above.
+  providers: [P1CopiesToRefsService],
 })
 export class AdminModule {}

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { BadRequestException, Controller, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { CalendarDayType, Prisma } from '@prisma/client';
 
@@ -21,6 +21,7 @@ import {
   extractEmailDomain,
   PERSONAL_EMAIL_DOMAIN_FALLBACK,
 } from '../business-partners/business-partners.service';
+import { P1CopiesToRefsService, parseP1CopiesToRefsBody } from './p1-copies-to-refs.service';
 
 /**
  * One-shot admin backfill endpoints — mutations that fix historical
@@ -55,6 +56,9 @@ export class BackfillsController {
     // the single source of truth shared with the apply-template path in
     // `ZonesService` so the two can no longer drift.
     private readonly projectDeliverables: ProjectDeliverablesService,
+    // P1 (2026-11-15) — planner + executor of the copies → reference
+    // slots migration; this controller only parses the body for it.
+    private readonly p1CopiesToRefs: P1CopiesToRefsService,
   ) {}
 
   /**
@@ -2940,6 +2944,62 @@ export class BackfillsController {
     }
 
     return { dryRun, created, updated, skipped, rows };
+  }
+
+  /**
+   * P1 · Reference model (2026-11-15) — Phase-2 migration: deliverable
+   * COPIES in composing templates → reference SLOTS.
+   * Work order: docs/bm2/planwise-P1-reference-model-WORKORDER.md (the
+   * dry-run of §0c was approved; this is step 5, never run until now).
+   *
+   * Why: a composing template built before the compose UI learned to
+   * reference a deliverable holds root-level `TemplateTask` (or
+   * `TemplateZoneTask`) COPIES tagged with `deliverableTemplateId`, and
+   * copies carry no `TemplateTaskDependency` rows. Staging, project 60
+   * (six composing templates applied): 26 dependency edges expected
+   * from the Deliverable Templates, 2 arrived — both from the one
+   * template that already uses a slot.
+   *
+   * What it does, per composing template, in ONE transaction: for each
+   * `(parent zone or root, deliverable)` group of copies it creates the
+   * slot `TemplatesService.addDeliverableRef` would create and deletes
+   * the copies the slot replaces. Rules, drift report and skip reasons:
+   * `p1-copies-to-refs.plan.ts` / `P1CopiesToRefsService`.
+   *
+   * UNLIKE THE OTHER BACKFILLS HERE, DRY-RUN IS THE DEFAULT and the
+   * switch is in the BODY, not the query string:
+   *
+   *   { "dryRun"?: boolean, "templateIds"?: number[] }
+   *
+   *   • `dryRun` — only the boolean `false` writes. A missing body, a
+   *     missing field, `true`, or anything else is a dry-run.
+   *   • `templateIds` — limit the run to those composing templates, so
+   *     one can be converted and verified before the rest. When sent it
+   *     must be a non-empty array of positive integers (400 otherwise —
+   *     a malformed filter must never widen a real run to everything).
+   *
+   * TEMPLATES ONLY — never reads or writes `Task`, `TaskDependency`,
+   * `Zone` or any `Project*` table (`projectsTouched` is always 0).
+   * Idempotent: a converted group is recognised by its slot, so a
+   * second run plans nothing for it.
+   *
+   * Response: see `P1CopiesToRefsResult` — per template the planned
+   * slots (with the drift report), the skipped groups with their
+   * reasons, BEFORE / AFTER trees, totals, and on a real run what was
+   * written.
+   */
+  @Post('p1-copies-to-refs')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'P1 · Backfill · convert deliverable task copies in composing templates into reference slots. Body { dryRun?: boolean (default TRUE — only false writes), templateIds?: number[] }. Templates only; idempotent; returns plan + drift report + BEFORE/AFTER trees.',
+  })
+  async runP1CopiesToRefs(
+    @CurrentUser() user: { id?: number } | undefined,
+    @Body() body?: { dryRun?: boolean; templateIds?: number[] },
+  ) {
+    const { dryRun, templateIds } = parseP1CopiesToRefsBody(body);
+    return this.p1CopiesToRefs.run({ dryRun, templateIds, actorId: user?.id });
   }
 }
 
