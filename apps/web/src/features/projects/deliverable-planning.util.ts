@@ -26,6 +26,7 @@
  * texts, `manualReviewHint`, `isReviewRowListed`, `mergeReviewChoices`,
  * `reviewCheckedTaskIds`, `reviewSubtitle`, `releaseSavePlan`,
  * `toggledInSet`, and the `release` argument of `taskDatesPatch`.
+ * §14b added the tasks modal's width budget (`TASKS_LIST_*`).
  *
  * §10 (2026-11-13) · Principle: the SAVED `targetDate` is the single
  * source of truth for display. Months is only an input device — a
@@ -796,6 +797,61 @@ export function releaseSavePlan(args: {
   for (const id of args.released) if (args.scheduledIds.has(id)) releasable.add(id);
   return { waitForDryRun: false, releasable };
 }
+
+// ── §14b (2026-11-15) · Width budget of the tasks modal's table ──────
+//
+// The table used to be an auto-layout table whose declared widths
+// (108 + 110 + 110 + 200 + 180 = 708, before the Task column) could not
+// fit its 720px card; it only looked right because auto layout shrank
+// the columns. §14 added a pill to the Due cell and a second button to
+// the Action cell — neither shrinks — so the table overflowed the card
+// and the Start column was crushed to one word per line. The tasks-list
+// table is now FIXED layout on an explicit budget; the Task column takes
+// what is left, and never less than its floor (below that the modal body
+// scrolls sideways instead of crushing columns).
+//
+// Every cell has 12px of padding on each side (24px per column).
+
+/**
+ * Card width of the tasks modal — its class in the tab is `w-[900px]`.
+ * 898px inside the 1px borders: the fixed columns (702px) + a 196px Task
+ * column — 181px of it beside a 15px vertical scrollbar, 179px beside a
+ * 17px one.
+ */
+export const TASKS_MODAL_CARD_PX = 900;
+/** Fixed column widths (px, padding included). Task = the rest. */
+export const TASKS_LIST_COL_PX = {
+  /**
+   * 84px of content ≈ 11.6 characters of 12px mono — real task codes run
+   * to 11 (`AS.AHW.1131` ≈ 79px). Anything longer ellipsizes.
+   */
+  code: 108,
+  /** 72px: the widest status pill, "In Progress" (~68px). */
+  status: 96,
+  /** 72px: a yyyy-mm-dd date in 11px mono (~66px); the "pending" caption (~40px). */
+  start: 96,
+  /** 208px: date input (≥ 140px) + 6px gap + the "ידני" pill (~43px). */
+  due: 232,
+  /** 146px: "Clear" (~48px) + 6px gap + "השאר ידני" (~76–81px). */
+  action: 170,
+} as const;
+/**
+ * Floor of the Task column (140px of text before it truncates). It is
+ * deliberately BELOW what the column gets at the normal card width
+ * (179–196px), so the table's min-width keeps real slack: 866px against
+ * 883px beside a 15px scrollbar, 881px beside a classic 17px one. A floor
+ * of 180 left a 1px fit — one wider scrollbar, or a width rounded by
+ * browser zoom, and the modal scrolled sideways at its normal width.
+ */
+export const TASKS_LIST_TASK_MIN_PX = 164;
+/** min-width of the table: the fixed columns + the Task column's floor. */
+export const TASKS_LIST_MIN_WIDTH_PX =
+  TASKS_LIST_COL_PX.code +
+  TASKS_LIST_COL_PX.status +
+  TASKS_LIST_COL_PX.start +
+  TASKS_LIST_COL_PX.due +
+  TASKS_LIST_COL_PX.action +
+  TASKS_LIST_TASK_MIN_PX;
 
 /** Copy of `set` with `value` flipped in / out. */
 export function toggledInSet<T>(set: ReadonlySet<T>, value: T): Set<T> {

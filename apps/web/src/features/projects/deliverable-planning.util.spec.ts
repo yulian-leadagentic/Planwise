@@ -38,6 +38,10 @@ import {
   reviewSubtitle,
   releaseSavePlan,
   toggledInSet,
+  TASKS_MODAL_CARD_PX,
+  TASKS_LIST_COL_PX,
+  TASKS_LIST_TASK_MIN_PX,
+  TASKS_LIST_MIN_WIDTH_PX,
   type TargetRowLike,
 } from './deliverable-planning.util';
 
@@ -1491,5 +1495,64 @@ describe('releaseSavePlan', () => {
     const plan = releaseSavePlan({ released: new Set([3, 4]), scheduledIds: new Set(), dryRunPending: false });
     expect(plan.waitForDryRun).toBe(false);
     expect(sorted(plan.releasable)).toEqual([]);
+  });
+});
+
+// ── §14b (2026-11-15) ───────────────────────────────────────────────
+
+describe('tasks modal width budget', () => {
+  const CELL_PADDING = 24; // px-3 on both sides
+  const CARD_BORDER = 2; // 1px each side
+  // Vertical scrollbar of the modal body: 15px in current Chrome / Edge,
+  // 17px for classic Windows scrollbars.
+  const SCROLLBARS = [15, 17];
+  const inner = TASKS_MODAL_CARD_PX - CARD_BORDER;
+  const fixed =
+    TASKS_LIST_COL_PX.code +
+    TASKS_LIST_COL_PX.status +
+    TASKS_LIST_COL_PX.start +
+    TASKS_LIST_COL_PX.due +
+    TASKS_LIST_COL_PX.action;
+
+  it('the card is 900px; the fixed columns sum to 702px and the table floor to 866px', () => {
+    expect(TASKS_MODAL_CARD_PX).toBe(900);
+    expect(fixed).toBe(702);
+    expect(TASKS_LIST_TASK_MIN_PX).toBe(164);
+    expect(TASKS_LIST_MIN_WIDTH_PX).toBe(fixed + TASKS_LIST_TASK_MIN_PX);
+    expect(TASKS_LIST_MIN_WIDTH_PX).toBe(866);
+  });
+
+  it('the floor fits beside a 15px AND a 17px scrollbar with real slack — nothing scrolls sideways at the normal width', () => {
+    // 15px scrollbar: 883px available → 17px of slack.
+    expect(inner - 15 - TASKS_LIST_MIN_WIDTH_PX).toBe(17);
+    // 17px scrollbar: 881px available → 15px to spare.
+    expect(inner - 17 - TASKS_LIST_MIN_WIDTH_PX).toBe(15);
+    for (const scrollbar of SCROLLBARS) {
+      // Not a 1px fit: room for a wider scrollbar or a zoom-rounded width.
+      expect(inner - scrollbar - TASKS_LIST_MIN_WIDTH_PX).toBeGreaterThanOrEqual(12);
+    }
+  });
+
+  it('the Task column gets 196px at the normal card width, ~180px beside a scrollbar — above its floor', () => {
+    expect(inner - fixed).toBe(196);
+    expect(inner - 15 - fixed).toBe(181);
+    expect(inner - 17 - fixed).toBe(179);
+    for (const scrollbar of SCROLLBARS) {
+      expect(inner - scrollbar - fixed).toBeGreaterThan(TASKS_LIST_TASK_MIN_PX);
+    }
+  });
+
+  it('worst-case row (manual + released + pending) fits every cell', () => {
+    // Due: date input ≥ 140px next to the "ידני" pill (~43px), 6px gap.
+    expect(TASKS_LIST_COL_PX.due - CELL_PADDING - 6 - 43).toBeGreaterThanOrEqual(140);
+    // Action: "Clear" (~48px) + 6px gap + "השאר ידני" (up to ~81px).
+    expect(TASKS_LIST_COL_PX.action - CELL_PADDING).toBeGreaterThanOrEqual(48 + 6 + 81);
+    // Start: a yyyy-mm-dd date in 11px mono (10 × 6.6px).
+    expect(TASKS_LIST_COL_PX.start - CELL_PADDING).toBeGreaterThanOrEqual(66);
+    // Status: the "In Progress" pill (~68px).
+    expect(TASKS_LIST_COL_PX.status - CELL_PADDING).toBeGreaterThanOrEqual(68);
+    // Code: an 11-character code (`AS.AHW.1131`) in 12px mono (11 × 7.2px).
+    expect(TASKS_LIST_COL_PX.code).toBe(108);
+    expect(TASKS_LIST_COL_PX.code - CELL_PADDING).toBeGreaterThanOrEqual(11 * 7.2);
   });
 });

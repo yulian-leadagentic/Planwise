@@ -51,6 +51,8 @@ import {
   reviewSubtitle,
   releaseSavePlan,
   toggledInSet,
+  TASKS_LIST_COL_PX,
+  TASKS_LIST_MIN_WIDTH_PX,
   isCompleteIsoDate,
   explicitDirtyKeys,
   resetMonthsDraftsToSeed,
@@ -6080,7 +6082,12 @@ function DeliverableTasksModal({
       onBackdropClick={requestClose}
       ariaLabel={`Tasks — ${row.deliverableName}`}
       overlayClassName="bg-black/40"
-      cardClassName="w-[720px] max-w-[92vw] max-h-[80vh] flex flex-col rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700"
+      // §14b (2026-11-15) · 720px → 900px (`TASKS_MODAL_CARD_PX` in the
+      // util — keep the two in step). The table's columns never fitted
+      // 720px; 900 holds the fixed columns (702px) plus a 196px Task
+      // column, and still ~180px of it beside a vertical scrollbar. The
+      // table's min-width (866px) sits 15–17px below that, on purpose.
+      cardClassName="w-[900px] max-w-[94vw] max-h-[80vh] flex flex-col rounded-[14px] bg-white dark:bg-slate-900 shadow-2xl border border-slate-200 dark:border-slate-700"
     >
       <>
         <div className="flex items-start justify-between border-b border-slate-100 dark:border-slate-800 p-5">
@@ -6199,7 +6206,13 @@ function DeliverableTasksModal({
           <button type="button" onClick={requestClose} disabled={saving} className="text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 text-[18px] leading-none px-1 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-slate-400 dark:disabled:hover:text-slate-500">×</button>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        {/* §14b (2026-11-15) · This body is the table's scroll container
+            on BOTH axes (`overflow-x-auto` now spelled out). On a
+            viewport narrower than the table's min-width it scrolls
+            sideways instead of crushing columns. It stays the single
+            scroll container on purpose — a separate horizontal wrapper
+            around the table would take the sticky header with it. */}
+        <div className="flex-1 overflow-y-auto overflow-x-auto">
           {(row.taskList ?? []).length === 0 ? (
             <div className="p-8 text-center text-sm text-slate-400 dark:text-slate-500 italic">No tasks under this deliverable.</div>
           ) : (
@@ -6463,23 +6476,39 @@ function TasksEditorTable({
       STATUS_PILL[status] ?? 'bg-slate-100 text-slate-600',
       STATUS_PILL_DARK[status] ?? 'dark:bg-slate-800 dark:text-slate-300',
     );
+    // §14b (2026-11-15) · `whitespace-nowrap` — "In Progress" must not
+    // break into two lines in the fixed-width Status column.
     return (
-      <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold', cls)}>
+      <span className={cn('inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap', cls)}>
         {STATUS_LABEL[status] ?? status}
       </span>
     );
   };
 
+  // §14b (2026-11-15) · TASKS-LIST mode is a FIXED-layout table on an
+  // explicit width budget (`TASKS_LIST_COL_PX` in the util; the Task
+  // column takes the rest, never less than its floor — `minWidth`). It
+  // used to be auto layout with widths that could not fit the card, and
+  // only looked right because the columns shrank; the "ידני" pill and the
+  // second action button of §14 do not shrink, so the table overflowed
+  // and the Start column was crushed. Review mode (a 1040px card) keeps
+  // its auto layout and its widths untouched.
+  const isList = mode === 'tasks-list';
+  const colWidth = (px: number) => (isList ? { width: px } : undefined);
+
   return (
-    <table className="w-full text-[13px]">
+    <table
+      className={cn('w-full text-[13px]', isList && 'table-fixed')}
+      style={isList ? { minWidth: TASKS_LIST_MIN_WIDTH_PX } : undefined}
+    >
       <thead className="bg-[#FAFBFC] sticky top-0 z-10">
         <tr className="text-left text-[11px] uppercase font-semibold tracking-wider text-slate-400 dark:text-slate-500">
-          <th className="px-3 py-2 w-[108px]">Code</th>
+          <th className={cn('px-3 py-2', !isList && 'w-[108px]')} style={colWidth(TASKS_LIST_COL_PX.code)}>Code</th>
           <th className="px-3 py-2">Task</th>
-          <th className="px-3 py-2 w-[110px]">{mode === 'review' ? 'Reason' : 'Status'}</th>
-          <th className="px-3 py-2 w-[110px]">Start</th>
-          <th className={cn('px-3 py-2', mode === 'review' ? 'w-[170px]' : 'w-[200px]')}>{mode === 'review' ? 'תאריך יעד (Due)' : 'Due'}</th>
-          <th className="px-3 py-2 w-[180px]">Action</th>
+          <th className={cn('px-3 py-2', !isList && 'w-[110px]')} style={colWidth(TASKS_LIST_COL_PX.status)}>{mode === 'review' ? 'Reason' : 'Status'}</th>
+          <th className={cn('px-3 py-2', !isList && 'w-[110px]')} style={colWidth(TASKS_LIST_COL_PX.start)}>Start</th>
+          <th className={cn('px-3 py-2', !isList && 'w-[170px]')} style={colWidth(TASKS_LIST_COL_PX.due)}>{mode === 'review' ? 'תאריך יעד (Due)' : 'Due'}</th>
+          <th className={cn('px-3 py-2', !isList && 'w-[180px]')} style={colWidth(TASKS_LIST_COL_PX.action)}>Action</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -6493,7 +6522,16 @@ function TasksEditorTable({
           const keptManual = mode === 'review' && Boolean(t.manual) && !t.released;
           return (
             <tr key={t.taskId} className="align-top hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
-              <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums">
+              {/* §14b (2026-11-15) · tasks-list: a code never wraps (it
+                  used to break after the hyphen); one too long for the
+                  column ellipsizes and keeps its full text in `title`. */}
+              <td
+                className={cn(
+                  'px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums',
+                  isList && 'whitespace-nowrap overflow-hidden text-ellipsis',
+                )}
+                title={isList ? t.taskCode ?? undefined : undefined}
+              >
                 {t.taskCode || '—'}
               </td>
               <td className="px-3 py-2">
@@ -6508,7 +6546,7 @@ function TasksEditorTable({
                 {mode === 'review' ? reasonCell(t) : statusPill(t.status)}
               </td>
               <td className="px-3 py-2">
-                <div className="flex items-center gap-1 text-[11px] font-mono tabular-nums">
+                <div className={cn('flex items-center gap-1 text-[11px] font-mono tabular-nums', isList && 'whitespace-nowrap')}>
                   {mode === 'review' && t.currentStart && !keptManual ? (
                     <span className="text-slate-400 line-through">{String(t.currentStart).slice(0, 10)}</span>
                   ) : null}
@@ -6521,10 +6559,18 @@ function TasksEditorTable({
                 </div>
                 {/* §8b.2 (2026-11-11) · Pending preview caption. Fires
                     when the DeliverableTasksModal's preview target has
-                    shifted this task; the Save & update flow commits. */}
+                    shifted this task.
+                    §14b (2026-11-15) · ONE word on ONE line; the
+                    explanation moved into the tooltip. The old caption
+                    ("pending — Save & update to commit") wrapped to one
+                    word per line in this narrow column — and named a
+                    button this modal does not have. */}
                 {t.pendingShift ? (
-                  <div className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">
-                    pending — Save &amp; update to commit
+                  <div
+                    className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400 whitespace-nowrap"
+                    title="Proposed by the scheduler — not saved yet. Save commits it."
+                  >
+                    pending
                   </div>
                 ) : null}
               </td>
@@ -6561,7 +6607,11 @@ function TasksEditorTable({
                      auto-filled by preview" — the ghost caption
                      below the input has been removed.
                      §14 (2026-11-15) · A pinned task carries the "ידני"
-                     pill next to its date. */
+                     pill next to its date.
+                     §14b (2026-11-15) · The input is the flexible item
+                     (`min-w-0 flex-1` — it takes what the pill leaves,
+                     ≥ 140px on the column's budget); the pill never
+                     shrinks or wraps. */
                   <div className="flex items-center gap-1.5">
                     <input
                       type="date"
@@ -6569,13 +6619,15 @@ function TasksEditorTable({
                       disabled={disabled}
                       onChange={(e) => onEdit?.(t.taskId, e.target.value)}
                       className={cn(
-                        'rounded-lg border px-2 py-1 text-[13px] font-mono tabular-nums w-full focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50',
+                        'rounded-lg border px-2 py-1 text-[13px] font-mono tabular-nums min-w-0 flex-1 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50',
                         t.pendingShift
                           ? 'border-amber-300 dark:border-amber-700'
                           : 'border-slate-200 dark:border-slate-700',
                       )}
                     />
-                    {t.manual ? reasonPill('manual', manualTitle(t)) : null}
+                    {t.manual ? (
+                      <span className="shrink-0 whitespace-nowrap">{reasonPill('manual', manualTitle(t))}</span>
+                    ) : null}
                   </div>
                 )}
               </td>
@@ -6588,8 +6640,9 @@ function TasksEditorTable({
                   <label
                     dir="rtl"
                     title={manualTitle(t)}
+                    // §14b (2026-11-15) · the label never wraps.
                     className={cn(
-                      'inline-flex items-center gap-2 text-[12px] font-semibold text-slate-700 dark:text-slate-200',
+                      'inline-flex items-center gap-2 text-[12px] font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap',
                       disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
                     )}
                   >
@@ -6632,12 +6685,16 @@ function TasksEditorTable({
                     </button>
                   </div>
                 ) : (
+                  /* §14b (2026-11-15) · Both buttons keep their label on
+                     one line and never shrink (`shrink-0
+                     whitespace-nowrap`); the column's budget holds the
+                     widest pair, "Clear" + "השאר ידני". */
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
                       disabled={disabled || !draftEnd}
                       onClick={() => onClear?.(t.taskId)}
-                      className="rounded-md border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-1 disabled:opacity-40"
+                      className="shrink-0 whitespace-nowrap rounded-md border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-1 disabled:opacity-40"
                       title="Clear this task's due date"
                     >
                       Clear
@@ -6651,7 +6708,7 @@ function TasksEditorTable({
                         type="button"
                         disabled={disabled}
                         onClick={() => onToggleRelease?.(t.taskId)}
-                        className="rounded-md border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-1 disabled:opacity-40"
+                        className="shrink-0 whitespace-nowrap rounded-md border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800 px-2 py-1 disabled:opacity-40"
                         title={t.released ? 'השאר את התאריך הידני — לא יחושב מחדש' : 'בטל את התאריך הידני וחשב לפי היעד'}
                       >
                         {t.released ? 'השאר ידני' : 'אוטומטי'}
