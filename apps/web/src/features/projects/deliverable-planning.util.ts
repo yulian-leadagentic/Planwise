@@ -875,6 +875,153 @@ export function lagLabelText(lag: number, unit: LagUnit): string | null {
   return unit === 'WORKING_DAYS' ? `+${lag}ימ"ע` : `+${lag}ק`;
 }
 
+/**
+ * §15 (2026-11-16) · Estimated drawn width of a lag label (10px mono
+ * text, generous) — the size of its invisible hover box, and the room
+ * an arrow must have for the label to be drawn at all.
+ */
+export function lagLabelWidthPx(label: string): number {
+  return label.length * 7 + 4;
+}
+
+/**
+ * §15 (2026-11-16) · Does a lag label fit on its arrow? Zoomed out
+ * (Month granularity, years on screen) the arrows are a few px long and
+ * the labels of neighbouring arrows piled up into an unreadable blob.
+ * A label is drawn only when the horizontal gap between the
+ * predecessor's right edge and the successor's left edge holds it; the
+ * arrow's tooltip states the lag either way.
+ */
+export function lagLabelFits(gapPx: number, label: string): boolean {
+  return Number.isFinite(gapPx) && gapPx >= lagLabelWidthPx(label);
+}
+
+// ── §15 (2026-11-16) · Gantt row geometry ─────────────────────────────
+// The labels column and the timeline column of the Gantt iterate the
+// same slots side by side, but they are separate DOM columns: a label
+// row only lines up with its timeline row if both have the same height.
+// The timeline row grows a task strip under the deliverable bar, so its
+// height is computed here once and used by BOTH columns.
+
+/** Base row height — the deliverable bar sits at top-2 h-4 (y 8..24). */
+export const GANTT_ROW_BASE_PX = 32;
+/** Height of one task sub-bar. */
+export const GANTT_TASK_BAR_H = 6;
+/** Vertical gap between task lanes. */
+export const GANTT_TASK_LANE_GAP = 4;
+/** y of the first task lane: 8 (top pad) + 16 (bar) + 4 (gap). */
+export const GANTT_TASK_STRIP_TOP = 28;
+
+/** One task sub-bar of a Gantt row, with its lane (−1 = no span, not drawn). */
+export interface GanttTaskBarItem {
+  id: number;
+  code: string | null;
+  name: string;
+  hasSpan: boolean;
+  startMs: number;
+  endMs: number;
+  lane: number;
+  onCriticalPath: boolean;
+  /** §14 (2026-11-15) · pinned due date — said in the bar's tooltip. */
+  manual: boolean;
+  deps: Array<{ predId: number; lag: number; lagUnit: LagUnit }>;
+}
+
+/** The fields of a row's `taskList` entry that the sub-bars read. */
+interface GanttTaskLike {
+  id?: unknown;
+  code?: string | null;
+  name?: string | null;
+  estimatedStartDate?: string | null;
+  endDate?: string | null;
+  onCriticalPath?: unknown;
+  dueDateOverridden?: unknown;
+  dependencies?: unknown;
+}
+
+interface GanttTaskDepLike {
+  dependsOnId?: unknown;
+  dependsOn?: { id?: unknown } | null;
+  lag?: unknown;
+  lagUnit?: unknown;
+}
+
+/**
+ * §15 (2026-11-16) · The task sub-bars of one Gantt row and their lanes.
+ * Only a task with a valid span (start ≤ end, both dates parse) gets a
+ * lane; those are taken in start order and each goes into the first
+ * lane whose last bar ends on or before its start (greedy), else a new
+ * lane. `laneCount` is the number of lanes used.
+ */
+export function ganttTaskBarLanes(taskList: unknown): {
+  items: GanttTaskBarItem[];
+  laneCount: number;
+} {
+  const list: GanttTaskLike[] = Array.isArray(taskList) ? taskList : [];
+  if (list.length === 0) return { items: [], laneCount: 0 };
+  const items: GanttTaskBarItem[] = list.map((t) => {
+    const sIso = t.estimatedStartDate ?? null;
+    const eIso = t.endDate ?? null;
+    const sMs = sIso ? new Date(sIso).getTime() : NaN;
+    const eMs = eIso ? new Date(eIso).getTime() : NaN;
+    const hasSpan = Number.isFinite(sMs) && Number.isFinite(eMs) && eMs >= sMs;
+    return {
+      id: Number(t.id),
+      code: t.code ?? null,
+      name: t.name ?? `#${t.id}`,
+      hasSpan,
+      startMs: hasSpan ? sMs : NaN,
+      endMs: hasSpan ? eMs : NaN,
+      lane: -1,
+      onCriticalPath: Boolean(t.onCriticalPath),
+      manual: Boolean(t.dueDateOverridden),
+      deps: (Array.isArray(t.dependencies) ? (t.dependencies as GanttTaskDepLike[]) : [])
+        .map((d) => ({
+          predId: Number(d?.dependsOnId ?? d?.dependsOn?.id ?? 0),
+          lag: Number(d?.lag ?? 0),
+          lagUnit: (d?.lagUnit === 'CALENDAR_DAYS' ? 'CALENDAR_DAYS' : 'WORKING_DAYS') as LagUnit,
+        }))
+        .filter((d: { predId: number }) => d.predId > 0),
+    };
+  });
+  const sortable = items.filter((i) => i.hasSpan);
+  sortable.sort((a, b) => a.startMs - b.startMs);
+  const laneEnds: number[] = [];
+  for (const it of sortable) {
+    let placed = false;
+    for (let li = 0; li < laneEnds.length; li++) {
+      if (laneEnds[li] <= it.startMs) {
+        it.lane = li;
+        laneEnds[li] = it.endMs;
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      it.lane = laneEnds.length;
+      laneEnds.push(it.endMs);
+    }
+  }
+  return { items, laneCount: laneEnds.length };
+}
+
+/**
+ * §15 (2026-11-16) · Height of one Gantt zone row — the timeline row
+ * AND its label row. The base 32px, unless the row has a target (a row
+ * without one draws no bar and no strip) and task bars are shown and at
+ * least one task has a lane: then the strip's lanes plus 4px below,
+ * i.e. 28 + laneCount × 10.
+ */
+export function ganttRowHeightPx(args: {
+  hasTarget: boolean;
+  showTaskBars: boolean;
+  laneCount: number;
+}): number {
+  if (!args.hasTarget || !args.showTaskBars || args.laneCount <= 0) return GANTT_ROW_BASE_PX;
+  const stripHeight = args.laneCount * (GANTT_TASK_BAR_H + GANTT_TASK_LANE_GAP) - GANTT_TASK_LANE_GAP;
+  return GANTT_TASK_STRIP_TOP + stripHeight + 4;
+}
+
 const lagDaysPhrase = (days: number, unit: LagUnit): string =>
   unit === 'WORKING_DAYS'
     ? (days === 1 ? 'יום עבודה אחד' : `${days} ימי עבודה`)

@@ -38,6 +38,14 @@ import {
   taskDatesPatch,
   type TaskDatesPatch,
   lagLabelText,
+  lagLabelWidthPx,
+  lagLabelFits,
+  ganttTaskBarLanes,
+  ganttRowHeightPx,
+  GANTT_TASK_BAR_H,
+  GANTT_TASK_LANE_GAP,
+  GANTT_TASK_STRIP_TOP,
+  type GanttTaskBarItem,
   chainArrowTooltip,
   taskBarTooltip,
   clickGestureTracker,
@@ -3679,6 +3687,21 @@ function GanttView({
     return out;
   }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, grouped, outerDim, topLevelZoneSortOrderMap]);
 
+  // §15 (2026-11-16) · Task sub-bars + lanes of every visible zone row,
+  // keyed by row key. Computed once here and used twice: GanttRow draws
+  // them, and the label column sizes the row's label with the same
+  // `ganttRowHeightPx` call. The labels and the timeline are separate
+  // columns; a label kept at h-8 while its timeline row grew a task strip
+  // pushed every following row out of line.
+  const ganttTaskBarsByKey = useMemo(() => {
+    const m = new Map<string, ReturnType<typeof ganttTaskBarLanes>>();
+    for (const slot of displaySlots) {
+      if (slot.kind !== 'zone') continue;
+      m.set(slot.r.key, showTaskBars ? ganttTaskBarLanes(slot.r.taskList) : NO_TASK_BARS);
+    }
+    return m;
+  }, [displaySlots, showTaskBars]);
+
   // §12 (2026-11-14) · Row key → group key, for the within-group reorder
   // rule (`canReorderOnto`). Ungrouped, every row shares one key.
   const groupOfRow = useMemo(() => {
@@ -4401,9 +4424,19 @@ function GanttView({
             // browser's "no drop" cursor, and no reorder. (The dragged row
             // itself stays a neutral target, as before.)
             const canDropHere = canReorderOnto(groupOfRow, dragKey, r.key);
+            // §15 (2026-11-16) · Same height as this row's GanttRow, from
+            // the same inputs: the task bars computed for it above and the
+            // target resolved exactly as GanttRow resolves it (so a row
+            // whose target appears or vanishes with a draft stays aligned).
+            const labelRowHeightPx = ganttRowHeightPx({
+              hasTarget: resolveTargetIso(r, drafts, targetDateDrafts, computePreview) !== '',
+              showTaskBars,
+              laneCount: ganttTaskBarsByKey.get(r.key)?.laneCount ?? 0,
+            });
             return (
               <div
                 key={r.key}
+                style={{ height: labelRowHeightPx }}
                 draggable
                 onDragStart={() => setDragKey(r.key)}
                 onDragEnd={() => { setDragKey(null); setDropIndicatorIdx(null); }}
@@ -4424,40 +4457,45 @@ function GanttView({
                   setDropIndicatorIdx(null);
                 }}
                 className={cn(
-                  'group h-8 pl-6 pr-4 text-[12px] flex items-center gap-2 cursor-grab active:cursor-grabbing hover:bg-slate-50/60 dark:hover:bg-slate-800/60',
+                  'group pl-6 pr-4 text-[12px] cursor-grab active:cursor-grabbing hover:bg-slate-50/60 dark:hover:bg-slate-800/60',
                   dragKey === r.key && 'opacity-40',
                   dropIndicatorIdx === slot.zoneIdx && dragKey && dragKey !== r.key && 'border-t-2 border-blue-500',
                 )}
                 title={grouped ? 'Drag to reorder within this group' : 'Drag to reorder'}
                 data-slot-index={i}
               >
-                <span className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 leading-none">⋮⋮</span>
-                {/* bm2 2026-10-21 — predecessor-conflict signal on the
-                    Gantt row label. The DP row represents a (zone ×
-                    deliverable) grouping; we flag it if ANY task under
-                    it has an endDate earlier than one of its own
-                    predecessors' endDate. Tooltip spells out the first
-                    offender so the PM knows which task to open. */}
-                {(() => {
-                  const offender = (r.taskList ?? []).find((t: any) => hasPredecessorConflict(t));
-                  if (!offender) return null;
-                  const msg = getPredecessorConflictMessage(offender);
-                  return (
-                    <AlertTriangle
-                      className="h-3 w-3 text-amber-500 dark:text-amber-400 shrink-0"
-                      aria-label={msg ? `${offender.name}: ${msg}` : 'Predecessor conflict'}
-                    />
-                  );
-                })()}
-                <span className="font-medium text-slate-800 dark:text-slate-100 truncate">{rowLabel}</span>
-                {/* DP-4 · zone-type badge in the Gantt label column.
-                    Only renders when innerDim='zone' (otherwise the
-                    badge wouldn't match the shown label). */}
-                {innerDim === 'zone' && (
-                  <span className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
-                    {typeLabel}
-                  </span>
-                )}
+                {/* §15 (2026-11-16) · The content keeps a 32px band at the
+                    top of the row, level with the deliverable bar (top-2
+                    h-4); the task strip below it has no label. */}
+                <div className="h-8 flex items-center gap-2">
+                  <span className="text-slate-300 dark:text-slate-600 group-hover:text-slate-500 leading-none">⋮⋮</span>
+                  {/* bm2 2026-10-21 — predecessor-conflict signal on the
+                      Gantt row label. The DP row represents a (zone ×
+                      deliverable) grouping; we flag it if ANY task under
+                      it has an endDate earlier than one of its own
+                      predecessors' endDate. Tooltip spells out the first
+                      offender so the PM knows which task to open. */}
+                  {(() => {
+                    const offender = (r.taskList ?? []).find((t: any) => hasPredecessorConflict(t));
+                    if (!offender) return null;
+                    const msg = getPredecessorConflictMessage(offender);
+                    return (
+                      <AlertTriangle
+                        className="h-3 w-3 text-amber-500 dark:text-amber-400 shrink-0"
+                        aria-label={msg ? `${offender.name}: ${msg}` : 'Predecessor conflict'}
+                      />
+                    );
+                  })()}
+                  <span className="font-medium text-slate-800 dark:text-slate-100 truncate">{rowLabel}</span>
+                  {/* DP-4 · zone-type badge in the Gantt label column.
+                      Only renders when innerDim='zone' (otherwise the
+                      badge wouldn't match the shown label). */}
+                  {innerDim === 'zone' && (
+                    <span className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 whitespace-nowrap">
+                      {typeLabel}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })}
@@ -4590,6 +4628,7 @@ function GanttView({
                   pxPerDay={PX_PER_DAY}
                   totalWidth={totalTimelineWidth}
                   showTaskBars={showTaskBars}
+                  taskBars={ganttTaskBarsByKey.get(slot.r.key) ?? NO_TASK_BARS}
                   onRequestPastDate={(rowKey, newTargetMs, kind, apply) => setPastDateConfirm({ rowKey, newTargetMs, kind, apply })}
                   onBarClick={() => setTaskModalRow(slot.r)}
                 />
@@ -4666,6 +4705,9 @@ function buildChainSummaryLines(taskList: any[] | null | undefined): string[] {
   return lines;
 }
 
+/** §15 (2026-11-16) · A row's task bars while they are hidden (or absent). */
+const NO_TASK_BARS: { items: GanttTaskBarItem[]; laneCount: number } = { items: [], laneCount: 0 };
+
 /**
  * One Gantt row. Renders ONLY the bar (labels live in the fixed left
  * column of GanttView). Positions are absolute px based on `pxPerDay`
@@ -4696,6 +4738,7 @@ function GanttRow({
   pxPerDay,
   totalWidth,
   showTaskBars,
+  taskBars,
   onRequestPastDate,
   onBarClick,
 }: {
@@ -4715,6 +4758,9 @@ function GanttRow({
   // toolbar toggle that gates the whole layer.
   totalWidth: number;
   showTaskBars: boolean;
+  // §15 (2026-11-16) — this row's task sub-bars + lanes, computed once in
+  // the parent (empty while task bars are hidden).
+  taskBars: { items: GanttTaskBarItem[]; laneCount: number };
   onRequestPastDate: (rowKey: string, newTargetMs: number, kind: 'target' | 'duration' | 'move' | 'resize', apply: () => void) => void;
   onBarClick: () => void;
 }) {
@@ -4739,80 +4785,17 @@ function GanttRow({
   // (React's rules-of-hooks would otherwise throw "rendered fewer hooks
   // than expected"). The hook results are only consumed when targetDate
   // is set — see the task-bar overlay further down.
-  type TaskBarItem = {
-    id: number;
-    code: string | null;
-    name: string;
-    hasSpan: boolean;
-    startMs: number;
-    endMs: number;
-    lane: number;
-    onCriticalPath: boolean;
-    // §14 (2026-11-15) · pinned due date — said in the bar's tooltip.
-    manual: boolean;
-    deps: Array<{ predId: number; lag: number; lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS' }>;
-  };
-  const taskBarItems = useMemo<TaskBarItem[]>(() => {
-    if (!showTaskBars) return [];
-    const taskList: any[] = Array.isArray(r.taskList) ? r.taskList : [];
-    if (taskList.length === 0) return [];
-    const items: TaskBarItem[] = taskList.map((t: any) => {
-      const sIso = t.estimatedStartDate ?? null;
-      const eIso = t.endDate ?? null;
-      const sMs = sIso ? new Date(sIso).getTime() : NaN;
-      const eMs = eIso ? new Date(eIso).getTime() : NaN;
-      const hasSpan = Number.isFinite(sMs) && Number.isFinite(eMs) && eMs >= sMs;
-      return {
-        id: Number(t.id),
-        code: t.code ?? null,
-        name: t.name ?? `#${t.id}`,
-        hasSpan,
-        startMs: hasSpan ? sMs : NaN,
-        endMs: hasSpan ? eMs : NaN,
-        lane: -1,
-        onCriticalPath: Boolean(t.onCriticalPath),
-        manual: Boolean(t.dueDateOverridden),
-        deps: (Array.isArray(t.dependencies) ? t.dependencies : [])
-          .map((d: any) => ({
-            predId: Number(d?.dependsOnId ?? d?.dependsOn?.id ?? 0),
-            lag: Number(d?.lag ?? 0),
-            lagUnit: (d?.lagUnit === 'CALENDAR_DAYS' ? 'CALENDAR_DAYS' : 'WORKING_DAYS') as
-              | 'WORKING_DAYS'
-              | 'CALENDAR_DAYS',
-          }))
-          .filter((d: { predId: number }) => d.predId > 0),
-      };
-    });
-    // Greedy lane assignment on tasks with real date spans.
-    const sortable = items.filter((i) => i.hasSpan);
-    sortable.sort((a, b) => a.startMs - b.startMs);
-    const laneEnds: number[] = [];
-    for (const it of sortable) {
-      let placed = false;
-      for (let li = 0; li < laneEnds.length; li++) {
-        if (laneEnds[li] <= it.startMs) {
-          it.lane = li;
-          laneEnds[li] = it.endMs;
-          placed = true;
-          break;
-        }
-      }
-      if (!placed) {
-        it.lane = laneEnds.length;
-        laneEnds.push(it.endMs);
-      }
-    }
-    return items;
-  }, [showTaskBars, r.taskList]);
-  const laneCount = useMemo(
-    () => taskBarItems.reduce((m, i) => Math.max(m, i.lane + 1), 0),
-    [taskBarItems],
-  );
+  // §15 (2026-11-16) · The sub-bars and their lanes come from the parent
+  // (`ganttTaskBarLanes`), which also sizes this row's LABEL with them —
+  // one computation, so the label and the timeline row cannot disagree
+  // on the row height.
+  const taskBarItems = taskBars.items;
+  const laneCount = taskBars.laneCount;
   const byId = useMemo(() => {
-    const m = new Map<number, TaskBarItem>();
-    for (const it of taskBarItems) m.set(it.id, it);
+    const m = new Map<number, GanttTaskBarItem>();
+    for (const it of taskBars.items) m.set(it.id, it);
     return m;
-  }, [taskBarItems]);
+  }, [taskBars]);
 
   if (!targetDate) {
     return (
@@ -5064,13 +5047,13 @@ function GanttRow({
   // Vertical geometry. Deliverable backdrop keeps its top-2 h-4
   // position (y=8..24); task lanes stack beneath it, 6px bars + 4px
   // gaps, with 4px between the backdrop and the first lane.
-  const TASK_BAR_H = 6;
-  const TASK_LANE_GAP = 4;
-  const TASK_STRIP_TOP = 28; // 8 (top pad) + 16 (backdrop h) + 4 (gap)
-  const taskStripHeight = hasTaskBars
-    ? laneCount * (TASK_BAR_H + TASK_LANE_GAP) - TASK_LANE_GAP
-    : 0;
-  const rowHeightPx = hasTaskBars ? TASK_STRIP_TOP + taskStripHeight + 4 : 32;
+  // §15 (2026-11-16) · The constants and the row height live in the util
+  // (`ganttRowHeightPx`); the label column sizes its rows with the same
+  // call, so the two columns stay aligned.
+  const TASK_BAR_H = GANTT_TASK_BAR_H;
+  const TASK_LANE_GAP = GANTT_TASK_LANE_GAP;
+  const TASK_STRIP_TOP = GANTT_TASK_STRIP_TOP;
+  const rowHeightPx = ganttRowHeightPx({ hasTarget: Boolean(targetDate), showTaskBars, laneCount });
 
   // Helper: date-to-px on the ROW's local coordinate system (same scale
   // the deliverable backdrop uses — `leftPx/rightPx` above). Not DRY'd
@@ -5101,7 +5084,7 @@ function GanttRow({
   };
   const labelHit = (label: string | null, centerX: number, baselineY: number) => {
     if (!label) return null;
-    const w = label.length * 7 + 4; // generous box around a 10px mono label
+    const w = lagLabelWidthPx(label); // generous box around a 10px mono label
     return (
       <rect
         x={centerX - w / 2}
@@ -5397,6 +5380,12 @@ function GanttRow({
               const x2 = Math.max(0, Math.min(totalWidth, sLeft - 2));
               const mx = (x1 + x2) / 2;
               const my = (pY + sY) / 2;
+              // §15 (2026-11-16) · The lag label (and its hover box) is
+              // drawn only when it fits between the two bars. Zoomed out,
+              // arrows are a few px long and neighbouring labels piled up
+              // into a blob; the arrow and its tooltip, which states the
+              // lag, stay either way.
+              const shownLabel = label && lagLabelFits(x2 - x1, label) ? label : null;
               // Same-lane straight line; cross-lane gets a simple L-shape
               // via an SVG polyline (horizontal → vertical → horizontal).
               if (pred.lane === succ.lane) {
@@ -5413,17 +5402,17 @@ function GanttRow({
                       markerEnd={`url(#${markerId})`}
                     />
                     <line x1={x1} y1={pY} x2={x2} y2={sY} {...arrowHit} />
-                    {label && (
+                    {shownLabel && (
                       <text
                         x={mx}
                         y={my - 2}
                         textAnchor="middle"
                         className={labelClass}
                       >
-                        {label}
+                        {shownLabel}
                       </text>
                     )}
-                    {labelHit(label, mx, my - 2)}
+                    {labelHit(shownLabel, mx, my - 2)}
                   </g>
                 );
               }
@@ -5441,17 +5430,17 @@ function GanttRow({
                     markerEnd={`url(#${markerId})`}
                   />
                   <polyline points={elbowPoints} {...arrowHit} />
-                  {label && (
+                  {shownLabel && (
                     <text
                       x={elbowX}
                       y={my - 2}
                       textAnchor="middle"
                       className={labelClass}
                     >
-                      {label}
+                      {shownLabel}
                     </text>
                   )}
-                  {labelHit(label, elbowX, my - 2)}
+                  {labelHit(shownLabel, elbowX, my - 2)}
                 </g>
               );
             });

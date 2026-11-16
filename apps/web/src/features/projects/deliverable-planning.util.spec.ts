@@ -42,6 +42,14 @@ import {
   TASKS_LIST_COL_PX,
   TASKS_LIST_TASK_MIN_PX,
   TASKS_LIST_MIN_WIDTH_PX,
+  lagLabelWidthPx,
+  lagLabelFits,
+  ganttTaskBarLanes,
+  ganttRowHeightPx,
+  GANTT_ROW_BASE_PX,
+  GANTT_TASK_BAR_H,
+  GANTT_TASK_LANE_GAP,
+  GANTT_TASK_STRIP_TOP,
   type TargetRowLike,
 } from './deliverable-planning.util';
 
@@ -1554,5 +1562,124 @@ describe('tasks modal width budget', () => {
     // Code: an 11-character code (`AS.AHW.1131`) in 12px mono (11 × 7.2px).
     expect(TASKS_LIST_COL_PX.code).toBe(108);
     expect(TASKS_LIST_COL_PX.code - CELL_PADDING).toBeGreaterThanOrEqual(11 * 7.2);
+  });
+});
+
+// ── §15 (2026-11-16) ────────────────────────────────────────────────
+
+describe('ganttTaskBarLanes', () => {
+  const task = (id: number, start: string | null, end: string | null, over: Record<string, unknown> = {}) => ({
+    id,
+    name: `T${id}`,
+    estimatedStartDate: start,
+    endDate: end,
+    ...over,
+  });
+  const lanesById = (list: unknown) =>
+    Object.fromEntries(ganttTaskBarLanes(list).items.map((i) => [i.id, i.lane]));
+
+  it('no task list, or an empty one → no items, no lanes', () => {
+    expect(ganttTaskBarLanes(undefined)).toEqual({ items: [], laneCount: 0 });
+    expect(ganttTaskBarLanes(null)).toEqual({ items: [], laneCount: 0 });
+    expect(ganttTaskBarLanes([])).toEqual({ items: [], laneCount: 0 });
+  });
+
+  it('tasks without a valid span get no lane and count for none', () => {
+    const res = ganttTaskBarLanes([
+      task(1, null, '2026-03-01'),
+      task(2, '2026-03-01', null),
+      task(3, '2026-03-10', '2026-03-01'), // end before start
+      task(4, 'not-a-date', '2026-03-01'),
+    ]);
+    expect(res.items.map((i) => i.lane)).toEqual([-1, -1, -1, -1]);
+    expect(res.items.every((i) => !i.hasSpan)).toBe(true);
+    expect(res.laneCount).toBe(0);
+  });
+
+  it('sequential tasks share lane 0 — touching ends included', () => {
+    const list = [
+      task(1, '2026-03-01', '2026-03-05'),
+      task(2, '2026-03-05', '2026-03-09'),
+      task(3, '2026-03-12', '2026-03-12'),
+    ];
+    expect(lanesById(list)).toEqual({ 1: 0, 2: 0, 3: 0 });
+    expect(ganttTaskBarLanes(list).laneCount).toBe(1);
+  });
+
+  it('overlapping tasks take separate lanes; a later task reuses the first free lane', () => {
+    const list = [
+      task(1, '2026-03-01', '2026-03-10'),
+      task(2, '2026-03-03', '2026-03-06'),
+      task(3, '2026-03-04', '2026-03-08'),
+      task(4, '2026-03-07', '2026-03-09'), // lane 1 is free again (T2 ended 03-06)
+    ];
+    expect(lanesById(list)).toEqual({ 1: 0, 2: 1, 3: 2, 4: 1 });
+    expect(ganttTaskBarLanes(list).laneCount).toBe(3);
+  });
+
+  it('lanes follow start order, not list order', () => {
+    const list = [task(1, '2026-03-05', '2026-03-09'), task(2, '2026-03-01', '2026-03-05')];
+    expect(lanesById(list)).toEqual({ 1: 0, 2: 0 });
+  });
+
+  it('keeps the bar fields and the in-row dependencies', () => {
+    const [it] = ganttTaskBarLanes([
+      task(7, '2026-03-01', '2026-03-02', {
+        code: 'AS.1',
+        onCriticalPath: true,
+        dueDateOverridden: true,
+        dependencies: [
+          { dependsOnId: 3, lag: 2, lagUnit: 'CALENDAR_DAYS' },
+          { dependsOn: { id: 4 }, lag: 1 },
+          { dependsOnId: 0 },
+        ],
+      }),
+    ]).items;
+    expect(it).toMatchObject({ id: 7, code: 'AS.1', name: 'T7', onCriticalPath: true, manual: true, lane: 0 });
+    expect(it.deps).toEqual([
+      { predId: 3, lag: 2, lagUnit: 'CALENDAR_DAYS' },
+      { predId: 4, lag: 1, lagUnit: 'WORKING_DAYS' },
+    ]);
+  });
+});
+
+describe('ganttRowHeightPx', () => {
+  it('geometry constants: 32px base row, 6px bars, 4px gaps, strip from y=28', () => {
+    expect(GANTT_ROW_BASE_PX).toBe(32);
+    expect(GANTT_TASK_BAR_H).toBe(6);
+    expect(GANTT_TASK_LANE_GAP).toBe(4);
+    expect(GANTT_TASK_STRIP_TOP).toBe(28);
+  });
+
+  it('32px when task bars are hidden, there is no target, or no lane', () => {
+    expect(ganttRowHeightPx({ hasTarget: true, showTaskBars: false, laneCount: 3 })).toBe(32);
+    expect(ganttRowHeightPx({ hasTarget: false, showTaskBars: true, laneCount: 3 })).toBe(32);
+    expect(ganttRowHeightPx({ hasTarget: true, showTaskBars: true, laneCount: 0 })).toBe(32);
+  });
+
+  it('28 + 10px per lane with task bars shown: 1 lane → 38, 2 → 48, 3 → 58', () => {
+    expect(ganttRowHeightPx({ hasTarget: true, showTaskBars: true, laneCount: 1 })).toBe(38);
+    expect(ganttRowHeightPx({ hasTarget: true, showTaskBars: true, laneCount: 2 })).toBe(48);
+    expect(ganttRowHeightPx({ hasTarget: true, showTaskBars: true, laneCount: 3 })).toBe(58);
+  });
+});
+
+describe('lag label fit', () => {
+  it('width estimate: 7px per character + 4px', () => {
+    expect(lagLabelWidthPx('+7ק')).toBe(3 * 7 + 4);
+    expect(lagLabelWidthPx('+7ימ"ע')).toBe(6 * 7 + 4);
+  });
+
+  it('fits exactly at the estimated width, not 1px below', () => {
+    const label = '+7ימ"ע'; // 46px
+    expect(lagLabelFits(46, label)).toBe(true);
+    expect(lagLabelFits(45.9, label)).toBe(false);
+    expect(lagLabelFits(200, label)).toBe(true);
+  });
+
+  it('a zero, negative or unusable gap never fits', () => {
+    expect(lagLabelFits(0, '+1ק')).toBe(false);
+    expect(lagLabelFits(-30, '+1ק')).toBe(false);
+    expect(lagLabelFits(Number.NaN, '+1ק')).toBe(false);
   });
 });
