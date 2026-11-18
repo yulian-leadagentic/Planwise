@@ -51,6 +51,17 @@ import {
   GANTT_TASK_LANE_GAP,
   GANTT_TASK_STRIP_TOP,
   type TargetRowLike,
+  buildDpTree,
+  resolveLeafSavedTarget,
+  flattenZoneTree,
+  zoneNodeKey,
+  deliverableKeyOf,
+  rowProjectDeliverableIds,
+  mergeDryRunPayloads,
+  type DpDeliverableInput,
+  type DpLeaf,
+  type DpTaskInput,
+  type DpZoneInput,
 } from './deliverable-planning.util';
 
 // Trivial fake of the tab's `computePreview` (months + base date → ISO).
@@ -1681,5 +1692,423 @@ describe('lag label fit', () => {
     expect(lagLabelFits(0, '+1ק')).toBe(false);
     expect(lagLabelFits(-30, '+1ק')).toBe(false);
     expect(lagLabelFits(Number.NaN, '+1ק')).toBe(false);
+  });
+});
+
+// ── §16 (2026-11-18) · Hierarchical rows ──────────────────────────────
+
+// Staging project 61 "ניסוי 8" — the work order's DoD. Zone tree in the
+// planning payload's order; several ProjectDeliverables per source
+// template (duplicates); 24 one-hour tasks.
+const P61_ZONES: DpZoneInput[] = [
+  {
+    id: 725, name: 'מבנה עמית', zoneType: 'building', children: [
+      {
+        id: 726, name: 'Basment', zoneType: 'building', children: [
+          { id: 727, name: 'B2', zoneType: 'level', children: [] },
+          { id: 728, name: 'B1', zoneType: 'level', children: [] },
+        ],
+      },
+      {
+        id: 729, name: 'Building A', zoneType: 'building', children: [
+          { id: 730, name: 'GL', zoneType: 'level', children: [] },
+          { id: 731, name: 'L1', zoneType: 'level', children: [] },
+          { id: 732, name: 'R', zoneType: 'level', children: [] },
+        ],
+      },
+    ],
+  },
+];
+const KICKOFF = 'תיאום ראשוני';
+const READY = 'מוכנות לביצוע\\פתחים';
+const DETAILED = 'תכנון מפורט\\התנגשויות וחתכים';
+const zdt = (zoneId: number | null, date: string | null, dur: number | null, months: number | null = null) => ({
+  zoneId,
+  targetDate: date ? `${date}T00:00:00.000Z` : null,
+  targetMonths: months,
+  estimatedDurationWeeks: dur,
+});
+const pd = (id: number, src: number | null, name: string, sortOrder: number, zoneTargets: ReturnType<typeof zdt>[] = []): DpDeliverableInput => ({
+  id, sourceTemplateId: src, name, sortOrder, zoneTargets,
+  service: { name: 'Coordination' }, targetDate: null, targetMonths: null, estimatedDurationWeeks: null,
+});
+const P61_PDS: DpDeliverableInput[] = [
+  pd(240, 41, KICKOFF, 1000, [zdt(725, '2027-01-03', 4)]),
+  pd(241, 41, KICKOFF, 1000, [zdt(725, '2027-02-21', 5)]),
+  pd(242, 27, READY, 2000),
+  pd(243, 27, READY, 2000, [zdt(725, '2027-04-25', 5)]),
+  pd(244, 27, READY, 2000, [zdt(725, '2027-05-09', 5)]),
+  pd(245, 26, DETAILED, 3000, [zdt(725, '2027-04-04', 5)]),
+  pd(246, 26, DETAILED, 3000),
+  pd(247, 26, DETAILED, 3000),
+  pd(248, 26, DETAILED, 3000, [zdt(725, '2027-06-13', null)]),
+];
+let nextTaskId = 1;
+const tasksOf = (zoneId: number | null, pdId: number | null, n: number, over: Partial<DpTaskInput> = {}): DpTaskInput[] =>
+  Array.from({ length: n }, () => {
+    const id = nextTaskId++;
+    return { id, code: `T-${id}`, name: `Task ${id}`, zoneId, projectDeliverableId: pdId, budgetHours: '1', status: 'not_started', ...over };
+  });
+const P61_TASKS: DpTaskInput[] = [
+  ...tasksOf(726, 240, 2), ...tasksOf(726, 241, 1),
+  ...tasksOf(727, 243, 3), ...tasksOf(727, 244, 2), ...tasksOf(727, 245, 4),
+  ...tasksOf(728, 244, 5), ...tasksOf(728, 248, 4),
+  ...tasksOf(729, 241, 3),
+];
+const p61 = () => buildDpTree({ zones: P61_ZONES, deliverables: P61_PDS, tasks: P61_TASKS });
+const hoursOf = (leaves: readonly { hours: number }[]) => leaves.reduce((s, l) => s + l.hours, 0);
+
+describe('buildDpTree · project 61 (the work order DoD)', () => {
+  it('one node per zone at every depth, in API order, empty zones included', () => {
+    const { nodes } = p61();
+    expect(nodes.map((n) => [n.key, n.name, n.depth, n.parentKey])).toEqual([
+      ['zone:725', 'מבנה עמית', 0, null],
+      ['zone:726', 'Basment', 1, 'zone:725'],
+      ['zone:727', 'B2', 2, 'zone:726'],
+      ['zone:728', 'B1', 2, 'zone:726'],
+      ['zone:729', 'Building A', 1, 'zone:725'],
+      ['zone:730', 'GL', 2, 'zone:729'],
+      ['zone:731', 'L1', 2, 'zone:729'],
+      ['zone:732', 'R', 2, 'zone:729'],
+    ]);
+    expect(nodes.find((n) => n.key === 'zone:729')?.childKeys).toEqual(['zone:730', 'zone:731', 'zone:732']);
+    expect(nodes.find((n) => n.key === 'zone:727')?.zoneType).toBe('level');
+    // No task without a zone → no Project Root node.
+    expect(nodes.some((n) => n.key === 'zone:root')).toBe(false);
+  });
+
+  it('leaves = (task zone × source template): duplicate PDs merge, no top-zone roll-up', () => {
+    const { leaves } = p61();
+    expect(leaves.map((l) => ({
+      key: l.key, zone: l.zoneName, name: l.deliverableName, pds: l.projectDeliverableIds,
+      primary: l.deliverableId, hours: l.hours, saved: l.savedDate, dur: l.savedDurationWeeks,
+    }))).toEqual([
+      { key: 'tpl:41@zone-726', zone: 'Basment', name: KICKOFF, pds: [240, 241], primary: 240, hours: 3, saved: '2027-02-21', dur: 5 },
+      { key: 'tpl:41@zone-729', zone: 'Building A', name: KICKOFF, pds: [241], primary: 241, hours: 3, saved: '2027-02-21', dur: 5 },
+      { key: 'tpl:27@zone-727', zone: 'B2', name: READY, pds: [243, 244], primary: 243, hours: 5, saved: '2027-05-09', dur: 5 },
+      { key: 'tpl:27@zone-728', zone: 'B1', name: READY, pds: [244], primary: 244, hours: 5, saved: '2027-05-09', dur: 5 },
+      { key: 'tpl:26@zone-727', zone: 'B2', name: DETAILED, pds: [245], primary: 245, hours: 4, saved: '2027-04-04', dur: 5 },
+      { key: 'tpl:26@zone-728', zone: 'B1', name: DETAILED, pds: [248], primary: 248, hours: 4, saved: '2027-06-13', dur: null },
+    ]);
+    // PDs without tasks (242, 246, 247) are not shown (option ב).
+    expect(leaves.flatMap((l) => l.projectDeliverableIds)).not.toEqual(expect.arrayContaining([242]));
+  });
+
+  it('a leaf carries its zone position and its root ancestor', () => {
+    const b2 = p61().leaves.find((l) => l.key === 'tpl:27@zone-727')!;
+    expect(b2).toMatchObject({
+      zoneId: 727, zoneName: 'B2', zoneType: 'level', parentZoneId: 726, depth: 2,
+      topLevelZoneId: 725, topLevelZoneName: 'מבנה עמית', deliverableKey: 'tpl:27',
+      serviceName: 'Coordination', taskTotal: 5, taskStarted: 0, taskDone: 0,
+    });
+    expect(b2.taskList).toHaveLength(5);
+  });
+
+  it('the tree a view draws: Basment → [kickoff 3h · B2 → 2 · B1 → 2]; Building A → [kickoff 3h · GL/L1/R empty]', () => {
+    const { nodes, leaves } = p61();
+    const slots = flattenZoneTree(nodes, leaves, { collapsed: new Set(), hideEmpty: false });
+    expect(slots.map((s) => (s.kind === 'node'
+      ? `${'  '.repeat(s.node.depth)}${s.node.name} Σ${hoursOf(s.subtreeLeaves)}h`
+      : `${'  '.repeat(s.node.depth + 1)}${s.leaf.deliverableName} ${s.leaf.hours}h`))).toEqual([
+      'מבנה עמית Σ24h',
+      '  Basment Σ21h',
+      `    ${KICKOFF} 3h`,
+      '    B2 Σ9h',
+      `      ${READY} 5h`,
+      `      ${DETAILED} 4h`,
+      '    B1 Σ9h',
+      `      ${READY} 5h`,
+      `      ${DETAILED} 4h`,
+      '  Building A Σ3h',
+      `    ${KICKOFF} 3h`,
+      '    GL Σ0h',
+      '    L1 Σ0h',
+      '    R Σ0h',
+    ]);
+  });
+
+  it('every task is in exactly one leaf', () => {
+    const { leaves } = p61();
+    const ids = leaves.flatMap((l) => l.taskList.map((t) => t.id));
+    expect(ids).toHaveLength(P61_TASKS.length);
+    expect(new Set(ids).size).toBe(P61_TASKS.length);
+    expect(hoursOf(leaves)).toBe(24);
+  });
+});
+
+describe('buildDpTree · edge cases', () => {
+  const zones: DpZoneInput[] = [{ id: 1, name: 'A', zoneType: 'building', children: [{ id: 2, name: 'A1', zoneType: 'level' }] }];
+  const pds = [pd(10, 5, 'Design', 100), pd(11, null, 'Loose', 200)];
+
+  it('tasks without a zone → a Project Root node FIRST and a root leaf', () => {
+    const { nodes, leaves } = buildDpTree({ zones, deliverables: pds, tasks: [...tasksOf(null, 10, 2), ...tasksOf(2, 10, 1)] });
+    expect(nodes.map((n) => n.key)).toEqual(['zone:root', 'zone:1', 'zone:2']);
+    expect(nodes[0]).toMatchObject({ zoneId: null, name: 'Project Root', depth: 0, parentKey: null });
+    const root = leaves.find((l) => l.zoneId == null)!;
+    expect(root).toMatchObject({ key: 'tpl:5@zone-root', zoneName: 'Project Root', depth: 0, topLevelZoneId: null, topLevelZoneName: 'Project Root', hours: 2 });
+    // Same deliverable: the zoned leaf comes first in the flat order.
+    expect(leaves.map((l) => l.key)).toEqual(['tpl:5@zone-2', 'tpl:5@zone-root']);
+  });
+
+  it('no zones at all → only the Project Root node', () => {
+    const { nodes, leaves } = buildDpTree({ zones: [], deliverables: pds, tasks: tasksOf(null, 11, 1) });
+    expect(nodes.map((n) => n.key)).toEqual(['zone:root']);
+    expect(leaves.map((l) => l.key)).toEqual(['pd:11@zone-root']);
+  });
+
+  it('a PD without a source template is its own identity', () => {
+    expect(deliverableKeyOf({ id: 11, sourceTemplateId: null })).toBe('pd:11');
+    expect(deliverableKeyOf({ id: 10, sourceTemplateId: 5 })).toBe('tpl:5');
+  });
+
+  it('a task of a deleted PD still gets a leaf (named by its id)', () => {
+    const { leaves } = buildDpTree({ zones, deliverables: pds, tasks: tasksOf(1, 999, 1) });
+    expect(leaves[0]).toMatchObject({ key: 'pd:999@zone-1', deliverableId: 999, projectDeliverableIds: [999], deliverableName: 'Deliverable #999', savedDate: null });
+  });
+
+  it('a task zone missing from the tree gets a root-level node after the real ones', () => {
+    const { nodes, leaves } = buildDpTree({ zones, deliverables: pds, tasks: tasksOf(77, 10, 1) });
+    expect(nodes.map((n) => [n.key, n.name, n.depth])).toEqual([['zone:1', 'A', 0], ['zone:2', 'A1', 1], ['zone:77', 'Zone #77', 0]]);
+    expect(leaves[0]).toMatchObject({ zoneId: 77, zoneName: 'Zone #77', depth: 0, topLevelZoneId: 77 });
+  });
+
+  it('synthetic deliverables: read-only leaves with negative ids, one identity per name', () => {
+    const syntheticOf = (t: DpTaskInput) =>
+      t.name.startsWith('Task') ? { name: t.code === 'T-x' ? 'Marker' : 'Template', serviceName: 'Svc', readOnlyReason: 'why' } : null;
+    const tasks: DpTaskInput[] = [
+      ...tasksOf(2, null, 2),
+      { id: 5000, code: 'T-x', name: 'Task x', zoneId: 2, projectDeliverableId: null },
+      { id: 5001, code: null, name: 'orphan', zoneId: 2, projectDeliverableId: null }, // resolves to nothing
+    ];
+    const { leaves } = buildDpTree({ zones, deliverables: pds, tasks, syntheticOf });
+    expect(leaves.map((l) => [l.key, l.deliverableId, l.projectDeliverableIds, l.readOnly, l.readOnlyReason, l.serviceName, l.taskList.length]))
+      .toEqual([
+        ['syn:Marker@zone-2', -2, [], true, 'why', 'Svc', 1],
+        ['syn:Template@zone-2', -1, [], true, 'why', 'Svc', 2],
+      ]);
+    expect(leaves.every((l) => l.savedDate == null && l.savedMonths == null)).toBe(true);
+    // Without a resolver such tasks are skipped.
+    expect(buildDpTree({ zones, deliverables: pds, tasks }).leaves).toEqual([]);
+  });
+
+  it('leaf summaries (start min, due max, float min, critical path) and node rollups of float / CP', () => {
+    const tasks: DpTaskInput[] = [
+      ...tasksOf(2, 10, 1, { estimatedStartDate: '2027-03-01T00:00:00.000Z', endDate: '2027-03-10T00:00:00.000Z', float: 4 }),
+      ...tasksOf(2, 10, 1, { estimatedStartDate: '2027-02-15', endDate: '2027-04-01', float: 0, onCriticalPath: true, status: 'completed' }),
+      ...tasksOf(2, 10, 1, { float: null, status: 'in_progress' }),
+      ...tasksOf(1, 11, 1, { float: 9 }),
+    ];
+    const { leaves, nodes } = buildDpTree({ zones, deliverables: pds, tasks });
+    const a1 = leaves.find((l) => l.zoneId === 2)!;
+    expect(a1).toMatchObject({
+      taskStartMin: '2027-02-15', taskDueMax: '2027-04-01', floatMin: 0, onCriticalPath: true,
+      taskTotal: 3, taskStarted: 2, taskDone: 1,
+    });
+    expect(a1.taskList.find((t) => t.onCriticalPath)).toMatchObject({ endDate: '2027-04-01', estimatedStartDate: '2027-02-15', float: 0 });
+    const a = leaves.find((l) => l.zoneId === 1)!;
+    expect(a).toMatchObject({ taskStartMin: null, taskDueMax: null, floatMin: 9, onCriticalPath: false });
+    expect(nodes.find((n) => n.key === 'zone:1')).toMatchObject({ floatMin: 0, onCriticalPath: true });
+    expect(nodes.find((n) => n.key === 'zone:2')).toMatchObject({ floatMin: 0, onCriticalPath: true });
+  });
+
+  it('inside one zone the leaves follow the PD sortOrder', () => {
+    const many = [pd(20, 1, 'Zeta', 300), pd(21, 2, 'Alpha', 100), pd(22, 3, 'Mid', 200)];
+    const { leaves } = buildDpTree({ zones, deliverables: many, tasks: [...tasksOf(1, 20, 1), ...tasksOf(1, 21, 1), ...tasksOf(1, 22, 1)] });
+    expect(leaves.map((l) => l.deliverableName)).toEqual(['Alpha', 'Mid', 'Zeta']);
+  });
+
+  it('a repeated zone id in the tree does not loop or re-parent', () => {
+    const looped: DpZoneInput[] = [{ id: 1, name: 'A', children: [{ id: 2, name: 'A1', children: [{ id: 1, name: 'A again' }] }] }];
+    const { nodes } = buildDpTree({ zones: looped, deliverables: pds, tasks: [] });
+    expect(nodes.map((n) => [n.key, n.depth])).toEqual([['zone:1', 0], ['zone:2', 1]]);
+  });
+});
+
+describe('resolveLeafSavedTarget · the scheduler rule (closest ancestor-or-self dated ZDT)', () => {
+  // 1 ⊃ 2 ⊃ 3
+  const parentOf = new Map<number, number | null>([[1, null], [2, 1], [3, 2]]);
+
+  it("the leaf's OWN zone target beats an ancestor's", () => {
+    const d = pd(1, 1, 'D', 0, [zdt(1, '2027-01-03', 2, 6), zdt(3, '2027-09-05', 8, 12)]);
+    expect(resolveLeafSavedTarget([d], 3, parentOf)).toEqual({ savedDate: '2027-09-05', savedMonths: 12, savedDurationWeeks: 8 });
+  });
+
+  it('the closest ancestor wins over a farther one', () => {
+    const d = pd(1, 1, 'D', 0, [zdt(1, '2027-01-03', 2), zdt(2, '2027-05-02', 3)]);
+    expect(resolveLeafSavedTarget([d], 3, parentOf).savedDate).toBe('2027-05-02');
+    expect(resolveLeafSavedTarget([d], 1, parentOf).savedDate).toBe('2027-01-03');
+  });
+
+  it("an ancestor's target is inherited", () => {
+    const d = pd(1, 1, 'D', 0, [zdt(1, '2027-01-03', 2, 6)]);
+    expect(resolveLeafSavedTarget([d], 3, parentOf)).toEqual({ savedDate: '2027-01-03', savedMonths: 6, savedDurationWeeks: 2 });
+  });
+
+  it('a ZDT without a targetDate does not claim the date — but its duration is the closest one', () => {
+    const d = pd(1, 1, 'D', 0, [zdt(1, '2027-01-03', 2, 6), zdt(2, null, 7, 9)]);
+    expect(resolveLeafSavedTarget([d], 3, parentOf)).toEqual({ savedDate: '2027-01-03', savedMonths: 6, savedDurationWeeks: 7 });
+  });
+
+  it('a ghost ZDT (no date, months or duration) is ignored', () => {
+    const d = { ...pd(1, 1, 'D', 0, [zdt(3, null, null), zdt(1, '2027-01-03', 2)]) };
+    expect(resolveLeafSavedTarget([d], 3, parentOf)).toEqual({ savedDate: '2027-01-03', savedMonths: null, savedDurationWeeks: 2 });
+  });
+
+  it('nothing on the way up → the PD-level fields', () => {
+    const d: DpDeliverableInput = { ...pd(1, 1, 'D', 0), targetDate: '2028-02-06T00:00:00.000Z', targetMonths: 15, estimatedDurationWeeks: 6 };
+    expect(resolveLeafSavedTarget([d], 3, parentOf)).toEqual({ savedDate: '2028-02-06', savedMonths: 15, savedDurationWeeks: 6 });
+    // A sibling-branch ZDT is not an ancestor.
+    const other = new Map<number, number | null>([[1, null], [2, 1], [3, 1]]);
+    const sib: DpDeliverableInput = { ...d, zoneTargets: [zdt(2, '2027-01-03', 1)] };
+    expect(resolveLeafSavedTarget([sib], 3, other).savedDate).toBe('2028-02-06');
+  });
+
+  it('a Project Root leaf reads the zone-less ZDT, then the PD level — never a zone target', () => {
+    const d: DpDeliverableInput = { ...pd(1, 1, 'D', 0, [zdt(1, '2027-01-03', 2), zdt(null, '2027-07-04', 3, 4)]), targetDate: '2028-01-02' };
+    expect(resolveLeafSavedTarget([d], null, parentOf)).toEqual({ savedDate: '2027-07-04', savedMonths: 4, savedDurationWeeks: 3 });
+    const noRoot: DpDeliverableInput = { ...d, zoneTargets: [zdt(1, '2027-01-03', 2)] };
+    expect(resolveLeafSavedTarget([noRoot], null, parentOf)).toEqual({ savedDate: '2028-01-02', savedMonths: null, savedDurationWeeks: null });
+  });
+
+  it('a leaf with 2 PDs shows the LATEST date (with its months) and the LONGEST duration', () => {
+    const a = pd(1, 1, 'D', 0, [zdt(1, '2027-05-09', 3, 8)]);
+    const b = pd(2, 1, 'D', 0, [zdt(2, '2027-02-21', 9, 5)]);
+    expect(resolveLeafSavedTarget([a, b], 3, parentOf)).toEqual({ savedDate: '2027-05-09', savedMonths: 8, savedDurationWeeks: 9 });
+    expect(resolveLeafSavedTarget([b, a], 3, parentOf)).toEqual({ savedDate: '2027-05-09', savedMonths: 8, savedDurationWeeks: 9 });
+  });
+
+  it('no date anywhere → no date; months still surface (legacy months-only rows)', () => {
+    const d: DpDeliverableInput = { ...pd(1, 1, 'D', 0), targetMonths: 3 };
+    expect(resolveLeafSavedTarget([d], 3, parentOf)).toEqual({ savedDate: null, savedMonths: 3, savedDurationWeeks: null });
+    expect(resolveLeafSavedTarget([], 3, parentOf)).toEqual({ savedDate: null, savedMonths: null, savedDurationWeeks: null });
+  });
+
+  it('buildDpTree uses it: a sub-zone target owns the sub-zone leaf, the root target the others', () => {
+    const zones: DpZoneInput[] = [{ id: 1, name: 'A', children: [{ id: 2, name: 'A1' }, { id: 3, name: 'A2' }] }];
+    const d = pd(10, 5, 'Design', 0, [zdt(1, '2027-01-03', 2), zdt(2, '2027-08-01', 4)]);
+    const { leaves } = buildDpTree({ zones, deliverables: [d], tasks: [...tasksOf(2, 10, 1), ...tasksOf(3, 10, 1)] });
+    expect(leaves.map((l) => [l.zoneName, l.savedDate, l.savedDurationWeeks])).toEqual([['A1', '2027-08-01', 4], ['A2', '2027-01-03', 2]]);
+  });
+});
+
+describe('flattenZoneTree', () => {
+  const tree = () => p61();
+
+  it('a collapsed node is drawn; its whole sub-tree is not', () => {
+    const { nodes, leaves } = tree();
+    const slots = flattenZoneTree(nodes, leaves, { collapsed: new Set(['zone:726']), hideEmpty: false });
+    expect(slots.map((s) => (s.kind === 'node' ? s.node.key : s.leaf.key))).toEqual([
+      'zone:725', 'zone:726', 'zone:729', 'tpl:41@zone-729', 'zone:730', 'zone:731', 'zone:732',
+    ]);
+    // …and still rolls its sub-tree up.
+    const basment = slots.find((s) => s.kind === 'node' && s.node.key === 'zone:726');
+    expect(basment?.kind === 'node' && basment.collapsed).toBe(true);
+    expect(basment?.kind === 'node' ? hoursOf(basment.subtreeLeaves) : -1).toBe(21);
+  });
+
+  it('collapsing the root hides everything below it', () => {
+    const { nodes, leaves } = tree();
+    expect(flattenZoneTree(nodes, leaves, { collapsed: new Set(['zone:725']), hideEmpty: false })).toHaveLength(1);
+  });
+
+  it('hideEmpty (a filter is on): zones without a visible leaf below them are left out, ancestors stay', () => {
+    const { nodes, leaves } = tree();
+    const onlyB1 = leaves.filter((l) => l.zoneId === 728);
+    const slots = flattenZoneTree(nodes, onlyB1, { collapsed: new Set(), hideEmpty: true });
+    expect(slots.map((s) => (s.kind === 'node' ? s.node.key : s.leaf.key))).toEqual([
+      'zone:725', 'zone:726', 'zone:728', 'tpl:27@zone-728', 'tpl:26@zone-728',
+    ]);
+    // Without hideEmpty every zone is still drawn.
+    expect(flattenZoneTree(nodes, onlyB1, { collapsed: new Set(), hideEmpty: false }).filter((s) => s.kind === 'node')).toHaveLength(8);
+  });
+
+  it("a zone's leaves keep the given order (the view's sort / saved row order)", () => {
+    const { nodes, leaves } = tree();
+    const reversed = [...leaves].reverse();
+    const b2 = flattenZoneTree(nodes, reversed, { collapsed: new Set(), hideEmpty: false })
+      .filter((s): s is Extract<typeof s, { kind: 'leaf' }> => s.kind === 'leaf' && s.node.key === 'zone:727')
+      .map((s) => s.leaf.key);
+    expect(b2).toEqual(['tpl:26@zone-727', 'tpl:27@zone-727']);
+  });
+
+  it('reorder stays inside a zone: the group key of a leaf is its own zone node', () => {
+    const { leaves } = tree();
+    const groupOf = new Map(leaves.map((l): [string, string] => [l.key, zoneNodeKey(l.zoneId)]));
+    expect(canReorderOnto(groupOf, 'tpl:27@zone-727', 'tpl:26@zone-727')).toBe(true);
+    expect(canReorderOnto(groupOf, 'tpl:27@zone-727', 'tpl:27@zone-728')).toBe(false);
+    expect(zoneNodeKey(null)).toBe('zone:root');
+    expect(zoneNodeKey(undefined)).toBe('zone:root');
+  });
+});
+
+describe('buildTargetItems · a leaf with several ProjectDeliverables', () => {
+  const leaf = (over: Partial<TargetRowLike> = {}): TargetRowLike =>
+    row({ key: 'tpl:27@zone-727', deliverableId: 243, projectDeliverableIds: [243, 244], zoneId: 727, ...over });
+
+  it('explicit date → one item per PD, same zone and fields', () => {
+    const r = leaf({ savedDate: '2027-05-09', savedDurationWeeks: 5 });
+    expect(buildTargetItems([r], {}, { [r.key]: '5' }, { [r.key]: '2027-06-06' }, computePreview)).toEqual([
+      { id: 243, zoneId: 727, months: null, durationWeeks: 5, targetDate: '2027-06-06' },
+      { id: 244, zoneId: 727, months: null, durationWeeks: 5, targetDate: '2027-06-06' },
+    ]);
+  });
+
+  it('months edit and duration-only edit fan out the same way', () => {
+    const r = leaf({ savedDate: '2027-05-09', savedMonths: null, savedDurationWeeks: 5 });
+    expect(buildTargetItems([r], { [r.key]: '7' }, { [r.key]: '5' }, {}, computePreview)).toEqual([
+      { id: 243, zoneId: 727, months: 7, durationWeeks: 5 },
+      { id: 244, zoneId: 727, months: 7, durationWeeks: 5 },
+    ]);
+    expect(buildTargetItems([r], {}, { [r.key]: '6' }, {}, computePreview)).toEqual([
+      { id: 243, zoneId: 727, months: null, durationWeeks: 6, targetDate: '2027-05-09' },
+      { id: 244, zoneId: 727, months: null, durationWeeks: 6, targetDate: '2027-05-09' },
+    ]);
+  });
+
+  it('without `projectDeliverableIds` the row sends its own deliverableId, as before', () => {
+    const r = row({ key: 'k', deliverableId: 12, zoneId: 3 });
+    expect(buildTargetItems([r], { k: '2' }, {}, {}, computePreview)).toEqual([{ id: 12, zoneId: 3, months: 2, durationWeeks: null }]);
+  });
+
+  it('the project-61 leaves feed it directly', () => {
+    const basment = p61().leaves.find((l) => l.key === 'tpl:41@zone-726') as DpLeaf;
+    expect(buildTargetItems([basment], {}, {}, { [basment.key]: '2027-03-07' }, computePreview).map((i) => [i.id, i.zoneId, i.targetDate]))
+      .toEqual([[240, 726, '2027-03-07'], [241, 726, '2027-03-07']]);
+  });
+});
+
+describe('rowProjectDeliverableIds', () => {
+  it('the row ids, else [deliverableId]; never a synthetic (≤ 0) id', () => {
+    expect(rowProjectDeliverableIds({ deliverableId: 243, projectDeliverableIds: [243, 244] })).toEqual([243, 244]);
+    expect(rowProjectDeliverableIds({ deliverableId: 12 })).toEqual([12]);
+    expect(rowProjectDeliverableIds({ deliverableId: 12, projectDeliverableIds: [] })).toEqual([12]);
+    expect(rowProjectDeliverableIds({ deliverableId: -1, projectDeliverableIds: [] })).toEqual([]);
+  });
+});
+
+describe('mergeDryRunPayloads', () => {
+  it('merges the scheduled rows of every PD by task id', () => {
+    const merged = mergeDryRunPayloads([
+      { scheduled: [{ taskId: 1, endDate: 'a' }, { taskId: 2, endDate: 'b' }], feasibility: { reason: 'ok-1' } },
+      { scheduled: [{ taskId: 3, endDate: 'c' }, { taskId: 2, endDate: 'dup' }] },
+    ]);
+    expect(merged.scheduled).toEqual([{ taskId: 1, endDate: 'a' }, { taskId: 2, endDate: 'b' }, { taskId: 3, endDate: 'c' }]);
+    expect(merged.feasibility).toEqual({ reason: 'ok-1' });
+  });
+
+  it('nothing scheduled → the first reason explains the empty preview', () => {
+    expect(mergeDryRunPayloads([
+      null,
+      { scheduled: [], feasibility: { reason: 'no-target-row' } },
+      { scheduled: [], feasibility: { reason: 'no-tasks' } },
+    ])).toEqual({ scheduled: [], feasibility: { reason: 'no-target-row' } });
+    expect(mergeDryRunPayloads([])).toEqual({ scheduled: [] });
+  });
+
+  it('with rows, the feasibility of the first answer that has rows', () => {
+    expect(mergeDryRunPayloads([
+      { scheduled: [], feasibility: { reason: 'no-target-row' } },
+      { scheduled: [{ taskId: 9 }], feasibility: { status: 'feasible' } },
+    ]).feasibility).toEqual({ status: 'feasible' });
   });
 });

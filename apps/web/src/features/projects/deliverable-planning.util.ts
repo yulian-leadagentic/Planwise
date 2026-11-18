@@ -28,6 +28,13 @@
  * `toggledInSet`, and the `release` argument of `taskDatesPatch`.
  * §14b added the tasks modal's width budget (`TASKS_LIST_*`).
  *
+ * §16 (2026-11-18) added the hierarchical rows model — `buildDpTree`
+ * (one leaf per (task zone × deliverable identity) plus a node per zone
+ * of the full tree), `resolveLeafSavedTarget`, `flattenZoneTree`,
+ * `zoneNodeKey`, `deliverableKeyOf`, `rowProjectDeliverableIds` and
+ * `mergeDryRunPayloads` — and taught `buildTargetItems` to send one item
+ * per ProjectDeliverable of a row.
+ *
  * §10 (2026-11-13) · Principle: the SAVED `targetDate` is the single
  * source of truth for display. Months is only an input device — a
  * months-derived preview is shown only while the user has a pending
@@ -42,6 +49,12 @@
 export interface TargetRowLike {
   key: string;
   deliverableId: number;
+  /**
+   * §16 (2026-11-18) · Every ProjectDeliverable whose tasks the row holds
+   * (duplicate PDs of one source template share a row). A save writes
+   * the row's target to each of them. Absent → `[deliverableId]`.
+   */
+  projectDeliverableIds?: readonly number[];
   zoneId: number | null;
   savedMonths: number | null;
   /** yyyy-mm-dd */
@@ -135,8 +148,13 @@ export function rowDirtyFlags(
  * `targetDate = months + baseDate` for rows nobody touched.
  *
  * `durationWeeks` is ALWAYS the current duration draft for a row that is
- * sent, so the aggregated (sub-zone) duration keeps converging onto the
- * top-zone row exactly as before.
+ * sent.
+ *
+ * §16 (2026-11-18) · A row stands for one (zone × deliverable identity)
+ * and may hold the tasks of several ProjectDeliverables (duplicates of
+ * one source template). The target belongs to the row, so the same item
+ * goes out once per ProjectDeliverable of the row
+ * (`rowProjectDeliverableIds`), all on the row's zone.
  */
 export function buildTargetItems(
   rows: TargetRowLike[],
@@ -151,12 +169,14 @@ export function buildTargetItems(
     if (!dirty.any) continue;
     const durDraft = durationDrafts[r.key] ?? '';
     const durationWeeks = durDraft === '' ? null : Number(durDraft);
+    const push = (item: Omit<TargetBatchItem, 'id'>) => {
+      for (const id of rowProjectDeliverableIds(r)) items.push({ id, ...item });
+    };
     if (dirty.explicit) {
       // Explicit date wins. Months is nulled: it no longer describes
       // this target, and a stale value would re-derive a different date
       // the next time the row is saved through the months path.
-      items.push({
-        id: r.deliverableId,
+      push({
         zoneId: r.zoneId,
         months: null,
         durationWeeks,
@@ -166,8 +186,7 @@ export function buildTargetItems(
       // Classic table flow — NO targetDate, the server computes it from
       // months + base date (and clears the target when months is null).
       const monthsDraft = drafts[r.key] ?? '';
-      items.push({
-        id: r.deliverableId,
+      push({
         zoneId: r.zoneId,
         months: monthsDraft === '' ? null : Number(monthsDraft),
         durationWeeks,
@@ -183,8 +202,7 @@ export function buildTargetItems(
       const pinDate =
         Boolean(r.savedDate) &&
         (r.savedMonths == null || computePreview(String(r.savedMonths)) !== r.savedDate);
-      items.push({
-        id: r.deliverableId,
+      push({
         zoneId: r.zoneId,
         months: r.savedMonths,
         durationWeeks,
@@ -1214,4 +1232,640 @@ export function sameDraftMap(a: DraftMap, b: DraftMap): boolean {
     if (!Object.prototype.hasOwnProperty.call(b, k) || a[k] !== b[k]) return false;
   }
   return true;
+}
+
+// ── §16 (2026-11-18) · Hierarchical rows ──────────────────────────────
+//
+// Deliverable Planning shows the project's FULL zone tree. Before §16 the
+// rows were one per (ProjectDeliverable × TOP-LEVEL zone): every task was
+// rolled up to its root zone and the ZoneDeliverableTargets of the whole
+// sub-tree were folded (MIN date / MAX duration) onto that one row, so the
+// levels of a building never showed. Now:
+//
+//   - a LEAF (a Table row / a Gantt bar) is one (zone the task lives in ×
+//     deliverable identity). Every task is in exactly one leaf — no cross
+//     product, no roll-up to the top zone;
+//   - the deliverable IDENTITY is the source template: a project can hold
+//     several ProjectDeliverables copied from one template, and their
+//     tasks in one zone are one deliverable to the PM — one leaf that
+//     carries all of their ids (`projectDeliverableIds`);
+//   - every zone of the tree, at every depth and with or without tasks, is
+//     a NODE. The views draw it with the existing group header and roll
+//     its sub-tree up there (the sums and spans depend on drafts).
+//
+// Leaves come only from tasks: a ZoneDeliverableTarget never creates one,
+// and a deliverable without tasks is not shown (the 2026-10-26 "option ב"
+// rule).
+
+/** A zone of the planning payload's tree (roots with `children`), API order. */
+export interface DpZoneInput {
+  id: number;
+  name: string;
+  zoneType?: string | null;
+  children?: DpZoneInput[] | null;
+}
+
+/** One ZoneDeliverableTarget row of a ProjectDeliverable. */
+export interface DpZoneTargetInput {
+  zoneId: number | null;
+  targetDate?: string | null;
+  targetMonths?: number | null;
+  estimatedDurationWeeks?: number | null;
+}
+
+/** The ProjectDeliverable fields the rows read. */
+export interface DpDeliverableInput {
+  id: number;
+  name?: string | null;
+  sortOrder?: number | null;
+  sourceTemplateId?: number | null;
+  service?: { name?: string | null } | null;
+  sourceTemplate?: { phase?: { name?: string | null } | null } | null;
+  targetDate?: string | null;
+  targetMonths?: number | null;
+  estimatedDurationWeeks?: number | null;
+  zoneTargets?: DpZoneTargetInput[] | null;
+}
+
+/** The task fields the rows read (planning payload). */
+export interface DpTaskInput {
+  id: number;
+  code?: string | null;
+  name: string;
+  zoneId?: number | null;
+  projectDeliverableId?: number | null;
+  budgetHours?: number | string | null;
+  status?: string | null;
+  endDate?: string | null;
+  estimatedStartDate?: string | null;
+  dependencies?: unknown;
+  float?: number | null;
+  onCriticalPath?: boolean | null;
+  dueDateOverridden?: boolean | null;
+}
+
+/**
+ * DP-EMPTY-3 · A deliverable resolved for a task WITHOUT a
+ * ProjectDeliverable (template name / `[SERVICE:…]` marker). Tasks that
+ * resolve to the same `name` share one read-only deliverable.
+ */
+export interface DpSyntheticDeliverable {
+  name: string;
+  serviceName: string | null;
+  readOnlyReason: string;
+}
+
+/** One task of a leaf, as the tasks modal and the Gantt sub-bars read it. */
+export interface DpTaskListItem {
+  id: number;
+  code: string | null;
+  name: string;
+  endDate: string | null;
+  estimatedStartDate: string | null;
+  status: string;
+  dependencies: Array<{
+    dependsOnId?: number;
+    lag?: number;
+    lagUnit?: LagUnit;
+    dependsOn?: { id?: number; code?: string | null; name?: string | null; endDate?: string | null } | null;
+  }>;
+  float: number | null;
+  onCriticalPath: boolean;
+  dueDateOverridden: boolean;
+}
+
+/** A leaf — one (task zone × deliverable identity). */
+export interface DpLeaf {
+  /** `${deliverableKey}@zone-${zoneId ?? 'root'}` — drafts, row order, etc. */
+  key: string;
+  /** `tpl:<sourceTemplateId>` | `pd:<id>` | `syn:<name>` (`deliverableKeyOf`). */
+  deliverableKey: string;
+  /** The first of `projectDeliverableIds` (a synthetic leaf: its negative id). */
+  deliverableId: number;
+  /** Distinct ProjectDeliverables of the leaf's tasks, by PD sortOrder then id. */
+  projectDeliverableIds: number[];
+  deliverableName: string;
+  serviceName: string | null;
+  /** The task's OWN zone (null = Project Root). */
+  zoneId: number | null;
+  zoneName: string;
+  zoneType?: string;
+  parentZoneId: number | null;
+  /** Depth of `zoneId` in the tree — a root zone (and Project Root) is 0. */
+  depth: number;
+  topLevelZoneId: number | null;
+  topLevelZoneName: string;
+  savedMonths: number | null;
+  /** yyyy-mm-dd */
+  savedDate: string | null;
+  savedDurationWeeks: number | null;
+  /** Σ Task.budgetHours. */
+  hours: number;
+  taskTotal: number;
+  taskStarted: number;
+  taskDone: number;
+  /** Earliest task estimatedStartDate (yyyy-mm-dd). */
+  taskStartMin: string | null;
+  /** Latest task endDate (yyyy-mm-dd). */
+  taskDueMax: string | null;
+  /** Smallest non-null task float. */
+  floatMin: number | null;
+  /** Any task on the critical path. */
+  onCriticalPath: boolean;
+  taskList: DpTaskListItem[];
+  readOnly?: boolean;
+  readOnlyReason?: string;
+}
+
+/** A zone node — every zone of the tree, plus Project Root when used. */
+export interface DpZoneNode {
+  /** `zoneNodeKey(zoneId)` — also the node's collapse key. */
+  key: string;
+  zoneId: number | null;
+  name: string;
+  zoneType?: string;
+  parentKey: string | null;
+  depth: number;
+  /** Child nodes, API order. */
+  childKeys: string[];
+  /** Over every leaf of the sub-tree. */
+  floatMin: number | null;
+  onCriticalPath: boolean;
+}
+
+export interface DpTree {
+  /** Every leaf, in the default row order (deliverable sortOrder, zone order). */
+  leaves: DpLeaf[];
+  /** Every node, depth-first (Project Root first when present). */
+  nodes: DpZoneNode[];
+}
+
+const ROOT_NODE_KEY = 'zone:root';
+
+/** The node a leaf of `zoneId` hangs under — and that node's collapse key. */
+export function zoneNodeKey(zoneId: number | null | undefined): string {
+  return zoneId == null ? ROOT_NODE_KEY : `zone:${zoneId}`;
+}
+
+/** Identity of a ProjectDeliverable: its source template, else itself. */
+export function deliverableKeyOf(pd: { id: number; sourceTemplateId?: number | null }): string {
+  return pd.sourceTemplateId != null ? `tpl:${pd.sourceTemplateId}` : `pd:${pd.id}`;
+}
+
+/**
+ * The ProjectDeliverable ids a row's target is written to / previewed
+ * for: `projectDeliverableIds`, or `[deliverableId]` when the row has
+ * none. Never a synthetic (≤ 0) id.
+ */
+export function rowProjectDeliverableIds(r: {
+  deliverableId: number;
+  projectDeliverableIds?: readonly number[];
+}): number[] {
+  const ids = r.projectDeliverableIds && r.projectDeliverableIds.length > 0
+    ? r.projectDeliverableIds
+    : [r.deliverableId];
+  return ids.filter((id) => id > 0);
+}
+
+const isoDayOrNull = (v: unknown): string | null => (v ? String(v).slice(0, 10) : null);
+const numberOrNull = (v: unknown): number | null => {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Saved target of a leaf — the scheduler's rule
+ * (`apps/api/src/modules/scheduling/target-scope.util.ts`): the CLOSEST
+ * ancestor-or-self ZoneDeliverableTarget that has a `targetDate` owns a
+ * task. Per ProjectDeliverable of the leaf:
+ *
+ *   - date (+ the months stored with it) = the first ZDT of that PD with a
+ *     `targetDate`, walking from the leaf's zone up to its root;
+ *   - duration = the first ZDT on the same walk with a duration;
+ *   - whatever is still missing falls back to the PD-level fields.
+ *
+ * A Project Root leaf (`zoneId` null) reads the PD's zone-less ZDT, then
+ * the PD level. A ZDT with neither date nor duration (a "ghost") never
+ * matches. The leaf shows the LATEST of its PDs' dates (with that date's
+ * months; with no date anywhere, the first months found) and the LONGEST
+ * duration.
+ */
+export function resolveLeafSavedTarget(
+  pds: readonly DpDeliverableInput[],
+  zoneId: number | null,
+  parentOf: ReadonlyMap<number, number | null>,
+): { savedDate: string | null; savedMonths: number | null; savedDurationWeeks: number | null } {
+  // The leaf's zone, then its ancestors up to the root ([null] for
+  // Project Root). A corrupt parent cycle stops at the first repeat.
+  const chain: (number | null)[] = [];
+  if (zoneId == null) {
+    chain.push(null);
+  } else {
+    const seen = new Set<number>();
+    let cursor: number | null = zoneId;
+    while (cursor != null && !seen.has(cursor)) {
+      seen.add(cursor);
+      chain.push(cursor);
+      cursor = parentOf.get(cursor) ?? null;
+    }
+  }
+  let savedDate: string | null = null;
+  let savedMonths: number | null = null;
+  let firstMonths: number | null = null;
+  let savedDurationWeeks: number | null = null;
+  for (const pd of pds) {
+    const zts = pd.zoneTargets ?? [];
+    let date: string | null = null;
+    let months: number | null = null;
+    let dur: number | null = null;
+    let haveDate = false;
+    let haveDur = false;
+    for (const zid of chain) {
+      for (const zt of zts) {
+        if ((zt.zoneId ?? null) !== zid) continue;
+        if (!haveDate && zt.targetDate) {
+          date = isoDayOrNull(zt.targetDate);
+          months = numberOrNull(zt.targetMonths);
+          haveDate = true;
+        }
+        if (!haveDur && zt.estimatedDurationWeeks != null) {
+          dur = numberOrNull(zt.estimatedDurationWeeks);
+          haveDur = true;
+        }
+      }
+      if (haveDate && haveDur) break;
+    }
+    if (!haveDate) {
+      date = isoDayOrNull(pd.targetDate);
+      months = numberOrNull(pd.targetMonths);
+    }
+    if (!haveDur) dur = numberOrNull(pd.estimatedDurationWeeks);
+    if (date != null && (savedDate == null || date > savedDate)) {
+      savedDate = date;
+      savedMonths = months;
+    }
+    if (firstMonths == null && months != null) firstMonths = months;
+    if (dur != null && (savedDurationWeeks == null || dur > savedDurationWeeks)) savedDurationWeeks = dur;
+  }
+  return {
+    savedDate,
+    savedMonths: savedDate != null ? savedMonths : firstMonths,
+    savedDurationWeeks,
+  };
+}
+
+const toTaskListItem = (t: DpTaskInput): DpTaskListItem => ({
+  id: t.id,
+  code: t.code ?? null,
+  name: t.name,
+  endDate: isoDayOrNull(t.endDate),
+  // §5 (2026-11-09) — the scheduler's start, for the chain tooltip.
+  estimatedStartDate: isoDayOrNull(t.estimatedStartDate),
+  status: t.status ?? '',
+  // bm2 2026-10-21 / §5 — predecessors (with `lag` + `lagUnit` straight
+  // from the TaskDependency row): predecessor conflicts, chain arrows.
+  dependencies: Array.isArray(t.dependencies) ? (t.dependencies as DpTaskListItem['dependencies']) : [],
+  // D7-Float (2026-11-03) · scheduler-computed.
+  float: t.float ?? null,
+  onCriticalPath: Boolean(t.onCriticalPath),
+  // §14 (2026-11-15) · the due date was typed by a person (pinned).
+  dueDateOverridden: Boolean(t.dueDateOverridden),
+});
+
+/**
+ * The rows tree of the Deliverable Planning tab (see the section note
+ * above). `syntheticOf` resolves the deliverable of a task that has no
+ * ProjectDeliverable (DP-EMPTY-3); without it such tasks are skipped.
+ *
+ * Leaves are ordered by deliverable identity (the smallest sortOrder of
+ * its ProjectDeliverables), then zone (tree order, Project Root last),
+ * then name — inside one zone that is the PD sortOrder. Nodes are
+ * depth-first in API order (sortOrder, createdAt — never re-sorted by
+ * name); Project Root comes first and exists only when a leaf uses it; a
+ * task zone missing from the tree gets a root-level node of its own.
+ */
+export function buildDpTree(args: {
+  zones: readonly DpZoneInput[] | null | undefined;
+  deliverables: readonly DpDeliverableInput[];
+  tasks: readonly DpTaskInput[];
+  syntheticOf?: (task: DpTaskInput) => DpSyntheticDeliverable | null;
+}): DpTree {
+  type ZoneInfo = {
+    id: number;
+    name: string;
+    zoneType?: string;
+    parentId: number | null;
+    depth: number;
+    topId: number;
+    topName: string;
+    order: number;
+  };
+  const zoneInfo = new Map<number, ZoneInfo>();
+  const childIds = new Map<number, number[]>();
+  const rootIds: number[] = [];
+  const addZone = (id: number, name: string, zoneType: string | undefined, parent: ZoneInfo | null): ZoneInfo => {
+    const info: ZoneInfo = {
+      id,
+      name,
+      zoneType,
+      parentId: parent ? parent.id : null,
+      depth: parent ? parent.depth + 1 : 0,
+      topId: parent ? parent.topId : id,
+      topName: parent ? parent.topName : name,
+      order: zoneInfo.size,
+    };
+    zoneInfo.set(id, info);
+    childIds.set(id, []);
+    if (parent) childIds.get(parent.id)?.push(id);
+    else rootIds.push(id);
+    return info;
+  };
+  const walk = (z: DpZoneInput, parent: ZoneInfo | null) => {
+    if (zoneInfo.has(z.id)) return; // a repeated id must not loop or re-parent
+    const info = addZone(z.id, z.name, z.zoneType ?? undefined, parent);
+    for (const c of z.children ?? []) walk(c, info);
+  };
+  for (const z of args.zones ?? []) walk(z, null);
+
+  const pdById = new Map<number, DpDeliverableInput>();
+  const identitySort = new Map<string, number>();
+  const sortOf = (pd: DpDeliverableInput | undefined) => Number(pd?.sortOrder ?? 0) || 0;
+  for (const d of args.deliverables) {
+    pdById.set(d.id, d);
+    const k = deliverableKeyOf(d);
+    const so = sortOf(d);
+    const cur = identitySort.get(k);
+    if (cur == null || so < cur) identitySort.set(k, so);
+  }
+
+  type Bucket = {
+    key: string;
+    deliverableKey: string;
+    zoneId: number | null;
+    tasks: DpTaskInput[];
+    pdIds: Set<number>;
+    synthetic: { id: number; def: DpSyntheticDeliverable } | null;
+  };
+  const buckets = new Map<string, Bucket>();
+  const syntheticByName = new Map<string, { id: number; def: DpSyntheticDeliverable }>();
+  let nextSyntheticId = -1;
+  for (const t of args.tasks) {
+    let deliverableKey: string;
+    let pdId: number | null = null;
+    let synthetic: Bucket['synthetic'] = null;
+    if (t.projectDeliverableId != null) {
+      pdId = Number(t.projectDeliverableId);
+      const pd = pdById.get(pdId);
+      deliverableKey = pd ? deliverableKeyOf(pd) : `pd:${pdId}`;
+    } else {
+      const def = args.syntheticOf?.(t) ?? null;
+      if (!def) continue;
+      synthetic = syntheticByName.get(def.name) ?? null;
+      if (!synthetic) {
+        synthetic = { id: nextSyntheticId--, def };
+        syntheticByName.set(def.name, synthetic);
+      }
+      deliverableKey = `syn:${def.name}`;
+    }
+    const zoneId = t.zoneId ?? null;
+    if (zoneId != null && !zoneInfo.has(zoneId)) addZone(zoneId, `Zone #${zoneId}`, undefined, null);
+    const key = `${deliverableKey}@zone-${zoneId ?? 'root'}`;
+    let b = buckets.get(key);
+    if (!b) {
+      b = { key, deliverableKey, zoneId, tasks: [], pdIds: new Set(), synthetic };
+      buckets.set(key, b);
+    }
+    b.tasks.push(t);
+    if (pdId != null) b.pdIds.add(pdId);
+  }
+
+  const parentOf = new Map<number, number | null>();
+  for (const z of zoneInfo.values()) parentOf.set(z.id, z.parentId);
+
+  const leaves: DpLeaf[] = [];
+  for (const b of buckets.values()) {
+    const pdIds = [...b.pdIds].sort((a, c) => sortOf(pdById.get(a)) - sortOf(pdById.get(c)) || a - c);
+    const primary = b.synthetic ? undefined : pdById.get(pdIds[0]);
+    const deliverableId = b.synthetic ? b.synthetic.id : pdIds[0];
+    const zone = b.zoneId == null ? undefined : zoneInfo.get(b.zoneId);
+    const saved = b.synthetic
+      ? { savedDate: null, savedMonths: null, savedDurationWeeks: null }
+      : resolveLeafSavedTarget(
+        pdIds.map((id) => pdById.get(id)).filter((pd): pd is DpDeliverableInput => pd != null),
+        b.zoneId,
+        parentOf,
+      );
+    const { total, started, done } = taskProgressCounts(b.tasks);
+    let taskStartMin: string | null = null;
+    let taskDueMax: string | null = null;
+    let floatMin: number | null = null;
+    let onCriticalPath = false;
+    let hours = 0;
+    for (const t of b.tasks) {
+      // Prisma serializes Decimal as a string — coerce, null → 0.
+      hours += Number(t.budgetHours || 0);
+      const s = isoDayOrNull(t.estimatedStartDate);
+      if (s && (taskStartMin == null || s < taskStartMin)) taskStartMin = s;
+      const e = isoDayOrNull(t.endDate);
+      if (e && (taskDueMax == null || e > taskDueMax)) taskDueMax = e;
+      const f = numberOrNull(t.float);
+      if (f != null && (floatMin == null || f < floatMin)) floatMin = f;
+      if (t.onCriticalPath) onCriticalPath = true;
+    }
+    leaves.push({
+      key: b.key,
+      deliverableKey: b.deliverableKey,
+      deliverableId,
+      projectDeliverableIds: pdIds,
+      deliverableName: b.synthetic ? b.synthetic.def.name : (primary?.name ?? `Deliverable #${deliverableId}`),
+      // Read-time fallback (2026-09-29): a PD whose `service` is null
+      // reads its source template's phase.
+      serviceName: b.synthetic
+        ? b.synthetic.def.serviceName
+        : (primary?.service?.name ?? primary?.sourceTemplate?.phase?.name ?? null),
+      zoneId: b.zoneId,
+      zoneName: zone ? zone.name : 'Project Root',
+      zoneType: zone?.zoneType,
+      parentZoneId: zone ? zone.parentId : null,
+      depth: zone ? zone.depth : 0,
+      topLevelZoneId: zone ? zone.topId : null,
+      topLevelZoneName: zone ? zone.topName : 'Project Root',
+      ...saved,
+      hours,
+      taskTotal: total,
+      taskStarted: started,
+      taskDone: done,
+      taskStartMin,
+      taskDueMax,
+      floatMin,
+      onCriticalPath,
+      taskList: b.tasks.map(toTaskListItem),
+      ...(b.synthetic ? { readOnly: true, readOnlyReason: b.synthetic.def.readOnlyReason } : {}),
+    });
+  }
+
+  const zoneOrder = (l: DpLeaf): number =>
+    l.zoneId == null ? Number.POSITIVE_INFINITY : (zoneInfo.get(l.zoneId)?.order ?? Number.POSITIVE_INFINITY);
+  leaves.sort((a, b) => {
+    const sa = identitySort.get(a.deliverableKey) ?? 0;
+    const sb = identitySort.get(b.deliverableKey) ?? 0;
+    if (sa !== sb) return sa - sb;
+    const za = zoneOrder(a);
+    const zb = zoneOrder(b);
+    if (za !== zb) return za < zb ? -1 : 1;
+    return a.deliverableName.localeCompare(b.deliverableName) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  });
+
+  const nodes: DpZoneNode[] = [];
+  const nodeByKey = new Map<string, DpZoneNode>();
+  const pushNode = (node: DpZoneNode) => {
+    nodes.push(node);
+    nodeByKey.set(node.key, node);
+  };
+  if (leaves.some((l) => l.zoneId == null)) {
+    pushNode({
+      key: ROOT_NODE_KEY,
+      zoneId: null,
+      name: 'Project Root',
+      parentKey: null,
+      depth: 0,
+      childKeys: [],
+      floatMin: null,
+      onCriticalPath: false,
+    });
+  }
+  const emitZone = (id: number) => {
+    const info = zoneInfo.get(id);
+    if (!info) return;
+    const children = childIds.get(id) ?? [];
+    pushNode({
+      key: zoneNodeKey(id),
+      zoneId: id,
+      name: info.name,
+      zoneType: info.zoneType,
+      parentKey: info.parentId == null ? null : zoneNodeKey(info.parentId),
+      depth: info.depth,
+      childKeys: children.map((c) => zoneNodeKey(c)),
+      floatMin: null,
+      onCriticalPath: false,
+    });
+    for (const c of children) emitZone(c);
+  };
+  for (const id of rootIds) emitZone(id);
+
+  for (const l of leaves) {
+    let key: string | null = zoneNodeKey(l.zoneId);
+    while (key != null) {
+      const n = nodeByKey.get(key);
+      if (!n) break;
+      if (l.floatMin != null && (n.floatMin == null || l.floatMin < n.floatMin)) n.floatMin = l.floatMin;
+      if (l.onCriticalPath) n.onCriticalPath = true;
+      key = n.parentKey;
+    }
+  }
+
+  return { leaves, nodes };
+}
+
+/** One slot of a depth-first walk of the zone tree (`flattenZoneTree`). */
+export type ZoneTreeSlot<N, L> =
+  | {
+    kind: 'node';
+    node: N;
+    /** Every given leaf of the node's sub-tree — what its header rolls up. */
+    subtreeLeaves: L[];
+    collapsed: boolean;
+  }
+  | {
+    kind: 'leaf';
+    leaf: L;
+    /** The node the leaf hangs under. */
+    node: N;
+  };
+
+/**
+ * §16 (2026-11-18) · What a view draws under the Zone grouping, in order:
+ * a node, its direct leaves, then its child nodes — depth-first from the
+ * root nodes. `leaves` are the leaves the view shows (filters applied),
+ * in the order wanted inside a zone; each hangs under
+ * `zoneNodeKey(leaf.zoneId)`, which must be one of `nodes`.
+ *
+ *   - a collapsed node is drawn, its whole sub-tree is not;
+ *   - `hideEmpty` (a filter is active): a node with no leaf anywhere in
+ *     its sub-tree is left out together with that sub-tree. Without it
+ *     every node is drawn — empty zones included.
+ */
+export function flattenZoneTree<
+  N extends { key: string; parentKey: string | null; childKeys: readonly string[] },
+  L extends { zoneId: number | null },
+>(
+  nodes: readonly N[],
+  leaves: readonly L[],
+  opts: { collapsed: ReadonlySet<string>; hideEmpty: boolean },
+): ZoneTreeSlot<N, L>[] {
+  const byKey = new Map<string, N>();
+  for (const n of nodes) byKey.set(n.key, n);
+  const direct = new Map<string, L[]>();
+  for (const l of leaves) {
+    const k = zoneNodeKey(l.zoneId);
+    const list = direct.get(k);
+    if (list) list.push(l);
+    else direct.set(k, [l]);
+  }
+  const subtreeMemo = new Map<string, L[]>();
+  const subtreeOf = (n: N): L[] => {
+    const hit = subtreeMemo.get(n.key);
+    if (hit) return hit;
+    const out = [...(direct.get(n.key) ?? [])];
+    subtreeMemo.set(n.key, out); // set first — a corrupt cycle cannot recurse forever
+    for (const ck of n.childKeys) {
+      const c = byKey.get(ck);
+      if (c && !subtreeMemo.has(c.key)) out.push(...subtreeOf(c));
+    }
+    return out;
+  };
+  const out: ZoneTreeSlot<N, L>[] = [];
+  const emitted = new Set<string>();
+  const emit = (n: N) => {
+    if (emitted.has(n.key)) return;
+    emitted.add(n.key);
+    const subtreeLeaves = subtreeOf(n);
+    if (opts.hideEmpty && subtreeLeaves.length === 0) return;
+    const collapsed = opts.collapsed.has(n.key);
+    out.push({ kind: 'node', node: n, subtreeLeaves, collapsed });
+    if (collapsed) return;
+    for (const leaf of direct.get(n.key) ?? []) out.push({ kind: 'leaf', leaf, node: n });
+    for (const ck of n.childKeys) {
+      const c = byKey.get(ck);
+      if (c) emit(c);
+    }
+  };
+  for (const n of nodes) if (n.parentKey == null) emit(n);
+  return out;
+}
+
+/**
+ * §16 (2026-11-18) · A leaf can hold several ProjectDeliverables, and the
+ * schedule dry-run is per ProjectDeliverable: the tasks modal asks once
+ * per PD and merges the answers. `scheduled` rows are merged by task id
+ * (first answer wins — a task belongs to one PD); `feasibility` is the
+ * one of the first answer that has rows, else of the first answer that
+ * carries one (it explains an empty preview).
+ */
+export function mergeDryRunPayloads<S extends { taskId: number | string }, F>(
+  payloads: ReadonlyArray<{ scheduled?: readonly S[] | null; feasibility?: F } | null | undefined>,
+): { scheduled: S[]; feasibility?: F } {
+  const seen = new Set<number>();
+  const scheduled: S[] = [];
+  for (const p of payloads) {
+    for (const s of p?.scheduled ?? []) {
+      const id = Number(s.taskId);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      scheduled.push(s);
+    }
+  }
+  const source = payloads.find((p) => (p?.scheduled?.length ?? 0) > 0) ?? payloads.find((p) => p?.feasibility != null);
+  return source?.feasibility != null ? { scheduled, feasibility: source.feasibility } : { scheduled };
 }

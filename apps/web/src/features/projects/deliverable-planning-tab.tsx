@@ -26,7 +26,6 @@ import {
   seedFromRows,
   sameDraftMap,
   snapToSundayIso,
-  taskProgressCounts,
   mergeRowOrder,
   moveRowKey,
   canReorderOnto,
@@ -69,6 +68,15 @@ import {
   isColFilterActive,
   rowPassesColFilter,
   type DraftSeedMap,
+  buildDpTree,
+  flattenZoneTree,
+  zoneNodeKey,
+  rowProjectDeliverableIds,
+  mergeDryRunPayloads,
+  type DpLeaf,
+  type DpZoneNode,
+  type DpTaskInput,
+  type DpSyntheticDeliverable,
 } from './deliverable-planning.util';
 
 /**
@@ -106,15 +114,16 @@ const ZONE_TYPE_BADGE: Record<string, { bg: string; text: string }> = {
  * namespaced per-dim so a zoneId and a deliverableId can never collide
  * when the user flips the primary dim mid-session.
  *
- * DPG-1 (2026-10-20) · Zone grouping rolls up to the TOP-LEVEL ancestor
- * — rows carry `topLevelZoneId` + `topLevelZoneName` precomputed by the
- * parent (see `topLevelZoneInfo`), so a sub-zone row buckets under its
- * root zone instead of standing alone. `zoneId=null` rows (orphan root
- * tasks, no-zones projects) key to `zone:root` with label "Project Root".
+ * §16 (2026-11-18) · A row's zone is the zone its tasks LIVE in (no
+ * roll-up to the top-level ancestor any more): `zone:<zoneId>` — the key
+ * of the zone node the row hangs under in the zone tree — and
+ * `zone:root` ("Project Root") for `zoneId=null`. The deliverable key is
+ * the deliverable IDENTITY (`deliverableKey` — the source template), so
+ * rows of duplicate ProjectDeliverables of one template share a group.
  */
 function rowDimKey(r: any, dim: DPGroupDim): string {
-  if (dim === 'deliverable') return `del:${r.deliverableId}`;
-  if (dim === 'zone') return `zone:${r.topLevelZoneId ?? 'root'}`;
+  if (dim === 'deliverable') return `del:${r.deliverableKey}`;
+  if (dim === 'zone') return zoneNodeKey(r.zoneId);
   // service — Phase name is a string, nullable. Treat null/empty as a
   // dedicated "no service" bucket so rows don't get spread into the
   // default group silently.
@@ -122,7 +131,7 @@ function rowDimKey(r: any, dim: DPGroupDim): string {
 }
 function rowDimLabel(r: any, dim: DPGroupDim): string {
   if (dim === 'deliverable') return r.deliverableName ?? `Deliverable #${r.deliverableId}`;
-  if (dim === 'zone') return r.topLevelZoneName ?? '—';
+  if (dim === 'zone') return r.zoneName ?? '—';
   return (r.serviceName ?? '').trim() || 'No service';
 }
 // §12 (2026-11-14) · The group a row is drawn in. With primary = "No
@@ -131,6 +140,45 @@ function rowDimLabel(r: any, dim: DPGroupDim): string {
 const UNGROUPED_KEY = 'all';
 function rowGroupKey(r: Parameters<typeof rowDimKey>[0], grouped: boolean, outerDim: DPGroupDim): string {
   return grouped ? rowDimKey(r, outerDim) : UNGROUPED_KEY;
+}
+
+/**
+ * §16 (2026-11-18) · Zone grouping draws the zone TREE: a node header per
+ * zone (the existing group header) and the rows under it, each indented
+ * by its level — the only visual addition. A node's level is its zone's
+ * depth; a row sits one level below the zone it hangs under, i.e. level
+ * with that zone's child zones. Applied as an inline left padding on top
+ * of the cell's own (Table: px-4 = 16px; Gantt labels: px-3 = 12px for a
+ * header, pl-6 = 24px for a row).
+ */
+const TREE_INDENT_PX = 16;
+const treePadding = (basePx: number, level: number) => ({ paddingLeft: basePx + level * TREE_INDENT_PX });
+
+/**
+ * DP-EMPTY-3 (2026-09-30) · The deliverable of a task that has NO
+ * ProjectDeliverable, when it can still be resolved from its
+ * `deliverableTemplate.name` or a legacy `[SERVICE:<name>]` marker
+ * (projects like #33 before the DP-EMPTY-1 backfill). Such rows are
+ * shown read-only — the PM sees the shape they are about to materialize
+ * but cannot save targets against a deliverable that does not exist.
+ */
+function syntheticDeliverableOf(t: DpTaskInput): DpSyntheticDeliverable | null {
+  const task = t as DpTaskInput & {
+    phase?: { name?: string | null } | null;
+    deliverableTemplate?: { phase?: { name?: string | null } | null } | null;
+  };
+  const resolved = resolveTaskDeliverableDetailed(task);
+  if (resolved.source !== 'template' && resolved.source !== 'marker') return null;
+  return {
+    name: resolved.name,
+    // Best-effort service: the task's own phase, then the deliverable
+    // template's phase — the same fallback the Service column uses.
+    serviceName: task.phase?.name ?? task.deliverableTemplate?.phase?.name ?? null,
+    readOnlyReason:
+      resolved.source === 'template'
+        ? 'Not yet planned — the deliverable lives only on the task template. Run the materialize-project-deliverables backfill to edit target dates here.'
+        : 'Not yet planned — the deliverable is a [SERVICE:…] marker. Run the materialize-project-deliverables backfill to edit target dates here.',
+  };
 }
 
 /**
@@ -559,7 +607,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // Deliverable · Zone (what `outerDim` / `innerDim` then carry).
   const { grouped, outerDim, innerDim } = resolveGrouping(grouping.primary, grouping.secondary);
 
-  // Draft edits keyed by `${deliverableId}:${zoneId}`. Empty string = clear.
+  // Draft edits keyed by row key (§16: `${deliverableKey}@zone-${zoneId}`).
+  // Empty string = clear.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   // Duration drafts (calendar days) — parallel state so target months
   // and duration edits can be saved together in one batch.
@@ -585,7 +634,7 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
   // DP empty-flip race (2026-11-09): without `placeholderData`, every
   // Planning mutation invalidates this query and `planningData` momentarily
   // becomes `undefined` during the refetch → `tasks=[]` →
-  // `connectionsByDeliverable={}` → `rows=[]` → the empty-state screen flashes
+  // no leaves (§16 `buildDpTree`) → `rows=[]` → the empty-state screen flashes
   // for one render even though the deliverable row is still there. Keeping
   // the previous payload (react-query v5 API) means `tasks` never empties
   // mid-refetch. Paired with the belt-and-suspenders guard at the empty-screen
@@ -598,634 +647,43 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     placeholderData: keepPreviousData,
   });
   const tasks: any[] = Array.isArray(planningData?.tasks) ? planningData.tasks : [];
-  // planningData.zones is a TREE of zone roots (see planning.service.ts).
-  // Flatten it so lookups + cross-product row generation see every zone,
-  // not just top-level roots (bm2 fix #1: brand-new projects had NO
-  // tasks yet, so tasks-driven rows produced an empty grid even with
-  // zones + deliverables present).
-  // `zoneType` (DP-4) is threaded through so the Table + Gantt can badge
-  // each zone with its type. Enum values live on `Zone.zoneType` and are
-  // already on the wire — the client just used to drop them.
-  type ZoneNode = { id: number; name: string; sortOrder?: number; zoneType?: string; children?: ZoneNode[] };
-  const zonesFlat: ZoneNode[] = useMemo(() => {
-    const roots: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
-    const out: ZoneNode[] = [];
-    const walk = (arr: ZoneNode[]) => {
-      for (const z of arr) {
-        out.push(z);
-        if (Array.isArray(z.children) && z.children.length) walk(z.children);
-      }
-    };
-    walk(roots);
-    return out;
-  }, [planningData?.zones]);
-
-  // DPG-1 (2026-10-20) · Zone-tree ancestry — maps every zone id to its
-  // TOP-LEVEL ancestor's id + name. Deliverable Planning v1 scope: when
-  // grouping by Zone, sub-zones (building → level → area) all roll up
-  // to the top-level root they descend from, so the Gantt shows one
-  // bucket per top-level zone instead of a flat list of every sub-zone.
-  // Nested rollups (per-level drill-down) are deferred to v2.
+  // §16 (2026-11-18) · The rows TREE. `planningData.zones` is the
+  // project's zone tree (roots with `children`, API order: sortOrder,
+  // createdAt). Every zone of it, at every depth, is a NODE; every task
+  // lands in exactly one LEAF — (the zone the task lives in × deliverable
+  // identity), where the identity is the source template, so the tasks of
+  // duplicate ProjectDeliverables of one template share a leaf. The leaves
+  // are the `rows` everything else works on (drafts, save, filters, the
+  // Gantt row order — all keyed by `row.key`); the nodes are what the
+  // Zone grouping draws them under (`flattenZoneTree`).
   //
-  // Shape: `idMap` has every zone id → its root ancestor's id, `nameMap`
-  // has each root id → its own name. Walked from the SAME zone-tree
-  // `zonesFlat` reads, so there's no risk of a mismatch between the
-  // flattened list and the ancestry decision.
+  // Before §16 this memo emitted one row per (ProjectDeliverable ×
+  // TOP-LEVEL zone): tasks were rolled up to their root zone and the
+  // ZoneDeliverableTargets of the whole sub-tree folded onto that row
+  // (MIN date / MAX duration), so the levels of a building never showed
+  // and a deliverable's sub-zone targets were invisible. A leaf now reads
+  // the target the scheduler applies to its tasks — the closest
+  // ancestor-or-self zone target (`resolveLeafSavedTarget`).
   //
-  // DP-4 parity (2026-10-21) — also carry `typeMap` (top-level id →
-  // `zoneType`) and `sortOrderMap` (top-level id → sortOrder). The two
-  // extra maps feed the Zone-grouping group header: typeMap drives the
-  // amber "Building" badge next to the top-level zone name (matching
-  // Planning), sortOrderMap drives the group sort order so DP and
-  // Planning render top-level zones in the same sequence
-  // (Planning uses the API's `[sortOrder: asc, createdAt: asc]` orderBy;
-  // we mirror the primary key here and tiebreak on name).
-  const topLevelZoneInfo = useMemo(() => {
-    const idMap = new Map<number, number>();           // zoneId → top-level ancestor id
-    const nameMap = new Map<number, string>();         // top-level id → top-level name
-    const typeMap = new Map<number, string | undefined>(); // top-level id → zoneType
-    const sortOrderMap = new Map<number, number>();    // top-level id → sortOrder (NaN-safe)
-    const roots: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
-    const walk = (z: ZoneNode, topId: number) => {
-      idMap.set(z.id, topId);
-      if (Array.isArray(z.children) && z.children.length) {
-        for (const c of z.children) walk(c, topId);
-      }
-    };
-    for (const r of roots) {
-      nameMap.set(r.id, r.name);
-      typeMap.set(r.id, r.zoneType);
-      sortOrderMap.set(r.id, Number(r.sortOrder ?? 0));
-      walk(r, r.id);
-    }
-    return { idMap, nameMap, typeMap, sortOrderMap };
-  }, [planningData?.zones]);
-
-  // Build (zone × deliverable) rows from the CROSS PRODUCT of the
-  // project's zones and its deliverables — so every combination shows
-  // even before any tasks exist (bm2 fix #1). Task counts still overlay
-  // when tasks are present; task-only rows referencing a deliverable
-  // that isn't in the deliverables list (or the synthetic root zone)
-  // still get emitted so nothing renders as a phantom "0 tasks" gap.
-  type Row = {
-    key: string;
-    deliverableId: number;
-    deliverableName: string;
-    zoneId: number | null;
-    zoneName: string;
-    // Zone type enum (DP-4). Optional — the synthetic "Project Root"
-    // pseudo-row emitted for projects with no zones has no type.
-    zoneType?: string;
-    // DPG-1 (2026-10-20) — Top-level zone ancestor id + name. Rows
-    // whose zone descends from a root (e.g. "Area 3" under "Building A")
-    // share these fields with their root parent so a Zone grouping
-    // folds them into one bucket. `zoneId=null` → `topLevelZoneId=null`
-    // and `topLevelZoneName='Project Root'`; a root zone's row has
-    // these equal to its own `zoneId` + `zoneName`.
-    topLevelZoneId: number | null;
-    topLevelZoneName: string;
-    serviceName: string | null;
-    // Current server target (either from zoneTargets[zoneId] or the deliverable-level fallback)
-    savedMonths: number | null;
-    savedDate: string | null;
-    savedDurationWeeks: number | null;
-    // Σ of `Task.budgetHours` for every task under this (zone × deliverable).
-    // DP-3 — the client used to drop this column even though the wire
-    // already carried it. 0 when the group has no tasks.
-    hours: number;
-    // Aggregate task counts for this (zone × deliverable). Rendered
-    // as a badge on each Gantt bar (client feedback 2026-08-02 item 4).
-    // "started" = anything past To Do that isn't Done ("in_progress",
-    // "in_review", "done" for the started tally); "done" = "done".
-    taskTotal: number;
-    taskStarted: number;
-    taskDone: number;
-    // The full task list for this row — feeds the Gantt-bar-click
-    // modal (client feedback item 2/3). Kept minimal: id/code/name/end/status.
-    // bm2 2026-10-21 — also carries `dependencies` so the Gantt row
-    // label can flag predecessor conflicts (any task whose endDate is
-    // earlier than one of its predecessors'); see predecessor-conflict.ts.
-    taskList: {
-      id: number;
-      code: string | null;
-      name: string;
-      endDate: string | null;
-      // §5 (2026-11-09) — carry the scheduler's computed start so the
-      // chain tooltip can show per-task start→end and the duration edge.
-      estimatedStartDate?: string | null;
-      status: string;
-      // §5 (2026-11-09) — carry the FTS edge metadata too so the Gantt
-      // tooltip can render "pred → (N wd|cal) succ" for every link.
-      // `lag` + `lagUnit` live on the TaskDependency row itself, which
-      // Prisma's `dependencies: { include: { dependsOn: { select } } }`
-      // returns alongside the selected `dependsOn` sub-fields.
-      dependencies?: Array<{
-        dependsOnId?: number;
-        lag?: number;
-        lagUnit?: 'WORKING_DAYS' | 'CALENDAR_DAYS';
-        dependsOn?: { id?: number; code?: string | null; name?: string | null; endDate?: string | null } | null;
-      }>;
-      // D7-Float (2026-11-03) · Scheduler-computed, surfaces as CP chip
-      // on the Gantt row and as a column in the DeliverableTasksModal.
-      float?: number | null;
-      onCriticalPath?: boolean;
-    }[];
-    // DP-EMPTY-3 (2026-09-30) — true when this row's deliverable is
-    // NOT backed by a real `ProjectDeliverable` row (source was a
-    // `deliverableTemplate.name` or a `[SERVICE:<name>]` marker). The
-    // grid renders these read-only with a "run the materialize backfill
-    // to edit" hint, and they are excluded from save + dirty checks.
-    readOnly?: boolean;
-    // Explanation for the read-only tooltip when `readOnly === true`.
-    readOnlyReason?: string;
-  };
-  const rows: Row[] = useMemo(() => {
-    // Group tasks by (deliverable, TOP-LEVEL zone) so counts + endDate
-    // lists overlay onto the (deliverable × top-level-zone) rows the
-    // loop below emits.
-    //
-    // DP-DUPS (2026-10-21) · Prior to this change the loop iterated
-    // every zone in zonesFlat (DFS of the whole tree) and this map was
-    // keyed by raw (deliverable, zone) — one row per sub-zone, which
-    // inflated the grid 3-4× for projects with sub-zones. We now roll
-    // every task up to its TOP-LEVEL zone (via topLevelZoneInfo.idMap,
-    // which falls back to the zone's own id for a childless root), so
-    // sub-zone tasks and top-zone tasks aggregate onto one bucket.
-    const grouped = new Map<string, any[]>();
-    for (const t of tasks) {
-      const dId = t.projectDeliverableId;
-      if (dId == null) continue;
-      const rawZoneId = t.zoneId ?? null;
-      const topZoneId: number | null = rawZoneId == null
-        ? null
-        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
-      const key = topZoneId == null ? `${dId}:root` : `${dId}:topzone-${topZoneId}`;
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key)!.push(t);
-    }
-
-    // DP-EMPTY-3 — synthesize deliverables from tasks whose
-    // `projectDeliverableId` is NULL but whose deliverable dimension
-    // can still be resolved via `deliverableTemplate.name` or the
-    // legacy `[SERVICE:<name>]` marker. Without this, projects like
-    // #33 (32 tasks, 4 markers, 0 ProjectDeliverable rows) render an
-    // empty grid until the DP-EMPTY-1 backfill runs. Synthetic rows
-    // are keyed by a stable negative id so real ProjectDeliverable ids
-    // never collide, and rendered read-only so the PM can see the
-    // shape they're about to materialize but can't accidentally save
-    // targets against a row that doesn't exist yet.
-    type SyntheticDeliverable = {
-      id: number;
-      name: string;
-      service?: { name: string | null; color: string | null } | null;
-      readOnly: true;
-      readOnlyReason: string;
-    };
-    const syntheticByName = new Map<string, SyntheticDeliverable>();
-    // Track tasks grouped under each synthetic deliverable so counts +
-    // hours + endDates overlay the same as real deliverables.
-    const syntheticGrouped = new Map<string, any[]>();
-    let nextSyntheticId = -1;
-    for (const t of tasks) {
-      if (t.projectDeliverableId != null) continue;
-      const resolved = resolveTaskDeliverableDetailed(t);
-      if (resolved.source !== 'template' && resolved.source !== 'marker') continue;
-      let syn = syntheticByName.get(resolved.name);
-      if (!syn) {
-        syn = {
-          id: nextSyntheticId--,
-          name: resolved.name,
-          // Best-effort service name: prefer the task's own phase (via
-          // the read-time include), then the deliverableTemplate's
-          // phase. Same fallback the SERVICE column already uses.
-          service: t.phase?.name
-            ? { name: t.phase.name, color: t.phase.color ?? null }
-            : t.deliverableTemplate?.phase?.name
-              ? { name: t.deliverableTemplate.phase.name, color: t.deliverableTemplate.phase.color ?? null }
-              : null,
-          readOnly: true,
-          readOnlyReason:
-            resolved.source === 'template'
-              ? 'Not yet planned — the deliverable lives only on the task template. Run the materialize-project-deliverables backfill to edit target dates here.'
-              : 'Not yet planned — the deliverable is a [SERVICE:…] marker. Run the materialize-project-deliverables backfill to edit target dates here.',
-        };
-        syntheticByName.set(resolved.name, syn);
-      }
-      const rawZoneId = t.zoneId ?? null;
-      // DP-DUPS (2026-10-21) · Match the top-level roll-up used for
-      // real deliverables above so synthetic rows also render once per
-      // (deliverable × top-zone) instead of once per sub-zone.
-      const topZoneId: number | null = rawZoneId == null
-        ? null
-        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
-      const gKey = topZoneId == null ? `${syn.id}:root` : `${syn.id}:topzone-${topZoneId}`;
-      if (!syntheticGrouped.has(gKey)) syntheticGrouped.set(gKey, []);
-      syntheticGrouped.get(gKey)!.push(t);
-    }
-
-    // DP-DUPS (2026-10-21) · Inverse of topLevelZoneInfo.idMap — for
-    // each top-level zone id, the set of its descendant zone ids
-    // (INCLUDING itself — the idMap entry maps `topId → topId` for a
-    // root, so a direct ZDT on the top-zone is picked up by the subtree
-    // walk). Used by `emit` below to aggregate per-sub-zone
-    // ZoneDeliverableTarget rows onto the one top-zone row.
-    const descendantsByTopZone = new Map<number, Set<number>>();
-    for (const [subId, topId] of topLevelZoneInfo.idMap) {
-      let set = descendantsByTopZone.get(topId);
-      if (!set) { set = new Set<number>(); descendantsByTopZone.set(topId, set); }
-      set.add(subId);
-    }
-
-    const list: Row[] = [];
-    const emitted = new Set<string>();
-    const emit = (
-      dId: number,
-      // Post DP-DUPS (2026-10-21): `zoneId` is ALWAYS a top-level zone
-      // id (or null for the Project Root bucket). The main cross-
-      // product loop iterates `topLevelZones` directly; the overlay and
-      // synthetic loops below translate their raw task zoneIds to the
-      // top-level ancestor before calling emit.
-      deliverable: any,
-      zoneId: number | null,
-      zoneName: string,
-      zoneType?: string,
-      opts?: { readOnly?: boolean; readOnlyReason?: string; taskOverride?: any[] },
-    ) => {
-      const key = zoneId == null ? `${dId}:root` : `${dId}:topzone-${zoneId}`;
-      if (emitted.has(key)) return;
-      emitted.add(key);
-      const group = opts?.taskOverride ?? grouped.get(key) ?? [];
-
-      // DP-DUPS (2026-10-21) · Aggregate ZoneDeliverableTarget rows
-      // across the top-zone's subtree. Pre-existing per-sub-zone ZDT
-      // rows live in the DB from before this change; they stay there
-      // untouched (no cleanup, no deletes). Reads fold every ZDT whose
-      // zoneId belongs to this top-zone's subtree (incl. the top-zone
-      // itself) into one aggregate:
-      //   • savedDate            → MIN  (earliest promise wins).
-      //   • savedMonths          → MIN  (same order as the date).
-      //   • savedDurationWeeks   → MAX  (longest planned span).
-      // Fall back to the deliverable-level default when no ZDT in the
-      // subtree carries that field. New saves write only against the
-      // top-zone id (the save payload uses r.zoneId, which is now the
-      // top-zone id by construction), so the aggregation converges to
-      // a single row per (deliverable × top-zone) over time.
-      const zoneTargets: any[] = Array.isArray(deliverable?.zoneTargets) ? deliverable.zoneTargets : [];
-      let aggDate: string | null = null;
-      let aggMonths: number | null = null;
-      let aggDurationWeeks: number | null = null;
-      if (zoneId == null) {
-        // Project Root bucket — match on zoneId=null only.
-        const match = zoneTargets.find((zt: any) => zt.zoneId == null);
-        aggDate = match?.targetDate ? String(match.targetDate).slice(0, 10) : null;
-        aggMonths = match?.targetMonths ?? null;
-        aggDurationWeeks = match?.estimatedDurationWeeks ?? null;
-      } else {
-        const descendants = descendantsByTopZone.get(zoneId);
-        for (const zt of zoneTargets) {
-          if (zt.zoneId == null) continue;
-          // In-subtree test: belongs to this top-zone's descendant set
-          // OR is the top-zone itself (defensive — a childless root may
-          // not appear in idMap, but descendantsByTopZone adds it via
-          // the self-mapping idMap entry; keep the explicit top-zone
-          // comparison so a stale map still rolls up correctly).
-          const inSubtree = zt.zoneId === zoneId || (descendants ? descendants.has(zt.zoneId) : false);
-          if (!inSubtree) continue;
-          if (zt.targetDate) {
-            const d = String(zt.targetDate).slice(0, 10);
-            if (aggDate == null || d < aggDate) aggDate = d;
-          }
-          if (zt.targetMonths != null) {
-            const m = Number(zt.targetMonths);
-            if (!Number.isNaN(m) && (aggMonths == null || m < aggMonths)) aggMonths = m;
-          }
-          if (zt.estimatedDurationWeeks != null) {
-            const w = Number(zt.estimatedDurationWeeks);
-            if (!Number.isNaN(w) && (aggDurationWeeks == null || w > aggDurationWeeks)) aggDurationWeeks = w;
-          }
-        }
-      }
-      const savedMonths = aggMonths ?? deliverable?.targetMonths ?? null;
-      const savedDate = aggDate ?? deliverable?.targetDate ?? null;
-      const savedDurationWeeks = aggDurationWeeks ?? deliverable?.estimatedDurationWeeks ?? null;
-      // §11 (2026-11-13) · Counted on the real `TaskStatus` enum — the
-      // legacy `done` / `to_do` / `blocked` values never matched, so no
-      // bar ever turned green and every bar read "in progress".
-      const { total: taskTotal, started: taskStarted, done: taskDone } = taskProgressCounts(group);
-      // DP-3 · Σ budgetHours across every task in this (zone × deliverable).
-      // Prisma serializes `Decimal` as a string on the wire, so coerce
-      // with `Number(...)` and treat null/undefined as 0.
-      const hours = group.reduce((acc, t) => acc + Number((t as any).budgetHours || 0), 0);
-      const taskList = group.map((t) => ({
-        id: t.id,
-        code: t.code ?? null,
-        name: t.name,
-        endDate: t.endDate ? String(t.endDate).slice(0, 10) : null,
-        // §5 (2026-11-09) — forward estimatedStartDate so the Gantt
-        // tooltip's chain line can print per-task start→end.
-        estimatedStartDate: (t as any).estimatedStartDate ? String((t as any).estimatedStartDate).slice(0, 10) : null,
-        status: t.status,
-        // bm2 2026-10-21 — forward the task's dependencies so DP Gantt
-        // can flag rows whose children have "endDate < predecessor's
-        // endDate" (planning.service now exposes dependsOn.endDate).
-        // §5 (2026-11-09) — the same array also carries `lag` +
-        // `lagUnit` straight from the TaskDependency row (returned
-        // alongside the dependsOn select), used by the chain tooltip.
-        dependencies: Array.isArray((t as any).dependencies) ? (t as any).dependencies : [],
-        // D7-Float (2026-11-03) · Scheduler-computed, surfaces as CP chip
-        // on the Gantt row and as a column in the DeliverableTasksModal.
-        float: (t as any).float ?? null,
-        onCriticalPath: Boolean((t as any).onCriticalPath),
-        // §14 (2026-11-15) · The task's due date was typed by a person —
-        // it is pinned and does not follow the deliverable target. Drives
-        // the "ידני" pill in the tasks modal and the Gantt bar's tooltip.
-        dueDateOverridden: Boolean((t as { dueDateOverridden?: boolean }).dueDateOverridden),
-      }));
-      // DPG-1 · Compute the top-level zone ancestor for this row. The
-      // `idMap` falls back to the zone's own id when the zone IS a root
-      // (so a root row's topLevelZoneId === zoneId). `zoneId=null` rows
-      // (orphan tasks, no-zones projects) bucket to the "Project Root"
-      // group — one group label everywhere no matter how many rows have
-      // zoneId=null.
-      const topLevelId: number | null = zoneId == null
-        ? null
-        : (topLevelZoneInfo.idMap.get(zoneId) ?? zoneId);
-      const topLevelName: string = topLevelId == null
-        ? 'Project Root'
-        : (topLevelZoneInfo.nameMap.get(topLevelId) ?? zoneName);
-      list.push({
-        key,
-        deliverableId: dId,
-        deliverableName: deliverable?.name ?? `Deliverable #${dId}`,
-        zoneId,
-        zoneName,
-        zoneType,
-        topLevelZoneId: topLevelId,
-        topLevelZoneName: topLevelName,
-        // Read-time fallback (2026-09-29): when the ProjectDeliverable
-        // row's `service` is null (historical rows created before the
-        // Template.phaseId inheritance was reliable), fall back to the
-        // source template's phase name. The API now includes it on
-        // every ProjectDeliverable read (project-deliverables.service.ts).
-        serviceName: deliverable?.service?.name ?? deliverable?.sourceTemplate?.phase?.name ?? null,
-        savedMonths,
-        savedDate: savedDate ? String(savedDate).slice(0, 10) : null,
-        savedDurationWeeks,
-        hours,
-        taskTotal,
-        taskStarted,
-        taskDone,
-        taskList,
-        readOnly: opts?.readOnly,
-        readOnlyReason: opts?.readOnlyReason,
-      });
-    };
-
-    // DP-DUPS (2026-10-21) · Iterate TOP-LEVEL zones only — the prior
-    // `zonesFlat` cross-product (which included every sub-zone from the
-    // DFS walk) multiplied each deliverable by every zone-tree node,
-    // producing 3-4 duplicate rows per deliverable in projects with
-    // sub-zones (see docs/bm2/dp-duplicates-investigation.md). Per-sub-
-    // zone ZDT rows and per-sub-zone task counts aggregate onto the
-    // single top-zone row via the subtree walks earlier in this memo.
-    //
-    // When the project has no zones at all we still emit a single
-    // "Project Root" row per deliverable so the grid isn't empty (bm2
-    // fix #1). Orphan tasks with zoneId=null fall through the overlay
-    // loop below, which also emits a Project Root row.
-    //
-    // DP Bug A (2026-10-21) — only emit the Project Root fallback when
-    // the planning query has DEFINITIVELY resolved. Previously the
-    // fallback also fired when `planningData` was still loading
-    // (undefined), which minted a Project Root row per deliverable on
-    // the first DP visit after a Planning mutation: the deliverables
-    // query is served from its 30s stale cache instantly while the
-    // planning query (invalidated by the mutation) is still refetching,
-    // so for one render `deliverables.length > 0 && !planningData` — the
-    // group header read "Project Root · N deliverables" until the user
-    // hard-reloaded. Hard reload masked it because planning data was
-    // typically back before paint. Preserving the legitimate "zero
-    // zones" fallback by gating on `planningIsLoading` only: once the
-    // query is NOT loading (either success with zones:[] or error), the
-    // fallback is correct.
-    const topLevelZones: ZoneNode[] = Array.isArray(planningData?.zones) ? planningData.zones : [];
-
-    // 2026-10-26 (DP cross-product fix, locked by Yulian) — build a
-    // per-deliverable set of ACTUAL top-level zone connections so the
-    // main emit loop no longer blankets every (deliverable × top-zone)
-    // pair with a row. A deliverable belongs under Zone Y iff:
-    //   • one of its Tasks has `zoneId` that resolves (via idMap) to Y, OR
-    //   • one of its ZoneDeliverableTarget rows has `zoneId` that
-    //     resolves to Y (direct or descendant).
-    // Null-zone entries (`null` in the Set) represent orphan tasks or
-    // ZDTs with `zoneId=null` → "Project Root" bucket.
-    //
-    // A deliverable with NO tasks AND NO ZDTs ends up with no entry /
-    // empty set; by Yulian's rule (option ב, 2026-10-26) those are
-    // hidden entirely from the grid instead of being showered across
-    // every zone column.
-    //
-    // Reuses `topLevelZoneInfo.idMap` already built above, so sub-zone
-    // ids resolve to their root ancestor and we don't double-count.
-    const connectionsByDeliverable = new Map<number, Set<number | null>>();
-    const addConnection = (dId: number, topZoneId: number | null) => {
-      let set = connectionsByDeliverable.get(dId);
-      if (!set) {
-        set = new Set<number | null>();
-        connectionsByDeliverable.set(dId, set);
-      }
-      set.add(topZoneId);
-    };
-    // Task-driven connections: project deliverable id + task's zoneId.
-    for (const t of tasks ?? []) {
-      const dId = (t as any).projectDeliverableId;
-      if (dId == null) continue;
-      const rawZoneId = (t as any).zoneId ?? null;
-      const topZoneId: number | null = rawZoneId == null
-        ? null
-        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
-      addConnection(dId, topZoneId);
-    }
-    // 2026-11-04 · B2 lock (Yulian, Option A). Snapshot the
-    // (deliverableId, topZoneId) pairs created by the task loop above.
-    // The ZDT loop below may only re-assert these pairs — a ZDT alone
-    // never invents a new (deliverable, zone) connection. Non-empty
-    // ZDTs still carry target data for already-connected pairs; that
-    // render path reads `deliverable.zoneTargets[]` directly in `emit`
-    // (see the aggregation block ~L483), independent of this map.
-    const taskConnectedPairs = new Map<number, Set<number | null>>();
-    for (const [dId, set] of connectionsByDeliverable) {
-      taskConnectedPairs.set(dId, new Set(set));
-    }
-    // ZDT-driven connections: pre-task planning intent (PM saved a
-    // target for the zone before any task was created). Walk every
-    // deliverable's zoneTargets[] and roll each one up to its root.
-    for (const d of deliverables) {
-      const zts: any[] = Array.isArray((d as any).zoneTargets) ? (d as any).zoneTargets : [];
-      for (const zt of zts) {
-        // 2026-11-03 · DP empty-ZDT regression (project 40). A ZDT row
-        // whose three target fields are ALL null is a ghost — it was
-        // written by the old "Save all" grid loop (now fixed in
-        // project-deliverables.service.ts) with no actual planning
-        // intent. Treat it as "not a connection" so the deliverable
-        // falls back to its task-driven zones only. A ZDT with any
-        // real value (date, months, or duration) still counts.
-        if (zt?.targetDate == null && zt?.targetMonths == null && zt?.estimatedDurationWeeks == null) continue;
-        if (zt?.zoneId == null) {
-          // B2 gate: only re-assert when a task of this deliverable
-          // already sits in Project Root (zoneId=null).
-          if (taskConnectedPairs.get(d.id)?.has(null)) addConnection(d.id, null);
-        } else {
-          const topZoneId = topLevelZoneInfo.idMap.get(zt.zoneId) ?? zt.zoneId;
-          // B2 gate: only re-assert when a task of this deliverable
-          // already landed in this top-zone.
-          if (taskConnectedPairs.get(d.id)?.has(topZoneId)) addConnection(d.id, topZoneId);
-        }
-      }
-    }
-
-    // 2026-10-26 · Filter deliverables to zones with an actual
-    // connection (Task.zoneId or ZDT); hide deliverables with no
-    // connections at all. See `connectionsByDeliverable` above.
-    for (const d of deliverables) {
-      const connections = connectionsByDeliverable.get(d.id);
-      if (!connections || connections.size === 0) {
-        // Deliverable has no tasks AND no ZDT — hide entirely
-        // (Yulian 2026-10-26, option ב). The old cross-product behavior
-        // emitted a row under every top-zone for this deliverable;
-        // option ב collapses it to zero rows.
-        continue;
-      }
-
-      if (topLevelZones.length === 0) {
-        // Project has no zones at all. Preserve the pre-fix "zero
-        // zones" fallback: emit a single Project Root row per
-        // deliverable (whose only connection is `null` by construction
-        // — tasks here can only carry zoneId=null). The planning-load
-        // gate stays so the group header doesn't flash while the
-        // planning query is still refetching after a mutation (see
-        // DP Bug A comment above).
-        if (!planningIsLoading) emit(d.id, d, null, 'Project Root');
-      } else {
-        // Zoned project: emit only (deliverable × top-zone) pairs where
-        // the deliverable has a task or ZDT connecting them.
-        for (const z of topLevelZones) {
-          if (!connections.has(z.id)) continue;
-          emit(d.id, d, z.id, z.name, z.zoneType);
-        }
-        // Project Root sibling row for orphan-task deliverables: a
-        // deliverable whose tasks live partly in Zone A and partly in
-        // zoneId=null should appear under BOTH Zone A and Project
-        // Root. The overlay loop below used to be the ONLY way these
-        // orphan rows surfaced; promoting them up here lets the main
-        // loop own emission so the overlay stays reserved for
-        // deleted-deliverable / missing-zone edge cases.
-        if (connections.has(null)) {
-          emit(d.id, d, null, 'Project Root');
-        }
-      }
-    }
-
-    // Overlay any task-only groups that didn't match a known deliverable
-    // (e.g. deliverable was deleted but tasks still reference it) or
-    // that landed on the synthetic root zone even when zones exist —
-    // preserves the pre-fix behavior for those edge cases. Because
-    // `grouped` is now keyed by top-level zone id (see roll-up above),
-    // we translate the task's raw zoneId to its top-level ancestor so
-    // the emitted row sits in the right bucket and matches the key
-    // format emit uses internally.
-    for (const [groupKey, group] of grouped) {
-      if (emitted.has(groupKey)) continue;
-      const first = group[0];
-      const dId: number = first.projectDeliverableId;
-      const rawZoneId: number | null = first.zoneId ?? null;
-      const topZoneId: number | null = rawZoneId == null
-        ? null
-        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
-      const topZone = topZoneId == null ? null : topLevelZones.find((z) => z.id === topZoneId);
-      const deliverable = deliverables.find((d) => d.id === dId);
-      emit(
-        dId,
-        deliverable,
-        topZoneId,
-        topZone?.name ?? (topZoneId == null ? 'Project Root' : `Zone #${topZoneId}`),
-        topZone?.zoneType,
-      );
-    }
-
-    // DP-EMPTY-3 — emit synthetic (read-only) rows for marker/template-
-    // only tasks. Zoned tasks get one row per TOP-LEVEL zone that holds
-    // a matching task (no cross-product — we don't know which zones
-    // the PM intends to plan against until they materialize the row).
-    // Root tasks (zoneId=null) get a "Project Root" row.
-    //
-    // DP-DUPS (2026-10-21) · `syntheticGrouped` is now keyed by top-
-    // zone (see roll-up above), so the zone lookup here uses the task's
-    // top-level ancestor. Previously a synthetic row was emitted per
-    // sub-zone, same multiplier as the real-row bug.
-    for (const [gKey, group] of syntheticGrouped) {
-      const first = group[0];
-      const rawZoneId: number | null = first.zoneId ?? null;
-      const topZoneId: number | null = rawZoneId == null
-        ? null
-        : (topLevelZoneInfo.idMap.get(rawZoneId) ?? rawZoneId);
-      const topZone = topZoneId == null ? null : topLevelZones.find((z) => z.id === topZoneId);
-      const dId = Number(gKey.split(':')[0]);
-      const syn = Array.from(syntheticByName.values()).find((s) => s.id === dId);
-      if (!syn) continue;
-      emit(
-        dId,
-        syn,
-        topZoneId,
-        topZone?.name ?? (topZoneId == null ? 'Project Root' : `Zone #${topZoneId}`),
-        topZone?.zoneType,
-        {
-          readOnly: true,
-          readOnlyReason: syn.readOnlyReason,
-          taskOverride: group,
-        },
-      );
-    }
-    // Sort: Commit 8 · Model B (drag-authoritative). Render order is
-    // ProjectDeliverable.sortOrder ASC, then Zone.sortOrder ASC as a
-    // tiebreak (so a deliverable's per-zone rows still cluster in a
-    // predictable order). "Project Root" rows (zoneId == null) drop
-    // below zoned ones inside the same deliverable so per-zone entries
-    // surface first. Name tiebreaks last so a run of zero sortOrder
-    // (pre-backfill data / fresh row) still renders deterministically.
-    //
-    // Model B rule: sortOrder is authoritative — a manual drag on
-    // planning-modal overrides the initial chronological seed, and this
-    // Gantt inherits that same order for its default view. (The Gantt's
-    // localStorage row-order layer sits on top and preserves any per-
-    // browser drag on THIS screen — see RowsView `rowOrder` state.)
-    const dSortOrderById = new Map<number, number>();
-    for (const d of deliverables) {
-      dSortOrderById.set(d.id, Number(d.sortOrder ?? 0));
-    }
-    const zSortOrderById = new Map<number, number>();
-    for (const z of zonesFlat) {
-      zSortOrderById.set(z.id, Number(z.sortOrder ?? 0));
-    }
-    return list.sort((a, b) => {
-      const dA = dSortOrderById.get(a.deliverableId) ?? 0;
-      const dB = dSortOrderById.get(b.deliverableId) ?? 0;
-      if (dA !== dB) return dA - dB;
-      // Same deliverable: zoned rows first, then Project Root last.
-      if (a.zoneId == null && b.zoneId != null) return 1;
-      if (b.zoneId == null && a.zoneId != null) return -1;
-      const zA = a.zoneId != null ? (zSortOrderById.get(a.zoneId) ?? 0) : 0;
-      const zB = b.zoneId != null ? (zSortOrderById.get(b.zoneId) ?? 0) : 0;
-      if (zA !== zB) return zA - zB;
-      const zNc = a.zoneName.localeCompare(b.zoneName);
-      if (zNc !== 0) return zNc;
-      return a.deliverableName.localeCompare(b.deliverableName);
-    });
-    // DPG-1 — `topLevelZoneInfo` participates in each row's bucket key
-    // (via `topLevelZoneId` / `topLevelZoneName`), so a zone-tree edit
-    // (new root / re-parent) invalidates and recomputes rows the same
-    // frame the planning payload lands.
-  }, [tasks, zonesFlat, deliverables, topLevelZoneInfo, planningIsLoading]);
+  // Still true from before: rows come only from tasks — a
+  // ZoneDeliverableTarget alone never creates one and a deliverable
+  // without tasks is hidden (option ב, 2026-10-26); tasks without a
+  // ProjectDeliverable whose deliverable still resolves become read-only
+  // rows (DP-EMPTY-3, `syntheticDeliverableOf`). With no tasks there are
+  // no rows, so the old "Project Root row per deliverable while planning
+  // is still loading" flash (DP Bug A) cannot happen; the loading gate
+  // below keeps the empty screen away during a refetch.
+  const dpTree = useMemo(
+    () => buildDpTree({
+      zones: Array.isArray(planningData?.zones) ? planningData.zones : [],
+      deliverables,
+      tasks,
+      syntheticOf: syntheticDeliverableOf,
+    }),
+    [planningData?.zones, deliverables, tasks],
+  );
+  type Row = DpLeaf;
+  const rows: Row[] = dpTree.leaves;
 
   // §10 (2026-11-13) · Reconcile drafts with the server whenever rows
   // change — MERGE, not reset. The previous effect re-seeded all three
@@ -1915,6 +1373,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     }
     return out;
   }, [rows, drafts, targetDateDrafts, baseDate, filterHasDue, serviceFilter]);
+  // §16 (2026-11-18) · A tab-level filter (due date / service) is on. The
+  // zone tree then leaves out zones with no matching row in their
+  // sub-tree; with no filter every zone is drawn, empty ones included.
+  const tabFilterActive = filterHasDue !== '' || serviceFilter.size > 0;
 
   // §11 (2026-11-13) · Keys of the UNFILTERED rows. The Gantt reconciles
   // its saved row order against these, so a row hidden by a filter keeps
@@ -1932,7 +1394,10 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
     // moment the user turns grouping back on.
     if (!grouped) return;
     const keys = new Set<string>();
-    for (const r of visibleRows) keys.add(rowDimKey(r, outerDim));
+    // §16 (2026-11-18) · Zone grouping draws the zone tree — every node
+    // (at every depth, empty zones included) collapses.
+    if (outerDim === 'zone') for (const n of dpTree.nodes) keys.add(n.key);
+    else for (const r of visibleRows) keys.add(rowDimKey(r, outerDim));
     setCollapsed(keys);
   };
   const expandAll = () => setCollapsed(new Set());
@@ -2443,8 +1908,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           grouped={grouped}
           outerDim={outerDim}
           innerDim={innerDim}
-          topLevelZoneTypeMap={topLevelZoneInfo.typeMap}
-          topLevelZoneSortOrderMap={topLevelZoneInfo.sortOrderMap}
+          zoneNodes={dpTree.nodes}
+          filterActive={tabFilterActive}
         />
       ) : (
         <GanttView
@@ -2465,8 +1930,8 @@ export function DeliverablePlanningTab({ projectId }: { projectId: number }) {
           grouped={grouped}
           outerDim={outerDim}
           innerDim={innerDim}
-          topLevelZoneTypeMap={topLevelZoneInfo.typeMap}
-          topLevelZoneSortOrderMap={topLevelZoneInfo.sortOrderMap}
+          zoneNodes={dpTree.nodes}
+          filterActive={tabFilterActive}
         />
       )}
 
@@ -2499,8 +1964,8 @@ function TableView({
   grouped,
   outerDim,
   innerDim,
-  topLevelZoneTypeMap,
-  topLevelZoneSortOrderMap,
+  zoneNodes,
+  filterActive,
 }: {
   // Needed for `useProjectTabState` (per-project persistence of sort,
   // per-column filters, open-filter popover). Without it a tab round-
@@ -2536,12 +2001,14 @@ function TableView({
   grouped: boolean;
   outerDim: DPGroupDim;
   innerDim: DPGroupDim | null;
-  // DP-4 parity (2026-10-21) — top-level zone type (for the Building badge)
-  // and sort order (for Planning-tab parity) keyed by top-level zone id.
-  // Threaded in from the parent's `topLevelZoneInfo` so TableView doesn't
-  // have to re-walk the zone tree.
-  topLevelZoneTypeMap: Map<number, string | undefined>;
-  topLevelZoneSortOrderMap: Map<number, number>;
+  // §16 (2026-11-18) · The project's zone tree (every zone, depth-first,
+  // Project Root first when used). Grouped by Zone, the table draws it:
+  // a header per node, the rows of that zone under it.
+  zoneNodes: DpZoneNode[];
+  // §16 · A tab-level filter (due date / service) is on — zones without a
+  // matching row in their sub-tree are then left out (the column filters
+  // of this table count too, see `treeHideEmpty`).
+  filterActive: boolean;
 }) {
   // Per-column filters — arrays of selected values (empty = no filter).
   // A row passes a column filter if its value is IN the selected array.
@@ -2733,14 +2200,101 @@ function TableView({
     return { totalWeeks, totalHours, latestDate };
   };
 
+  // §16 (2026-11-18) · Zone grouping draws the zone TREE. With no filter
+  // every zone is a header (empty zones included); while a filter is on —
+  // a tab-level one or a column filter of this table — zones with no
+  // matching row anywhere in their sub-tree are left out.
+  const isTree = grouped && outerDim === 'zone';
+  const colFilterActive = ALL_COLS.some((c) => isColFilterActive(colFilters[c], optionsFor(c).map((o) => o.value)));
+  const treeHideEmpty = filterActive || colFilterActive;
+
   // Sort within the same group. UI-14 — groups are now bucketed by the
   // configurable outer dim (default: Deliverable). readOnly propagates
   // from the zone row (DP-EMPTY-3) ONLY when outerDim='deliverable' so
   // we keep the "not yet planned" badge honest; the flag has no meaning
   // under a Zone or Service bucketing (a zone/service bucket mixes
   // real and synthetic rows).
+  // §16 (2026-11-18) · A group now carries two row lists: `zones` — every
+  // row its header rolls up — and `rows` — the rows drawn right under it.
+  // They are the same list except in the zone tree, where a node header
+  // rolls up its whole sub-tree but only its own zone's rows sit under
+  // it (the child zones follow as headers of their own). `depth` is the
+  // node's level in the tree (zone tree only).
   const sortedGroups = useMemo(() => {
-    type Group = { key: string; label: string; deliverableId: number; serviceName: string | null; zones: any[]; readOnly: boolean; readOnlyReason: string | null };
+    type Group = {
+      key: string;
+      label: string;
+      deliverableId: number;
+      serviceName: string | null;
+      zones: DpLeaf[];
+      rows: DpLeaf[];
+      readOnly: boolean;
+      readOnlyReason: string | null;
+      depth?: number;
+      zoneType?: string;
+    };
+    // Sort the rows of one group by the active column.
+    const zsign = sort.dir === 'asc' ? 1 : -1;
+    const zcmp = (a: string | number, b: string | number) => (a > b ? 1 : a < b ? -1 : 0) * zsign;
+    const sortRowsInGroup = (list: DpLeaf[]) => {
+      // §12 (2026-11-14) · Flat list: there is no group order to carry the
+      // Deliverable / Service sort, so the ROWS sort by that column (zone
+      // name as the tiebreak). Grouped, these two columns keep sorting
+      // the groups, and the rows inside by zone name, as before.
+      if (!grouped && (sort.col === 'deliverable' || sort.col === 'service')) {
+        const nameOf = (r: { deliverableName?: string | null; serviceName?: string | null }) =>
+          String((sort.col === 'deliverable' ? r.deliverableName : r.serviceName) ?? '').toLowerCase();
+        list.sort((a, b) =>
+          zcmp(nameOf(a), nameOf(b)) || zcmp(String(a.zoneName ?? '').toLowerCase(), String(b.zoneName ?? '').toLowerCase()));
+      } else if (sort.col === 'zone' || sort.col === 'deliverable' || sort.col === 'service') {
+        list.sort((a, b) => zcmp(a.zoneName.toLowerCase(), b.zoneName.toLowerCase()));
+      } else if (sort.col === 'months') {
+        list.sort((a, b) => zcmp(Number(effectiveMonths(a) || 0), Number(effectiveMonths(b) || 0)));
+      } else if (sort.col === 'duration') {
+        list.sort((a, b) => zcmp(Number(effectiveDuration(a) || 0), Number(effectiveDuration(b) || 0)));
+      } else if (sort.col === 'hours') {
+        list.sort((a, b) => zcmp(effectiveHours(a), effectiveHours(b)));
+      } else if (sort.col === 'target') {
+        list.sort((a, b) => zcmp(effectiveDate(a) || '', effectiveDate(b) || ''));
+      }
+      return list;
+    };
+
+    // §16 (2026-11-18) · Zone tree: the nodes keep TREE order (API order,
+    // Project Root first — what DP-4 parity and DPG-1c asked of the old
+    // top-zone groups, now at every depth) whatever the sort; inside each
+    // zone the rows sort by the active column exactly like rows inside a
+    // group. Sorting the whole list first and then splitting it per zone
+    // keeps each zone's rows in that sorted order (the sort is stable, so
+    // rows that tie — e.g. same zone name — keep the PD sortOrder).
+    if (isTree) {
+      const slots = flattenZoneTree(zoneNodes, sortRowsInGroup([...filtered]), {
+        collapsed,
+        hideEmpty: treeHideEmpty,
+      });
+      const out: Group[] = [];
+      for (const s of slots) {
+        if (s.kind === 'node') {
+          out.push({
+            key: s.node.key,
+            label: s.node.name,
+            deliverableId: 0,
+            serviceName: null,
+            zones: s.subtreeLeaves,
+            rows: [],
+            readOnly: false,
+            readOnlyReason: null,
+            depth: s.node.depth,
+            zoneType: s.node.zoneType,
+          });
+        } else {
+          // A node's own rows come right after it (`flattenZoneTree`).
+          out[out.length - 1]?.rows.push(s.leaf);
+        }
+      }
+      return out;
+    }
+
     const map = new Map<string, Group>();
     for (const r of filtered) {
       const k = rowGroupKey(r, grouped, outerDim);
@@ -2754,6 +2308,7 @@ function TableView({
           deliverableId: r.deliverableId,
           serviceName: r.serviceName,
           zones: [],
+          rows: [],
           readOnly: outerDim === 'deliverable' ? !!r.readOnly : false,
           readOnlyReason: outerDim === 'deliverable' ? (r.readOnlyReason ?? null) : null,
         });
@@ -2765,23 +2320,7 @@ function TableView({
     // Sort the groups
     const sign = sort.dir === 'asc' ? 1 : -1;
     const cmp = (a: string | number, b: string | number) => (a > b ? 1 : a < b ? -1 : 0) * sign;
-    // DP-4 parity (2026-10-21) — when grouping by Zone, the default
-    // "deliverable" sort (which falls back to label alphabetical) differs
-    // from Planning's canonical `sortOrder ASC, name ASC` order. For
-    // zone grouping on the default sort, follow Planning: use the top-
-    // level zone's `sortOrder` with a name tiebreak. Picking a column
-    // explicitly (clicking a header) still overrides this.
-    if (outerDim === 'zone' && sort.col === 'deliverable') {
-      groups.sort((a, b) => {
-        const aTopId = a.zones[0]?.topLevelZoneId as number | null | undefined;
-        const bTopId = b.zones[0]?.topLevelZoneId as number | null | undefined;
-        const aOrder = aTopId == null ? Number.POSITIVE_INFINITY : (topLevelZoneSortOrderMap.get(aTopId) ?? 0);
-        const bOrder = bTopId == null ? Number.POSITIVE_INFINITY : (topLevelZoneSortOrderMap.get(bTopId) ?? 0);
-        if (aOrder !== bOrder) return cmp(aOrder, bOrder);
-        return cmp(a.label.toLowerCase(), b.label.toLowerCase());
-      });
-    }
-    else if (sort.col === 'deliverable') groups.sort((a, b) => cmp(a.label.toLowerCase(), b.label.toLowerCase()));
+    if (sort.col === 'deliverable') groups.sort((a, b) => cmp(a.label.toLowerCase(), b.label.toLowerCase()));
     else if (sort.col === 'service') groups.sort((a, b) => cmp((a.serviceName ?? '').toLowerCase(), (b.serviceName ?? '').toLowerCase()));
     else if (sort.col === 'zone') groups.sort((a, b) => cmp((a.zones[0]?.zoneName ?? '').toLowerCase(), (b.zones[0]?.zoneName ?? '').toLowerCase()));
     else if (sort.col === 'months') groups.sort((a, b) => cmp(Number(effectiveMonths(a.zones[0]) || 0), Number(effectiveMonths(b.zones[0]) || 0)));
@@ -2789,47 +2328,10 @@ function TableView({
     else if (sort.col === 'hours') groups.sort((a, b) => cmp(effectiveHours(a.zones[0]), effectiveHours(b.zones[0])));
     else if (sort.col === 'target') groups.sort((a, b) => cmp(effectiveDate(a.zones[0]) || '', effectiveDate(b.zones[0]) || ''));
 
-    // DPG-1c (2026-10-20) — Pin "Project Root" (orphan tasks, zoneId=null)
-    // to the TOP of a Zone grouping, regardless of the active column sort.
-    // The group only EXISTS when at least one row has `topLevelZoneId=null`,
-    // so pinning this way never conjures an empty synthetic row: no root
-    // tasks ⇒ no `zone:root` group in `map` ⇒ nothing to hoist. Idempotent
-    // on repeated sorts because `splice` removes before `unshift` re-adds.
-    if (outerDim === 'zone') {
-      const rootIdx = groups.findIndex((g) => g.key === 'zone:root');
-      if (rootIdx > 0) {
-        const [root] = groups.splice(rootIdx, 1);
-        groups.unshift(root);
-      }
-    }
-
-    // Sort zone rows within each group
-    for (const g of groups) {
-      const zsign = sort.dir === 'asc' ? 1 : -1;
-      const zcmp = (a: string | number, b: string | number) => (a > b ? 1 : a < b ? -1 : 0) * zsign;
-      // §12 (2026-11-14) · Flat list: there is no group order to carry the
-      // Deliverable / Service sort, so the ROWS sort by that column (zone
-      // name as the tiebreak). Grouped, these two columns keep sorting
-      // the groups, and the rows inside by zone name, as before.
-      if (!grouped && (sort.col === 'deliverable' || sort.col === 'service')) {
-        const nameOf = (r: { deliverableName?: string | null; serviceName?: string | null }) =>
-          String((sort.col === 'deliverable' ? r.deliverableName : r.serviceName) ?? '').toLowerCase();
-        g.zones.sort((a, b) =>
-          zcmp(nameOf(a), nameOf(b)) || zcmp(String(a.zoneName ?? '').toLowerCase(), String(b.zoneName ?? '').toLowerCase()));
-      } else if (sort.col === 'zone' || sort.col === 'deliverable' || sort.col === 'service') {
-        g.zones.sort((a: any, b: any) => zcmp(a.zoneName.toLowerCase(), b.zoneName.toLowerCase()));
-      } else if (sort.col === 'months') {
-        g.zones.sort((a: any, b: any) => zcmp(Number(effectiveMonths(a) || 0), Number(effectiveMonths(b) || 0)));
-      } else if (sort.col === 'duration') {
-        g.zones.sort((a: any, b: any) => zcmp(Number(effectiveDuration(a) || 0), Number(effectiveDuration(b) || 0)));
-      } else if (sort.col === 'hours') {
-        g.zones.sort((a: any, b: any) => zcmp(effectiveHours(a), effectiveHours(b)));
-      } else if (sort.col === 'target') {
-        g.zones.sort((a: any, b: any) => zcmp(effectiveDate(a) || '', effectiveDate(b) || ''));
-      }
-    }
+    // Sort zone rows within each group — they are also the rows drawn.
+    for (const g of groups) g.rows = sortRowsInGroup(g.zones);
     return groups;
-  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts, grouped, outerDim, topLevelZoneSortOrderMap]);
+  }, [filtered, sort, drafts, durationDrafts, targetDateDrafts, grouped, outerDim, isTree, zoneNodes, collapsed, treeHideEmpty]);
 
   const toggleSort = (col: typeof sort.col) => {
     setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: 'asc' }));
@@ -2918,6 +2420,9 @@ function TableView({
             // §12 (2026-11-14) · Ungrouped: the single bucket has no header
             // row and cannot be collapsed.
             const isCollapsed = grouped && collapsed.has(g.key);
+            // §16 (2026-11-18) · In the zone tree `zones` is the node's
+            // whole sub-tree: the Σ cells and the "· N deliverables" pill
+            // cover every row below the node, not only its own zone's.
             const rollup = groupRollup(g.zones);
             const groupBodyId = `deliv-group-${g.key}`;
             const subCount = g.zones.length;
@@ -2956,7 +2461,11 @@ function TableView({
                 aria-controls={groupBodyId}
                 tabIndex={0}
               >
-                <td className="px-4 py-2 text-[12px] font-bold text-slate-700 dark:text-slate-200">
+                {/* §16 (2026-11-18) · Zone tree: indented by the node's level. */}
+                <td
+                  className="px-4 py-2 text-[12px] font-bold text-slate-700 dark:text-slate-200"
+                  style={isTree ? treePadding(16, g.depth ?? 0) : undefined}
+                >
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -2988,12 +2497,12 @@ function TableView({
                             rendered a slate "Zone" fallback that drifted
                             visually from Planning's amber pill, so a PM
                             looking for the amber pill read it as
-                            "missing".) */}
+                            "missing".)
+                        §16 (2026-11-18) · Every node of the zone tree
+                        badges its OWN zone type (a level reads "Level"). */}
                     {(() => {
                       if (outerDim !== 'zone' || g.key === 'zone:root') return null;
-                      const topId = g.zones[0]?.topLevelZoneId as number | null | undefined;
-                      if (topId == null) return null;
-                      const zt = topLevelZoneTypeMap.get(topId);
+                      const zt = g.zoneType;
                       const style = zt ? ZONE_TYPE_BADGE[zt] : undefined;
                       if (!zt || !style) return null;
                       const label = ZONE_DISPLAY[zt]?.label ?? zt;
@@ -3058,7 +2567,7 @@ function TableView({
                 </td>
               </tr>
               )}
-              {!isCollapsed && g.zones.map((r: any) => {
+              {!isCollapsed && g.rows.map((r) => {
                 const draft = drafts[r.key] ?? '';
                 const durDraft = durationDrafts[r.key] ?? '';
                 // §10 (2026-11-13) · The date cell shows the row's
@@ -3087,9 +2596,11 @@ function TableView({
                     {/* §12 (2026-11-14) · Under a group header this cell is
                         a "—" (the header carries the name). Ungrouped
                         there is no header, so the row names its own
-                        deliverable here. */}
+                        deliverable here.
+                        §16 (2026-11-18) · Zone tree: indented one level
+                        below the zone the row hangs under. */}
                     {grouped
-                      ? <td className="px-4 py-2 text-slate-400 dark:text-slate-500">—</td>
+                      ? <td className="px-4 py-2 text-slate-400 dark:text-slate-500" style={isTree ? treePadding(16, (r.depth ?? 0) + 1) : undefined}>—</td>
                       : <td className="px-4 py-2 font-semibold text-slate-700 dark:text-slate-200"><span className="truncate">{r.deliverableName}</span></td>}
                     <td className="px-4 py-2 text-slate-700 dark:text-slate-200">
                       {/* UI-14 — the sub-column label switches to the
@@ -3375,8 +2886,8 @@ function GanttView({
   grouped,
   outerDim,
   innerDim,
-  topLevelZoneTypeMap,
-  topLevelZoneSortOrderMap,
+  zoneNodes,
+  filterActive,
 }: {
   projectId: number;
   // The FILTERED rows (what is drawn) …
@@ -3408,11 +2919,12 @@ function GanttView({
   grouped: boolean;
   outerDim: DPGroupDim;
   innerDim: DPGroupDim | null;
-  // DP-4 parity (2026-10-21) — top-level zone type (for the Building
-  // badge) + sort order (for Planning-tab parity). Keyed by top-level
-  // zone id; threaded in from the parent's `topLevelZoneInfo`.
-  topLevelZoneTypeMap: Map<number, string | undefined>;
-  topLevelZoneSortOrderMap: Map<number, number>;
+  // §16 (2026-11-18) · The project's zone tree (every zone, depth-first,
+  // Project Root first when used) — drawn when grouped by Zone — and
+  // whether a tab-level filter is on (zones with no matching row in their
+  // sub-tree are then left out).
+  zoneNodes: DpZoneNode[];
+  filterActive: boolean;
 }) {
   // Row order — persisted per browser via localStorage. Rebuilt from
   // the incoming rows whenever the row set changes, preserving any
@@ -3530,6 +3042,12 @@ function GanttView({
   // of the Gantt iterate this list in lockstep so the label column and
   // the timeline column stay vertically aligned when groups collapse/
   // expand.
+  // §16 (2026-11-18) · Grouped by Zone the slots are the zone TREE
+  // (`flattenZoneTree`): a `group` slot per zone node at every depth —
+  // empty zones included unless a filter is on — followed by the bars of
+  // that zone's own rows, then by its child zones. A node's rollup (and
+  // its DPG-3 drag) covers every row of its sub-tree. Inside a zone the
+  // bars keep the saved row order (default: PD sortOrder).
   type GanttGroup = {
     kind: 'group';
     key: string;             // outer-dim group key (collapse-set membership)
@@ -3538,12 +3056,9 @@ function GanttView({
     zones: any[];
     isCollapsed: boolean;
     zoneCount: number;
-    // DP-DUPS (2026-10-21) · Count of DISTINCT deliverables in this
-    // bucket. After the per-sub-zone row dedup `zoneCount` should equal
-    // this value for Zone-grouping buckets (one row per deliverable),
-    // but keep both: the Zone-header pill reads this field so a future
-    // regression that re-introduces per-sub-zone rows still shows a
-    // sane "N deliverables" count instead of inflated row count.
+    // The number the Zone header's pill shows. §16 (2026-11-18) · In the
+    // zone tree: the rows (deliverables) of the node's whole sub-tree.
+    // Other dims do not show it (they show `zoneCount`).
     uniqueDeliverableCount: number;
     hoursSum: number;
     latestTargetMs: number | null;
@@ -3564,64 +3079,22 @@ function GanttView({
     // 'deliverable' (zone/service buckets can mix real + synthetic).
     readOnly: boolean;
     readOnlyReason: string | null;
+    // §16 (2026-11-18) · Zone tree only — the node's level (indent) and
+    // its OWN zone type (badge).
+    depth?: number;
+    zoneType?: string;
   };
   type GanttZoneSlot = { kind: 'zone'; r: any; zoneIdx: number };
   type GanttSlot = GanttGroup | GanttZoneSlot;
+  const isTree = grouped && outerDim === 'zone';
   const displaySlots: GanttSlot[] = useMemo(() => {
     // §12 (2026-11-14) · Ungrouped → just the rows, in their saved order.
     if (!grouped) return orderedRows.map((r, idx): GanttSlot => ({ kind: 'zone', r, zoneIdx: idx }));
-    const groupOrder: string[] = [];
-    const groupZones = new Map<string, { z: any; zoneIdx: number }[]>();
-    orderedRows.forEach((r, idx) => {
-      const k = rowDimKey(r, outerDim);
-      if (!groupZones.has(k)) {
-        groupOrder.push(k);
-        groupZones.set(k, []);
-      }
-      groupZones.get(k)!.push({ z: r, zoneIdx: idx });
-    });
-    // DP-4 parity (2026-10-21) — when grouping by Zone, follow Planning
-    // tab's canonical order: top-level zone's `sortOrder` ASC (API-side
-    // `[sortOrder: asc, createdAt: asc]`), tiebroken by name. Encounter
-    // order from `orderedRows` is non-deterministic across projects (it
-    // depends on which deliverable's first row happens to land under a
-    // given top-level zone), which drove the visible drift between the
-    // two tabs. Resorting here keeps DP in lockstep with Planning.
-    if (outerDim === 'zone') {
-      groupOrder.sort((aKey, bKey) => {
-        const aRow = groupZones.get(aKey)![0]?.z;
-        const bRow = groupZones.get(bKey)![0]?.z;
-        const aTopId = aRow?.topLevelZoneId as number | null | undefined;
-        const bTopId = bRow?.topLevelZoneId as number | null | undefined;
-        const aOrder = aTopId == null ? Number.POSITIVE_INFINITY : (topLevelZoneSortOrderMap.get(aTopId) ?? 0);
-        const bOrder = bTopId == null ? Number.POSITIVE_INFINITY : (topLevelZoneSortOrderMap.get(bTopId) ?? 0);
-        if (aOrder !== bOrder) return aOrder - bOrder;
-        const aName = (aRow?.topLevelZoneName ?? '').toLowerCase();
-        const bName = (bRow?.topLevelZoneName ?? '').toLowerCase();
-        return aName < bName ? -1 : aName > bName ? 1 : 0;
-      });
-    }
-    // DPG-1c (2026-10-20) — Pin "Project Root" group (orphan tasks with
-    // `topLevelZoneId=null`) to the top of a Zone grouping, so the PM
-    // sees unassigned tasks before per-zone rollups. The group only
-    // exists when at least one row keyed to `zone:root`, so this never
-    // introduces an empty synthetic row. Runs AFTER the sortOrder pass
-    // above so Project Root always ends up at index 0.
-    if (outerDim === 'zone') {
-      const idx = groupOrder.indexOf('zone:root');
-      if (idx > 0) {
-        groupOrder.splice(idx, 1);
-        groupOrder.unshift('zone:root');
-      }
-    }
-    const out: GanttSlot[] = [];
-    for (const gKey of groupOrder) {
-      const entries = groupZones.get(gKey)!;
-      const zonesArr = entries.map((e) => e.z);
-      const isCollapsed = collapsed.has(gKey);
-      // Rollup: sum hours, find latest resolved target, find earliest
-      // resolved start (target − durationWeeks × 7d). Uses the same
-      // resolution as GanttRow (§10 · `resolveTargetIso`).
+    // One group slot: its rows (`zonesArr`) rolled up. Sum hours, find
+    // the latest resolved target, find the earliest resolved start
+    // (target − durationWeeks × 7d). Uses the same resolution as GanttRow
+    // (§10 · `resolveTargetIso`).
+    const groupSlot = (gKey: string, label: string, zonesArr: DpLeaf[], isCollapsed: boolean): GanttGroup => {
       let latestTgt = -Infinity;
       let earliestStart = Infinity;
       let hoursSum = 0;
@@ -3657,18 +3130,15 @@ function GanttView({
       // "not yet planned" badge from its first row.
       const groupReadOnly = outerDim === 'deliverable' && !!zonesArr[0]?.readOnly;
       const groupReadOnlyReason = outerDim === 'deliverable' ? (zonesArr[0]?.readOnlyReason ?? null) : null;
-      out.push({
+      return {
         kind: 'group',
         key: gKey,
         deliverableId: zonesArr[0]?.deliverableId ?? 0,
-        label: rowDimLabel(zonesArr[0] ?? {}, outerDim),
+        label,
         zones: zonesArr,
         isCollapsed,
         zoneCount: zonesArr.length,
-        // DP-DUPS (2026-10-21) · Unique deliverable count for the
-        // Zone-grouping header pill — see the field comment on
-        // GanttGroup for why it's separate from zoneCount.
-        uniqueDeliverableCount: new Set(zonesArr.map((z: any) => z.deliverableId)).size,
+        uniqueDeliverableCount: new Set(zonesArr.map((z) => z.deliverableKey)).size,
         hoursSum,
         latestTargetMs,
         earliestStartMs,
@@ -3679,13 +3149,51 @@ function GanttView({
         spanWeeks,
         readOnly: groupReadOnly,
         readOnlyReason: groupReadOnlyReason,
-      });
+      };
+    };
+
+    if (isTree) {
+      // `zoneIdx` stays the row's index in `orderedRows` — the visible
+      // order `handleReorder` resolves a drop against.
+      const idxOf = new Map<string, number>(orderedRows.map((r, i): [string, number] => [r.key, i]));
+      const out: GanttSlot[] = [];
+      for (const s of flattenZoneTree(zoneNodes, orderedRows, { collapsed, hideEmpty: filterActive })) {
+        if (s.kind === 'node') {
+          out.push({
+            ...groupSlot(s.node.key, s.node.name, s.subtreeLeaves, s.collapsed),
+            uniqueDeliverableCount: s.subtreeLeaves.length,
+            depth: s.node.depth,
+            zoneType: s.node.zoneType,
+          });
+        } else {
+          out.push({ kind: 'zone', r: s.leaf, zoneIdx: idxOf.get(s.leaf.key) ?? 0 });
+        }
+      }
+      return out;
+    }
+
+    const groupOrder: string[] = [];
+    const groupZones = new Map<string, { z: any; zoneIdx: number }[]>();
+    orderedRows.forEach((r, idx) => {
+      const k = rowDimKey(r, outerDim);
+      if (!groupZones.has(k)) {
+        groupOrder.push(k);
+        groupZones.set(k, []);
+      }
+      groupZones.get(k)!.push({ z: r, zoneIdx: idx });
+    });
+    const out: GanttSlot[] = [];
+    for (const gKey of groupOrder) {
+      const entries = groupZones.get(gKey)!;
+      const zonesArr = entries.map((e) => e.z);
+      const isCollapsed = collapsed.has(gKey);
+      out.push(groupSlot(gKey, rowDimLabel(zonesArr[0] ?? {}, outerDim), zonesArr, isCollapsed));
       if (!isCollapsed) {
         for (const { z, zoneIdx } of entries) out.push({ kind: 'zone', r: z, zoneIdx });
       }
     }
     return out;
-  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, grouped, outerDim, topLevelZoneSortOrderMap]);
+  }, [orderedRows, collapsed, drafts, durationDrafts, targetDateDrafts, computePreview, grouped, outerDim, isTree, zoneNodes, filterActive]);
 
   // §15 (2026-11-16) · Task sub-bars + lanes of every visible zone row,
   // keyed by row key. Computed once here and used twice: GanttRow draws
@@ -3704,6 +3212,9 @@ function GanttView({
 
   // §12 (2026-11-14) · Row key → group key, for the within-group reorder
   // rule (`canReorderOnto`). Ungrouped, every row shares one key.
+  // §16 (2026-11-18) · In the zone tree a row's group key is its OWN zone
+  // (`rowDimKey` → `zone:<zoneId>`), i.e. the node it hangs under: rows
+  // reorder only among the rows of the same zone.
   const groupOfRow = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of orderedRows) m.set(r.key, rowGroupKey(r, grouped, outerDim));
@@ -4345,6 +3856,8 @@ function GanttView({
                   aria-expanded={!slot.isCollapsed}
                   aria-controls={groupBodyId}
                   tabIndex={0}
+                  // §16 (2026-11-18) · Zone tree: indented by the node's level.
+                  style={isTree ? treePadding(12, slot.depth ?? 0) : undefined}
                 >
                   <button
                     type="button"
@@ -4365,12 +3878,12 @@ function GanttView({
                       header: only when outer dim is Zone, not the
                       synthetic `zone:root` bucket, and the top-level
                       zoneType is known. See the TableView badge comment
-                      above for the "no mystery slate pill" rationale. */}
+                      above for the "no mystery slate pill" rationale.
+                      §16 (2026-11-18) · Every node of the zone tree badges
+                      its OWN zone type. */}
                   {(() => {
                     if (outerDim !== 'zone' || slot.key === 'zone:root') return null;
-                    const topId = slot.zones[0]?.topLevelZoneId as number | null | undefined;
-                    if (topId == null) return null;
-                    const zt = topLevelZoneTypeMap.get(topId);
+                    const zt = slot.zoneType;
                     const style = zt ? ZONE_TYPE_BADGE[zt] : undefined;
                     if (!zt || !style) return null;
                     const label = ZONE_DISPLAY[zt]?.label ?? zt;
@@ -4398,10 +3911,10 @@ function GanttView({
                   )}
                   <span className="ml-auto text-[10px] font-medium text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
                     {/* DP-DUPS (2026-10-21) · For a Zone bucket show
-                        the UNIQUE deliverable count (what the PM reads
-                        as "N deliverables"); for the other dims
-                        (deliverable, service) the row count is the
-                        correct quantity. */}
+                        the deliverable count (what the PM reads as "N
+                        deliverables"; §16 — the rows of the node's whole
+                        sub-tree); for the other dims (deliverable,
+                        service) the row count is the correct quantity. */}
                     {outerDim === 'zone' ? slot.uniqueDeliverableCount : slot.zoneCount}
                     {outerDim === 'deliverable' ? 'z' : ''}
                     {slot.hoursSum > 0 ? ` · ${slot.hoursSum}h` : ''}
@@ -4436,7 +3949,9 @@ function GanttView({
             return (
               <div
                 key={r.key}
-                style={{ height: labelRowHeightPx }}
+                // §16 (2026-11-18) · Zone tree: indented one level below
+                // the zone the row hangs under.
+                style={{ height: labelRowHeightPx, ...(isTree ? treePadding(24, (r.depth ?? 0) + 1) : {}) }}
                 draggable
                 onDragStart={() => setDragKey(r.key)}
                 onDragEnd={() => { setDragKey(null); setDropIndicatorIdx(null); }}
@@ -5680,7 +5195,14 @@ function DeliverableTasksModal({
   // (`/deliverables/:id/…`) takes a ZoneDeliverableTarget id, so posting
   // `row.deliverableId` to it 404'd — or returned ANOTHER deliverable's
   // schedule whenever the two id spaces happened to collide.
-  const dryRunPath = `/project-deliverables/${row.deliverableId}/schedule/dry-run`;
+  // §16 (2026-11-18) · A row can hold the tasks of several
+  // ProjectDeliverables (duplicates of one source template), and the
+  // dry-run is per ProjectDeliverable: it is asked once per PD of the row
+  // (same zone / anchor / release set) and the answers are merged by task
+  // id (`mergeDryRunPayloads`). The target Save below writes one batch
+  // item per PD for the same reason. Synthetic rows have no PD — no dry-run.
+  const pdIds = useMemo(() => rowProjectDeliverableIds(row), [row]);
+  const dryRunPath = (pdId: number) => `/project-deliverables/${pdId}/schedule/dry-run`;
   type DryRunPayload = {
     scheduled: Array<{
       taskId: number;
@@ -5702,25 +5224,27 @@ function DeliverableTasksModal({
     // release alone is enough to ask — the dry-run then runs against the
     // SAVED target, so a pinned task can be handed back to the scheduler
     // without moving the target.
-    queryKey: ['deliv-preview', row.deliverableId, row.zoneId ?? null, debouncedTarget, releasedIds.join(',')],
+    queryKey: ['deliv-preview', pdIds.join(','), row.zoneId ?? null, debouncedTarget, releasedIds.join(',')],
     enabled:
-      Boolean(row.deliverableId) &&
+      pdIds.length > 0 &&
       Boolean(debouncedTarget) &&
       (debouncedTarget !== row.savedDate || releasedIds.length > 0),
     // A preview must not hammer the server on errors — the failure is
     // surfaced next to the picker instead (see `previewNote`).
     retry: false,
     queryFn: async (): Promise<DryRunPayload> => {
-      const r = await client.post(dryRunPath, {
-        zoneId: row.zoneId ?? null,
-        anchorDate: debouncedTarget,
-        ...(releasedIds.length > 0 ? { releaseOverrideTaskIds: releasedIds } : {}),
-      });
-      // Every API response is wrapped as `{ success, data }`. Reading
-      // `r.data.scheduled` directly (the pre-§10 code) was always
-      // undefined, so even a 200 previewed nothing.
-      const payload = r.data?.data ?? r.data;
-      return (payload ?? { scheduled: [] }) as DryRunPayload;
+      const payloads = await Promise.all(pdIds.map(async (pdId) => {
+        const r = await client.post(dryRunPath(pdId), {
+          zoneId: row.zoneId ?? null,
+          anchorDate: debouncedTarget,
+          ...(releasedIds.length > 0 ? { releaseOverrideTaskIds: releasedIds } : {}),
+        });
+        // Every API response is wrapped as `{ success, data }`. Reading
+        // `r.data.scheduled` directly (the pre-§10 code) was always
+        // undefined, so even a 200 previewed nothing.
+        return (r.data?.data ?? r.data ?? null) as DryRunPayload | null;
+      }));
+      return mergeDryRunPayloads(payloads);
     },
   });
   const previewByTaskId = useMemo(() => {
@@ -5970,9 +5494,10 @@ function DeliverableTasksModal({
         // no longer describes this target). No `durationWeeks` key: the
         // server leaves the duration untouched. `applyToTasks: false` —
         // the per-task PATCH loop below owns the task dates.
+        // §16 (2026-11-18) · One item per ProjectDeliverable of the row.
         await client.post('/project-deliverables/targets/batch', {
           applyToTasks: false,
-          items: [{ id: row.deliverableId, zoneId: row.zoneId ?? null, months: null, targetDate: previewTarget }],
+          items: pdIds.map((id) => ({ id, zoneId: row.zoneId ?? null, months: null, targetDate: previewTarget })),
         });
         targetSaved = true;
       }
