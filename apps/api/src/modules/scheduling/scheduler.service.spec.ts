@@ -888,6 +888,10 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
         }
         return Promise.resolve(where?.id === ZDT_ID ? fullRow : null);
       });
+      // §16 (2026-11-18) · a miss walks up the zone tree for an ancestor
+      // target: the zone is live, the project flat (`zone.findMany` → []),
+      // so there is no ancestor to find. Tree-shaped cases: §16 block below.
+      prisma.zone.findFirst = jest.fn().mockResolvedValue({ projectId: 1 });
       return { prisma, svc: newService(prisma) };
     }
 
@@ -905,7 +909,7 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
       expect(prisma.task.findMany).not.toHaveBeenCalled();
     });
 
-    it('no ZDT row for the (zone × deliverable) pair → empty result (reason=no-target-row)', async () => {
+    it('no ZDT row for the (zone × deliverable) pair nor above it → empty result (reason=no-target-row)', async () => {
       const { prisma, svc } = setup();
       const spy = jest.spyOn(svc, 'scheduleDeliverableDryRun');
 
@@ -1014,7 +1018,8 @@ describe('SchedulerService — T3-2 scheduling engine', () => {
 // targets, tasks that carry their zone + deliverable, and Prisma mocks
 // that filter the way the real queries do.
 // ════════════════════════════════════════════════════════════════════
-type ZoneFx = { id: number; parentId: number | null; name?: string };
+// §16 (2026-11-18) · `deleted` = soft-deleted (`deletedAt` set).
+type ZoneFx = { id: number; parentId: number | null; name?: string; deleted?: boolean };
 type TargetFx = {
   id: number; // ZoneDeliverableTarget id
   zoneId: number | null;
@@ -1080,9 +1085,20 @@ function makeProjectPrisma(fx: {
     zone: {
       findMany: jest.fn().mockImplementation(async ({ where }: any) =>
         where?.projectId === PROJECT_ID
-          ? fx.zones.map((z) => ({ id: z.id, parentId: z.parentId }))
+          ? fx.zones
+              .filter((z) => !(where.deletedAt === null && z.deleted))
+              .map((z) => ({ id: z.id, parentId: z.parentId }))
           : [],
       ),
+      // §16 (2026-11-18) · the ancestor-carrier lookup resolves the
+      // requested zone's project first.
+      findFirst: jest
+        .fn()
+        .mockImplementation(async ({ where }: { where: { id: number; deletedAt?: null } }) => {
+          const z = zoneById.get(where.id);
+          if (!z || (where.deletedAt === null && z.deleted)) return null;
+          return { projectId: PROJECT_ID };
+        }),
     },
     zoneDeliverableTarget: {
       findUnique: jest.fn().mockImplementation(async ({ where }: any) => {
@@ -1940,5 +1956,229 @@ describe('SchedulerService — §14 · releasing a manual due date', () => {
     expect(sortedUpdates(updates)).toEqual([
       { id: 35, estimatedStartDate: '2026-11-10', endDate: '2026-11-10', dueDateOverridden: false },
     ]);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// §16 (2026-11-18) · (ProjectDeliverable × Zone) dry-run on a zone with
+// no target row of its own.
+//
+// The DP screen has a row per (task's OWN zone × deliverable); targets
+// are often saved on an ancestor only (staging project 61: all on root
+// zone 725, rows on B2 727 / B1 728 / Basment 726 / Building A 729), so
+// the exact-key lookup missed and every preview said "save the target
+// once". The closest ancestor target now carries the run, and the scope
+// root is the REQUESTED zone — what a save from the modal would create.
+//
+//   725 Root ── 726 Basement
+//            ├─ 727 B2 ── 730 B2-North ── 731 Room
+//            │         └─ 732 B2-South
+//            └─ 729 Building A
+// ════════════════════════════════════════════════════════════════════
+describe('SchedulerService — §16 · zone without its own target previews through the closest ancestor target', () => {
+  const PD = 240;
+  const OTHER_PD = 241;
+  const TUE_1110 = new Date(Date.UTC(2026, 10, 10)); // Tue 2026-11-10
+  const TUE_1117 = new Date(Date.UTC(2026, 10, 17)); // Tue 2026-11-17
+  const TUE_1124 = new Date(Date.UTC(2026, 10, 24)); // Tue 2026-11-24
+  const ZONES: ZoneFx[] = [
+    { id: 725, parentId: null, name: 'Root' },
+    { id: 726, parentId: 725, name: 'Basement' },
+    { id: 727, parentId: 725, name: 'B2' },
+    { id: 730, parentId: 727, name: 'B2-North' },
+    { id: 731, parentId: 730, name: 'Room' },
+    { id: 732, parentId: 727, name: 'B2-South' },
+    { id: 729, parentId: 725, name: 'Building A' },
+  ];
+  const assignee = (id: number) => [{ user: { id, dailyStandardHours: 8 } }];
+  // One 1-wd task per zone (own assignee each, no edges) → every
+  // scheduled task is terminal and ends on the anchor.
+  const tasks = (): ProjectTask[] => [
+    makeProjectTask({ id: 1, zoneId: 725, projectDeliverableId: PD, assignees: assignee(1) }),
+    makeProjectTask({ id: 2, zoneId: 727, projectDeliverableId: PD, assignees: assignee(2) }),
+    makeProjectTask({ id: 3, zoneId: 730, projectDeliverableId: PD, assignees: assignee(3) }),
+    makeProjectTask({ id: 4, zoneId: 731, projectDeliverableId: PD, assignees: assignee(4) }),
+    makeProjectTask({ id: 5, zoneId: 732, projectDeliverableId: PD, assignees: assignee(5) }),
+    makeProjectTask({ id: 6, zoneId: 726, projectDeliverableId: PD, assignees: assignee(6) }),
+    makeProjectTask({ id: 7, zoneId: 730, projectDeliverableId: OTHER_PD, assignees: assignee(7) }),
+  ];
+  const setup = (targets: TargetFx[], zones: ZoneFx[] = ZONES) => {
+    const fx = makeProjectPrisma({ zones, targets, tasks: tasks() });
+    const spy = jest.spyOn(fx.svc, 'scheduleDeliverableDryRun');
+    return { ...fx, spy };
+  };
+  const ends = (scheduled: Array<{ endDate: Date }>) => [...new Set(scheduled.map((s) => iso(s.endDate)))];
+
+  it('(a) an exact target row is used exactly as before — no ancestor walk, no scope override', async () => {
+    const { prisma, svc, spy } = setup([
+      { id: 601, zoneId: 725, projectDeliverableId: PD, targetDate: TUE_1110 },
+      { id: 602, zoneId: 730, projectDeliverableId: PD, targetDate: TUE_1117 },
+    ]);
+
+    const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 730 });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]).toEqual([{ deliverableId: 602, anchorDate: undefined }]);
+    expect(spy.mock.calls[0][0]).not.toHaveProperty('zoneId');
+    expect(prisma.zone.findFirst).not.toHaveBeenCalled();
+    expect(ids(out.scheduled)).toEqual([3, 4]);
+    expect(ends(out.scheduled)).toEqual(['2026-11-17']);
+  });
+
+  it('(b) no exact row, dated target two levels up → that row carries the run, scoped to the REQUESTED zone sub-tree', async () => {
+    const { prisma, svc, spy, updates } = setup([
+      { id: 601, zoneId: 725, projectDeliverableId: PD, targetDate: TUE_1110 },
+      // Another deliverable's row on the way up is never a carrier.
+      { id: 603, zoneId: 727, projectDeliverableId: OTHER_PD, targetDate: TUE_1117 },
+    ]);
+
+    const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 730 });
+
+    expect(prisma.zoneDeliverableTarget.findUnique.mock.calls[0][0]).toEqual({
+      where: { zoneId_projectDeliverableId: { zoneId: 730, projectDeliverableId: PD } },
+      select: { id: true },
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]).toEqual([{ deliverableId: 601, zoneId: 730, anchorDate: undefined }]);
+    // 730 + 731 only — not the carrier's whole tree (725 → 726/727/729/732).
+    expect(prisma.task.findMany.mock.calls[0][0].where).toMatchObject({
+      projectDeliverableId: PD,
+      zoneId: { in: [730, 731] },
+    });
+    expect(ids(out.scheduled)).toEqual([3, 4]);
+    // No anchorDate → the carrier's own date.
+    expect(ends(out.scheduled)).toEqual(['2026-11-10']);
+
+    // anchorDate → the previewed date, same carrier and scope.
+    const preview = await svc.scheduleProjectDeliverableDryRun({
+      projectDeliverableId: PD,
+      zoneId: 730,
+      anchorDate: TUE_1124,
+    });
+    expect(spy.mock.calls[1]).toEqual([{ deliverableId: 601, zoneId: 730, anchorDate: TUE_1124 }]);
+    expect(ids(preview.scheduled)).toEqual([3, 4]);
+    expect(ends(preview.scheduled)).toEqual(['2026-11-24']);
+
+    expect(updates).toEqual([]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('(b) a sub-zone of the requested zone with its own dated target stays out of the preview', async () => {
+    const { prisma, svc } = setup([
+      { id: 601, zoneId: 725, projectDeliverableId: PD, targetDate: TUE_1110 },
+      { id: 604, zoneId: 731, projectDeliverableId: PD, targetDate: TUE_1117 },
+    ]);
+
+    const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 730 });
+
+    expect(prisma.task.findMany.mock.calls[0][0].where.zoneId).toEqual({ in: [730] });
+    expect(ids(out.scheduled)).toEqual([3]);
+  });
+
+  it('(b) the carrier path keeps the release-set branching (same call shape as the exact path)', async () => {
+    const { svc, spy } = setup([{ id: 601, zoneId: 725, projectDeliverableId: PD, targetDate: TUE_1110 }]);
+
+    await svc.scheduleProjectDeliverableDryRun({
+      projectDeliverableId: PD,
+      zoneId: 730,
+      anchorDate: TUE_1124,
+      releaseOverrideTaskIds: [3],
+    });
+    expect(spy.mock.calls[0]).toEqual([
+      { deliverableId: 601, zoneId: 730, anchorDate: TUE_1124 },
+      undefined,
+      { releaseOverrideTaskIds: [3] },
+    ]);
+
+    // An empty release set → the plain call, exactly like the exact path.
+    await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 730, releaseOverrideTaskIds: [] });
+    expect(spy.mock.calls[1]).toEqual([{ deliverableId: 601, zoneId: 730, anchorDate: undefined }]);
+  });
+
+  it('(c) the closest DATED ancestor wins — over a farther dated one and over a closer row without a date', async () => {
+    const { prisma, svc, spy } = setup([
+      { id: 610, zoneId: 730, projectDeliverableId: PD, targetDate: null }, // parent, no date
+      { id: 611, zoneId: 727, projectDeliverableId: PD, targetDate: TUE_1117 }, // grandparent
+      { id: 612, zoneId: 725, projectDeliverableId: PD, targetDate: TUE_1110 }, // root
+    ]);
+
+    const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 731 });
+    expect(spy.mock.calls[0]).toEqual([{ deliverableId: 611, zoneId: 731, anchorDate: undefined }]);
+    expect(prisma.task.findMany.mock.calls[0][0].where.zoneId).toEqual({ in: [731] });
+    expect(ids(out.scheduled)).toEqual([4]);
+    expect(ends(out.scheduled)).toEqual(['2026-11-17']);
+
+    // With an anchorDate the dated row is still preferred.
+    await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 731, anchorDate: TUE_1124 });
+    expect(spy.mock.calls[1]).toEqual([{ deliverableId: 611, zoneId: 731, anchorDate: TUE_1124 }]);
+  });
+
+  it('(c) no dated ancestor: the closest row of any kind carries the run only when an anchorDate is given', async () => {
+    const { prisma, svc, spy } = setup([
+      { id: 610, zoneId: 730, projectDeliverableId: PD, targetDate: null },
+      { id: 612, zoneId: 725, projectDeliverableId: PD, targetDate: null },
+    ]);
+
+    const noAnchor = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 731 });
+    expect(noAnchor.scheduled).toEqual([]);
+    expect(noAnchor.feasibility.reason).toBe('no-target-row');
+    expect(spy).not.toHaveBeenCalled();
+    expect(prisma.task.findMany).not.toHaveBeenCalled();
+
+    const out = await svc.scheduleProjectDeliverableDryRun({
+      projectDeliverableId: PD,
+      zoneId: 731,
+      anchorDate: TUE_1124,
+    });
+    expect(spy.mock.calls[0]).toEqual([{ deliverableId: 610, zoneId: 731, anchorDate: TUE_1124 }]);
+    expect(ids(out.scheduled)).toEqual([4]);
+    expect(ends(out.scheduled)).toEqual(['2026-11-24']);
+  });
+
+  it('(d) no row of the deliverable anywhere up the chain → no-target-row', async () => {
+    const { prisma, svc, spy } = setup([
+      { id: 620, zoneId: 726, projectDeliverableId: PD, targetDate: TUE_1110 }, // sibling branch, not an ancestor
+      { id: 621, zoneId: 725, projectDeliverableId: OTHER_PD, targetDate: TUE_1110 }, // other deliverable
+    ]);
+
+    for (const zoneId of [731, 730, 725]) {
+      const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId, anchorDate: TUE_1124 });
+      expect(out.scheduled).toEqual([]);
+      expect(out.feasibility.reason).toBe('no-target-row');
+    }
+    expect(spy).not.toHaveBeenCalled();
+    expect(prisma.task.findMany).not.toHaveBeenCalled();
+  });
+
+  it('(d) a soft-deleted zone is never a carrier and the walk does not pass through it', async () => {
+    // Defensive: zone delete cascades to the sub-tree, but a live 731
+    // under a deleted 730 must not reach 725's target either — the
+    // scope rule (live tree) does not hand 731 to 725 in that state.
+    const zones = ZONES.map((z) => (z.id === 730 ? { ...z, deleted: true } : z));
+    const { svc, spy } = setup(
+      [
+        { id: 630, zoneId: 730, projectDeliverableId: PD, targetDate: TUE_1117 },
+        { id: 631, zoneId: 725, projectDeliverableId: PD, targetDate: TUE_1110 },
+      ],
+      zones,
+    );
+
+    const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId: 731 });
+    expect(out.feasibility.reason).toBe('no-target-row');
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('(e) zoneId null/undefined → no-zone, unchanged: no zone or target lookup at all', async () => {
+    const { prisma, svc, spy } = setup([{ id: 601, zoneId: 725, projectDeliverableId: PD, targetDate: TUE_1110 }]);
+
+    for (const zoneId of [null, undefined]) {
+      const out = await svc.scheduleProjectDeliverableDryRun({ projectDeliverableId: PD, zoneId, anchorDate: TUE_1124 });
+      expect(out.scheduled).toEqual([]);
+      expect(out.feasibility.reason).toBe('no-zone');
+    }
+    expect(prisma.zoneDeliverableTarget.findUnique).not.toHaveBeenCalled();
+    expect(prisma.zoneDeliverableTarget.findMany).not.toHaveBeenCalled();
+    expect(prisma.zone.findFirst).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
   });
 });

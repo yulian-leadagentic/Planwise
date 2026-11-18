@@ -217,12 +217,11 @@ function makeScopedService(fx: { zdts?: ZdtRow[]; tasks: TaskRow[]; pdTargetDate
     },
     zone: {
       findUnique: jest.fn().mockImplementation(async ({ where }: any) => ZONES.find((z) => z.id === where.id) ?? null),
-      findMany: jest.fn().mockImplementation(async ({ where }: any) => {
-        // "Option X" descendant clean-up (path prefix) vs the §12 zone
-        // tree (all live zones of the project).
-        if (where?.path?.startsWith) return ZONES.filter((z) => z.path.startsWith(where.path.startsWith));
-        return where?.projectId === PROJECT_ID ? ZONES.map((z) => ({ id: z.id, parentId: z.parentId })) : [];
-      }),
+      // §12 zone tree (all live zones of the project). §16: no path-prefix
+      // descendant lookup any more — the specs below assert none is made.
+      findMany: jest.fn().mockImplementation(async ({ where }: any) =>
+        where?.projectId === PROJECT_ID ? ZONES.map((z) => ({ id: z.id, parentId: z.parentId })) : [],
+      ),
     },
     zoneDeliverableTarget: {
       findUnique: jest.fn().mockImplementation(async ({ where }: any) => {
@@ -305,8 +304,13 @@ describe('ProjectDeliverablesService.batchSetTargets — §12 · propagation cov
     ]);
   });
 
-  it('an explicit (drag) date clears the sub-zone targets first, so the whole sub-tree follows', async () => {
-    const { service, updates, zdts } = makeScopedService({
+  // §16 (2026-11-18) · The "Option X" descendant clean-up is gone: each
+  // zone row owns its own target, closest ancestor-or-self wins.
+  const noPathLookup = (prisma: { zone: { findMany: jest.Mock } }) =>
+    prisma.zone.findMany.mock.calls.every(([args]) => args?.where?.path === undefined);
+
+  it('§16 · an explicit (drag) date on a parent zone leaves the child zone target in place; that sub-tree is out of scope', async () => {
+    const { service, prisma, updates, zdts } = makeScopedService({
       zdts: [{ zoneId: 697, projectDeliverableId: PD_ID, targetDate: day('2026-12-06') }],
       tasks: TASKS(),
     });
@@ -318,9 +322,50 @@ describe('ProjectDeliverablesService.batchSetTargets — §12 · propagation cov
       7,
     );
 
-    expect(zdts.map((z) => z.zoneId)).toEqual([693]); // Level 2's own target is gone
+    // Level 2 keeps its own target, untouched; Building A gets the new one.
+    expect(zdts.map((z) => [z.zoneId, isoDay(z.targetDate)]).sort()).toEqual([
+      [693, '2026-11-15'],
+      [697, '2026-12-06'],
+    ]);
+    expect(prisma.zoneDeliverableTarget.deleteMany).not.toHaveBeenCalled();
+    expect(noPathLookup(prisma)).toBe(true);
+    // Propagation scope excludes the Level 2 sub-tree (task 23 stays put).
+    expect(prisma.task.findMany.mock.calls[0][0].where).toMatchObject({
+      projectDeliverableId: PD_ID,
+      zoneId: { in: [693, 695, 696] },
+    });
+    expect([...updates.keys()].sort((a, b) => a - b)).toEqual([1, 21, 22]);
+    for (const id of [1, 21, 22]) expect(isoDay(updates.get(id).endDate)).toBe('2026-11-15');
+  });
+
+  const PARENT = { id: PD_ID, zoneId: 693, months: null, targetDate: '2026-11-15' };
+  const CHILD = { id: PD_ID, zoneId: 697, months: null, targetDate: '2026-12-13' };
+
+  it.each([
+    ['parent first', [PARENT, CHILD]],
+    ['child first', [CHILD, PARENT]],
+  ])('§16 · parent + child in one batch (%s): both targets survive, same end state', async (_label, items) => {
+    const { service, prisma, updates, zdts } = makeScopedService({
+      // Stale dates on both rows — the batch must overwrite each with its own.
+      zdts: [
+        { zoneId: 693, projectDeliverableId: PD_ID, targetDate: day('2026-10-04') },
+        { zoneId: 697, projectDeliverableId: PD_ID, targetDate: day('2026-10-04') },
+      ],
+      tasks: TASKS(),
+    });
+
+    await service.batchSetTargets(items, undefined, true, 7);
+
+    expect(zdts.map((z) => [z.zoneId, isoDay(z.targetDate)]).sort()).toEqual([
+      [693, '2026-11-15'],
+      [697, '2026-12-13'],
+    ]);
+    expect(prisma.zoneDeliverableTarget.deleteMany).not.toHaveBeenCalled();
+    expect(noPathLookup(prisma)).toBe(true);
+    // Each task follows its closest dated target; 99 (Building B) untouched.
     expect([...updates.keys()].sort((a, b) => a - b)).toEqual([1, 21, 22, 23]);
-    expect(isoDay(updates.get(23).endDate)).toBe('2026-11-15');
+    for (const id of [1, 21, 22]) expect(isoDay(updates.get(id).endDate)).toBe('2026-11-15');
+    expect(isoDay(updates.get(23).endDate)).toBe('2026-12-13');
   });
 
   it('a deliverable-level item (no zone) is unchanged: every task of the deliverable, no tree lookup', async () => {

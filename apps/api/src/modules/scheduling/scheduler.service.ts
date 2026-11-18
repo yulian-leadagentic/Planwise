@@ -4,6 +4,8 @@ import { ExecutionPlanningService } from '../execution-planning/execution-planni
 import {
   createTargetScopeMemo,
   loadTargetScopeZoneIds,
+  loadZoneTree,
+  resolveGoverningTargetZoneId,
   type TargetScopeMemo,
 } from './target-scope.util';
 
@@ -87,7 +89,7 @@ import {
  */
 export interface ScheduleInputs {
   deliverableId: number; // ZoneDeliverableTarget id
-  zoneId?: number;       // optional (ZoneDeliverableTarget already pins a zone, but kept for symmetry with spec)
+  zoneId?: number;       // optional scope root override (default: the target's own zone); §16 (2026-11-18) · set by the (ProjectDeliverable × Zone) dry-run when an ancestor's target carries the run
   anchorDate?: Date;     // optional override for targetDate (used when simulating)
 }
 
@@ -385,11 +387,25 @@ export class SchedulerService {
    * an error:
    *   - 'no-zone'       : deliverable-level targets are not ZDT-backed;
    *                       the engine cannot schedule them.
-   *   - 'no-target-row' : the (zone × deliverable) pair has never had a
-   *                       target saved — nothing to anchor a schedule to.
+   *   - 'no-target-row' : neither the zone nor any zone above it has a
+   *                       target row for the deliverable (see §16) —
+   *                       nothing to anchor a schedule to.
    *
    * §14 (2026-11-15) · `releaseOverrideTaskIds` is forwarded to the
    * dry-run (see there). Ids outside the pair's scope match nothing.
+   *
+   * §16 (2026-11-18) · The DP screen now has a row per (task's OWN zone ×
+   * deliverable) at every depth, while targets are often saved on an
+   * ancestor only (staging project 61: every target on root zone 725,
+   * rows on its sub-zones) — the exact-key lookup missed and every row's
+   * preview said "save the target once". Saving from that modal writes a
+   * target on the ROW's zone, so a zone with no row of its own is
+   * previewed as if it had one: the closest ancestor target of the same
+   * deliverable (see `findAncestorTargetCarrier`) only carries the
+   * deliverable / project (and its date when no `anchorDate` is given),
+   * and the scope root is the requested zone — the zone + its sub-zones,
+   * minus sub-trees with their own dated target. The exact-match path is
+   * unchanged.
    */
   async scheduleProjectDeliverableDryRun(args: {
     projectDeliverableId: number;
@@ -409,10 +425,22 @@ export class SchedulerService {
       },
       select: { id: true },
     });
-    if (!zdt) {
-      return this.emptyResult('no-target-row');
+    let inputs: ScheduleInputs;
+    if (zdt) {
+      inputs = { deliverableId: zdt.id, anchorDate: args.anchorDate };
+    } else {
+      // §16 (2026-11-18) · No row of its own → an ancestor's row carries
+      // the run; `zoneId` keeps the scope on the requested zone.
+      const carrier = await this.findAncestorTargetCarrier(
+        args.projectDeliverableId,
+        args.zoneId,
+        args.anchorDate != null,
+      );
+      if (!carrier) {
+        return this.emptyResult('no-target-row');
+      }
+      inputs = { deliverableId: carrier.id, zoneId: args.zoneId, anchorDate: args.anchorDate };
     }
-    const inputs: ScheduleInputs = { deliverableId: zdt.id, anchorDate: args.anchorDate };
     // §14 (2026-11-15) · Nothing to release → the plain dry-run call,
     // exactly as before.
     return args.releaseOverrideTaskIds && args.releaseOverrideTaskIds.length > 0
@@ -436,6 +464,51 @@ export class SchedulerService {
     });
     if (!row) throw new NotFoundException('Deliverable not found');
     return row.projectId;
+  }
+
+  /**
+   * §16 (2026-11-18) · The ZoneDeliverableTarget that carries the
+   * (ProjectDeliverable × Zone) dry-run of a zone with no row of its own:
+   * the closest ancestor row of the same deliverable WITH a target date;
+   * when none on the way up is dated and the caller supplies an anchor
+   * (`hasAnchor`), the closest ancestor row of any kind. Null when no
+   * ancestor has a row (or the zone is gone).
+   *
+   * Walks `Zone.parentId` over the project's live zones — the tree the
+   * scope rule uses (`loadZoneTree`), so a soft-deleted zone is never a
+   * carrier and ends the walk (zone delete cascades to its sub-tree
+   * anyway); `resolveGoverningTargetZoneId` stops on a parent cycle.
+   */
+  private async findAncestorTargetCarrier(
+    projectDeliverableId: number,
+    zoneId: number,
+    hasAnchor: boolean,
+  ): Promise<{ id: number } | null> {
+    const zone = await this.prisma.zone.findFirst({
+      where: { id: zoneId, deletedAt: null },
+      select: { projectId: true },
+    });
+    if (!zone) return null;
+    const [zones, rows] = await Promise.all([
+      loadZoneTree(this.prisma, zone.projectId),
+      this.prisma.zoneDeliverableTarget.findMany({
+        where: { projectDeliverableId },
+        select: { id: true, zoneId: true, targetDate: true },
+      }),
+    ]);
+    const liveZoneIds = new Set(zones.map((z) => z.id));
+    const rowIdByZone = new Map<number, number>();
+    const datedZoneIds: number[] = [];
+    for (const r of rows) {
+      if (!liveZoneIds.has(r.zoneId)) continue;
+      rowIdByZone.set(r.zoneId, r.id);
+      if (r.targetDate) datedZoneIds.push(r.zoneId);
+    }
+    const carrierZoneId =
+      resolveGoverningTargetZoneId(zones, zoneId, datedZoneIds) ??
+      (hasAnchor ? resolveGoverningTargetZoneId(zones, zoneId, rowIdByZone.keys()) : null);
+    const carrierId = carrierZoneId == null ? undefined : rowIdByZone.get(carrierZoneId);
+    return carrierId == null ? null : { id: carrierId };
   }
 
   async scheduleDeliverableAndCommit(

@@ -78,7 +78,13 @@ export class SchedulingController {
   //
   // Empty outcomes return 200 with `scheduled: []` and
   // `feasibility.reason` = 'no-zone' (no zoneId — deliverable-level
-  // target) or 'no-target-row' (pair has no saved target yet).
+  // target) or 'no-target-row' (no saved target on the zone or any zone
+  // above it).
+  //
+  // §16 (2026-11-18) · A zone with no target row of its own (a DP row on
+  // a sub-zone, target saved on an ancestor) is previewed as if it had
+  // one: the closest ancestor target carries the run, the scope is the
+  // requested zone's sub-tree. See `scheduleProjectDeliverableDryRun`.
   //
   // §14 (2026-11-15) · Optional `releaseOverrideTaskIds`: manual tasks
   // (`dueDateOverridden`) to schedule as if they were not overridden.
