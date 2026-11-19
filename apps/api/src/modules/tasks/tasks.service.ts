@@ -8,6 +8,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { ProjectDeliverablesService } from '../project-deliverables/project-deliverables.service';
 import { taskCompletionValue } from '../../common/task-completion';
 import { resolveStartForMovedEnd } from '../../common/task-dates';
+import { LIVE_PREDECESSOR_EDGE, LIVE_SUCCESSOR_EDGE } from '../../common/task-dependency-filters';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
@@ -331,8 +332,12 @@ export class TasksService {
           },
           // bm2 2026-10-21 — expose `endDate` on each predecessor so the
           // FE can flag "task endDate earlier than predecessor's endDate"
-          // conflicts (see predecessor-conflict.ts).
-          dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } } },
+          // conflicts (see predecessor-conflict.ts). Edges to a soft-
+          // deleted predecessor are kept for restore but not shipped.
+          dependencies: {
+            where: LIVE_PREDECESSOR_EDGE,
+            include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } },
+          },
           _count: { select: { comments: true, timeEntries: true } },
         },
       }),
@@ -555,9 +560,17 @@ export class TasksService {
         },
         // bm2 2026-10-21 — expose `endDate` on each predecessor so the
         // TaskDrawer can warn when the task's endDate drifts earlier
-        // than one of its predecessors'.
-        dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } } },
-        dependedBy: { include: { task: { select: { id: true, code: true, name: true, endDate: true } } } },
+        // than one of its predecessors'. Edges whose other end is soft-
+        // deleted stay in the DB (restore brings them back) but are not
+        // shipped — no ghost rows in the drawer.
+        dependencies: {
+          where: LIVE_PREDECESSOR_EDGE,
+          include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } },
+        },
+        dependedBy: {
+          where: LIVE_SUCCESSOR_EDGE,
+          include: { task: { select: { id: true, code: true, name: true, endDate: true } } },
+        },
         _count: { select: { timeEntries: true } },
       },
     });

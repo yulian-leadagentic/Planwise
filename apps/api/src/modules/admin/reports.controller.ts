@@ -5,6 +5,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LIVE_PREDECESSOR_EDGE } from '../../common/task-dependency-filters';
 import { BusinessPartnersService } from '../business-partners/business-partners.service';
 
 /**
@@ -649,7 +650,9 @@ export class ReportsController {
         where: { projectId: p.id, deletedAt: null, isArchived: false },
         select: {
           id: true,
-          dependencies: { select: { dependsOnId: true } },
+          // Live predecessors only (edges to soft-deleted tasks are kept
+          // for restore); the taskIds filter below is the second net.
+          dependencies: { where: LIVE_PREDECESSOR_EDGE, select: { dependsOnId: true } },
         },
       });
       if (tasks.length === 0) continue;

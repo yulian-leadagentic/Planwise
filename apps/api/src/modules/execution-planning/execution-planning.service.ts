@@ -3,6 +3,22 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { rollupTaskCompletion } from '../../common/task-completion';
+import { LIVE_PREDECESSOR_EDGE } from '../../common/task-dependency-filters';
+
+/**
+ * Whether a predecessor (`TaskDependency.dependsOn`) still blocks its
+ * successor. Task delete is a soft delete and keeps the TaskDependency
+ * row (a restore brings the edge back), so a deleted predecessor — its
+ * status is `cancelled` by then — must never block; neither does any
+ * other cancelled task. Only a live, unfinished predecessor blocks.
+ */
+export function isBlockingPredecessor(
+  dependsOn: { status?: string | null; deletedAt?: Date | string | null } | null | undefined,
+): boolean {
+  if (!dependsOn) return false;
+  if (dependsOn.deletedAt != null) return false;
+  return dependsOn.status !== 'completed' && dependsOn.status !== 'cancelled';
+}
 
 /**
  * Workload Engine — computes planned vs capacity per worker per day.
@@ -254,7 +270,12 @@ export class ExecutionPlanningService {
           where: { deletedAt: null },
           include: { user: { select: { id: true, firstName: true, lastName: true } } },
         },
-        dependencies: { include: { dependsOn: { select: { id: true, status: true, endDate: true } } } },
+        // Edges to soft-deleted predecessors stay in the DB for restore;
+        // they are not part of the live graph.
+        dependencies: {
+          where: LIVE_PREDECESSOR_EDGE,
+          include: { dependsOn: { select: { id: true, status: true, endDate: true, deletedAt: true } } },
+        },
       },
     });
 
@@ -297,9 +318,10 @@ export class ExecutionPlanningService {
       const loggedHours = loggedByTask.get(task.id) ?? 0;
       const remainingHours = Math.max(0, budgetHours - loggedHours);
 
-      // Check if task is blocked (all dependencies must be completed)
+      // Check if task is blocked (every live, non-cancelled predecessor
+      // must be completed).
       const blockers = (task.dependencies || [])
-        .filter((d) => d.dependsOn && d.dependsOn.status !== 'completed')
+        .filter((d) => isBlockingPredecessor(d.dependsOn))
         .map((d) => d.dependsOn?.id ? `Task #${d.dependsOn.id}` : 'Unknown');
       if (blockers.length > 0) {
         blockedTasks.push({ taskId: task.id, title: task.name, blockedBy: blockers });
@@ -664,15 +686,20 @@ export class ExecutionPlanningService {
         zone: { select: { id: true, name: true } },
         serviceType: { select: { id: true, name: true, code: true, color: true } },
         assignees: { where: { deletedAt: null }, include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } } } } } },
-        dependencies: { include: { dependsOn: { select: { id: true, status: true } } } },
+        dependencies: {
+          where: LIVE_PREDECESSOR_EDGE,
+          include: { dependsOn: { select: { id: true, status: true, deletedAt: true } } },
+        },
       },
     });
 
     const overdueTasks = allTasks.filter((t) => t.endDate && new Date(t.endDate) < now);
     const overdueIds = new Set(overdueTasks.map((t) => t.id));
 
+    // overdueIds holds live tasks only (allTasks filters deletedAt), and
+    // a deleted / cancelled predecessor never blocks.
     const blockedByOverdue = allTasks.filter((t) =>
-      t.dependencies?.some((d) => overdueIds.has(d.dependsOnId) || (d.dependsOn?.status && d.dependsOn.status !== 'completed'))
+      t.dependencies?.some((d) => overdueIds.has(d.dependsOnId) || isBlockingPredecessor(d.dependsOn))
     );
 
     // Budget aggregate per project — one aggregate per project so this

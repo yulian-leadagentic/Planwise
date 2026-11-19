@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { withQueryTimeout } from '../../common/query-timeout';
+import { LIVE_PREDECESSOR_EDGE } from '../../common/task-dependency-filters';
 import { extractServiceMarker, resolvePhasesByMarkerNames } from './marker-phase-resolver';
 import { createGoverningTargetDateLookup } from '../scheduling/target-scope.util';
 
@@ -120,7 +121,13 @@ export class PlanningService {
         // so the FE can compute "my endDate < predecessor's endDate"
         // conflicts client-side (Planning / Kanban / DP Gantt all read
         // from this endpoint; see predecessor-conflict.ts).
-        dependencies: { include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } } },
+        // Edges to a soft-deleted predecessor stay in the DB (restore
+        // brings them back) but are not shipped — otherwise the ⛓ badge,
+        // the drawer and the conflict warning count a deleted task.
+        dependencies: {
+          where: LIVE_PREDECESSOR_EDGE,
+          include: { dependsOn: { select: { id: true, code: true, name: true, endDate: true } } },
+        },
         assignees: {
           where: { deletedAt: null },
           include: { user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } } },

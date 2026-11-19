@@ -599,4 +599,34 @@ describe('TasksService', () => {
       expect(check).not.toHaveBeenCalled();
     });
   });
+
+  // 2026-11-19 — soft task delete keeps TaskDependency rows (restore
+  // brings them back); the soft-delete middleware only filters the
+  // top-level query, so the nested dependency includes must drop edges
+  // whose other end is deleted themselves.
+  describe('dependency edges with a soft-deleted end are not shipped', () => {
+    it('GET /tasks/:id — predecessors and successors both filter the other end on deletedAt', async () => {
+      prisma.task.findFirst.mockResolvedValue({ id: 7, dependencies: [], dependedBy: [] });
+
+      await service.findOne(7);
+
+      const include = prisma.task.findFirst.mock.calls[0][0].include;
+      expect(include.dependencies.where).toEqual({ dependsOn: { deletedAt: null } });
+      expect(include.dependedBy.where).toEqual({ task: { deletedAt: null } });
+      // The embedded task shapes the drawer reads are unchanged.
+      expect(include.dependencies.include.dependsOn.select).toEqual({ id: true, code: true, name: true, endDate: true });
+      expect(include.dependedBy.include.task.select).toEqual({ id: true, code: true, name: true, endDate: true });
+    });
+
+    it('GET /tasks — the predecessor include filters deleted predecessors', async () => {
+      prisma.task.findMany = jest.fn().mockResolvedValue([]);
+      prisma.task.count = jest.fn().mockResolvedValue(0);
+
+      await service.findAll({} as any);
+
+      const include = prisma.task.findMany.mock.calls[0][0].include;
+      expect(include.dependencies.where).toEqual({ dependsOn: { deletedAt: null } });
+      expect(include.dependencies.include.dependsOn.select).toEqual({ id: true, code: true, name: true, endDate: true });
+    });
+  });
 });

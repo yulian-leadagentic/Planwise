@@ -11,6 +11,7 @@ import { QueryProjectsDto } from './dto/query-projects.dto';
 import { ProjectPartnerRolesService } from '../project-partner-roles/project-partner-roles.service';
 import { NumberRangesService } from '../number-ranges/number-ranges.service';
 import { rollupTaskCompletion } from '../../common/task-completion';
+import { LIVE_EDGE } from '../../common/task-dependency-filters';
 import { buildCostRateResolver, isRateableOutcome } from './cost-rate-resolver';
 import { buildEligibleWhere, extractEligibilityRule } from './role-eligibility';
 import * as Sentry from '@sentry/node';
@@ -2180,8 +2181,11 @@ export class ProjectsService {
     // join on Task.projectId (via a `where: { task: { projectId } }`
     // filter) so cross-project edges — none in practice, but defend
     // in depth — are excluded from the walk.
+    // Edges with a soft-deleted end are kept in the DB (a restore brings
+    // them back) but are not part of the live graph: walking through a
+    // deleted task would report a cycle the PM can't see or break.
     const edges = await tx.taskDependency.findMany({
-      where: { task: { projectId } },
+      where: { ...LIVE_EDGE, task: { projectId, deletedAt: null } },
       select: { taskId: true, dependsOnId: true },
     });
     const adj = new Map<number, number[]>();
@@ -2278,7 +2282,7 @@ export class ProjectsService {
     // Prevent circular (A→B→A) — cheap direct-cycle fast check kept
     // before the project-wide DFS below.
     const reverse = await this.prisma.taskDependency.findFirst({
-      where: { taskId: dependsOnId, dependsOnId: taskId },
+      where: { ...LIVE_EDGE, taskId: dependsOnId, dependsOnId: taskId },
     });
     if (reverse) throw new BadRequestException('Circular dependency detected');
 
