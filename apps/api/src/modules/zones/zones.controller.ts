@@ -20,6 +20,7 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
+import { ApplyTaskTemplateDto } from './dto/apply-task-template.dto';
 
 @ApiTags('Zones')
 @ApiBearerAuth()
@@ -98,6 +99,33 @@ export class ZonesController {
   async explodeTypical(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
     await this.access.assertZoneAccess(user.id, id, user.roleId);
     return this.zonesService.explodeTypical(id);
+  }
+
+  @Post('apply-task-template')
+  @RequirePermissions({ module: 'projects', action: 'write' })
+  @ApiOperation({
+    summary: 'Apply a Deliverable Template (tasks + their dependencies) into a zone or the project root',
+  })
+  async applyTaskTemplateToTarget(@CurrentUser() user: any, @Body() dto: ApplyTaskTemplateDto) {
+    // Zone target: zone access (implies project access). The service
+    // refuses a zone that belongs to another project than dto.projectId.
+    // Project-root target: project access directly.
+    if (dto.zoneId != null) {
+      await this.access.assertZoneAccess(user.id, dto.zoneId, user.roleId);
+    } else {
+      await this.access.assertProjectAccess(user.id, dto.projectId, user.roleId);
+    }
+    return this.zonesService.applyTaskTemplateToTarget(
+      { projectId: dto.projectId, zoneId: dto.zoneId ?? null },
+      dto.templateId,
+      user.id,
+      {
+        projectDeliverableId: dto.projectDeliverableId ?? null,
+        deliverableTemplateId: dto.deliverableTemplateId ?? null,
+        phaseId: dto.phaseId ?? null,
+        serviceTypeId: dto.serviceTypeId ?? null,
+      },
+    );
   }
 
   @Post(':id/apply-task-template')

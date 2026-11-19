@@ -1,5 +1,26 @@
 import client from './client';
 
+/**
+ * Body of POST /zones/apply-task-template: apply a Deliverable Template
+ * into a zone (`zoneId`) or the project root (`zoneId: null`). The
+ * optional ids are the group context of the card the template was added
+ * from (planning modal `TaskAddContext`).
+ */
+export interface ApplyTaskTemplatePayload {
+  projectId: number;
+  templateId: number;
+  zoneId?: number | null;
+  projectDeliverableId?: number | null;
+  deliverableTemplateId?: number | null;
+  phaseId?: number | null;
+  serviceTypeId?: number | null;
+}
+
+export interface ApplyTaskTemplateResult {
+  tasks: Array<{ id: number; name: string }>;
+  dependenciesCreated: number;
+}
+
 export const zonesApi = {
   getTree: (projectId: number) =>
     client.get(`/zones/tree/${projectId}`).then((r) => r.data),
@@ -21,6 +42,11 @@ export const zonesApi = {
 
   applyTaskTemplate: (zoneId: number, templateId: number) =>
     client.post(`/zones/${zoneId}/apply-task-template`, { templateId }).then((r) => r.data),
+
+  // One server transaction: the template's tasks AND their dependency
+  // edges (lag / lagUnit / reason). Resolves to the unwrapped result.
+  applyTaskTemplateToTarget: (payload: ApplyTaskTemplatePayload): Promise<ApplyTaskTemplateResult> =>
+    client.post('/zones/apply-task-template', payload).then((r) => r.data?.data ?? r.data),
 
   duplicate: (zoneId: number, newName: string) =>
     client.post(`/zones/${zoneId}/duplicate`, { newName }).then((r) => r.data),

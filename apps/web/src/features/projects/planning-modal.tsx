@@ -1606,7 +1606,9 @@ function SortableTaskList({ tasks, zoneId, projectId, members, selectedTaskIds, 
 // so we hand it a small context bag that captures whichever fields the
 // calling group can pre-fill (zone / deliverable / service / phase). Any
 // field the group can't pre-fill from its own dimension we leave undefined
-// and the template task's own value wins (see buildTaskAddPayload below).
+// and the template task's own value wins (see buildTaskAddPayload below for
+// catalog adds; deliverable-template adds merge it server-side in
+// ZonesService.applyTaskTemplateToTarget).
 type TaskAddContext = {
   zoneId?: number | null;
   projectDeliverableId?: number | null;
@@ -1615,7 +1617,7 @@ type TaskAddContext = {
   serviceTypeId?: number | null;
 };
 
-// Build the create-task payload for a template / catalog add. Merge order
+// Build the create-task payload for a catalog add. Merge order
 // (matches the spec): template task's own field wins → group context fills
 // the rest. `requiresReview` is defaulted to true on create so the
 // core-fields guardrail in tasks.service#create is satisfied (guardrail
@@ -1629,12 +1631,12 @@ function buildTaskAddPayload(
     phaseId?: number | null;
   },
   ctx: TaskAddContext,
-  extras: { projectId?: number; description?: string } = {},
+  extras: { projectId?: number } = {},
 ) {
   const payload: Record<string, unknown> = {
     code: tplTask.code,
     name: tplTask.name,
-    description: extras.description ?? tplTask.description ?? undefined,
+    description: tplTask.description ?? undefined,
     budgetHours: tplTask.defaultBudgetHours != null ? Number(tplTask.defaultBudgetHours) : undefined,
     budgetAmount: tplTask.defaultBudgetAmount != null ? Number(tplTask.defaultBudgetAmount) : undefined,
     // Prefer the template task's own service; fall back to the group's.
@@ -1770,13 +1772,12 @@ function CatalogPickerForZone({ context, projectId, onClose, onDone }: {
 // ─── Deliverable Template Picker (applies a task_list template's tasks) ────
 //
 // PR-013: accepts a TaskAddContext so the picker is usable from every
-// group card, not just Zone headers. The template task's own service /
-// phase win; the group context supplies whichever of zone / deliverable /
-// service the group represents. When the picker is opened from a
-// Deliverable group we treat the picked template as tasks belonging to
-// THAT deliverable, so the template's own name is used as the
-// [SERVICE:xxx] marker (legacy grouping) only when no deliverable context
-// is already set.
+// group card, not just Zone headers. The group context supplies whichever
+// of zone / deliverable / service the group represents. Each picked
+// template is applied by the server (POST /zones/apply-task-template —
+// tasks + dependency edges in one transaction); see
+// ZonesService.applyTaskTemplateToTarget for how the context merges with
+// the template's own values.
 
 function PhaseTemplatePickerForZone({ context, projectId, onClose, onDone }: {
   context: TaskAddContext; projectId: number; onClose: () => void; onDone: () => void;
@@ -1809,39 +1810,29 @@ function PhaseTemplatePickerForZone({ context, projectId, onClose, onDone }: {
       // "Failed to apply template". Without this, individual failures
       // are silently aggregated and the user gets no actionable info.
       let firstFailure: unknown = null;
+      // One server call per template: POST /zones/apply-task-template
+      // creates the template's tasks AND their dependency edges (lag /
+      // lagUnit / reason) in one transaction. The old per-task POST
+      // /tasks loop never wrote TaskDependency rows. Only the group's
+      // own context is sent — the server falls back to the template's
+      // Service and deliverable link itself. A template applies whole or
+      // not at all, so `ok` counts tasks and `fail` counts templates.
+      // Sequential so each apply appends after the previous one's tasks.
       for (const tpl of toAdd) {
-        const detail = await client.get(`/templates/${tpl.id}`).then((r) => r.data.data ?? r.data);
-        // Skip [SERVICE:xxx] marker rows (synthetic) — we want real tasks.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const tplTasks = ((detail?.templateTasks ?? []) as any[]).filter(
-          (t) => !(t.description?.match?.(/^\[SERVICE:.+\]$/)),
-        );
-        // If the caller has no deliverable/phase context, treat this
-        // picked template AS the deliverable (matches the classic
-        // AddRootDeliverableDialog behaviour) so the tasks land under a
-        // real deliverable in the tree.
-        const perTemplateCtx: TaskAddContext = {
-          ...context,
-          deliverableTemplateId: context.deliverableTemplateId ?? tpl.id,
-          phaseId: context.phaseId ?? tpl.phaseId ?? undefined,
-        };
-        // Keep the legacy [SERVICE:xxx] description marker only when we
-        // don't have a deliverable link (older zone-mode fallback);
-        // otherwise the deliverable link is enough.
-        const description = perTemplateCtx.projectDeliverableId == null
-          && perTemplateCtx.deliverableTemplateId == null
-          ? `[SERVICE:${tpl.name}]` : undefined;
-        const results = await Promise.allSettled(
-          tplTasks.map((task) => tasksApi.create(
-            buildTaskAddPayload(task, perTemplateCtx, { projectId, description }) as never,
-          )),
-        );
-        ok += results.filter((r) => r.status === 'fulfilled').length;
-        for (const r of results) {
-          if (r.status === 'rejected') {
-            fail += 1;
-            if (firstFailure == null) firstFailure = (r as PromiseRejectedResult).reason;
-          }
+        try {
+          const result = await zonesApi.applyTaskTemplateToTarget({
+            projectId,
+            templateId: tpl.id,
+            zoneId: context.zoneId ?? null,
+            projectDeliverableId: context.projectDeliverableId ?? null,
+            deliverableTemplateId: context.deliverableTemplateId ?? null,
+            phaseId: context.phaseId ?? null,
+            serviceTypeId: context.serviceTypeId ?? null,
+          });
+          ok += result?.tasks?.length ?? 0;
+        } catch (err) {
+          fail += 1;
+          if (firstFailure == null) firstFailure = err;
         }
       }
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
@@ -1851,7 +1842,7 @@ function PhaseTemplatePickerForZone({ context, projectId, onClose, onDone }: {
         // Partial success — count in the title, first failure reason
         // in the description so the PM knows exactly what to fix.
         const reason = getErrorMessage(firstFailure, 'unknown reason');
-        notify.warning(`Added ${ok}, ${fail} failed`, { code: 'TPL-APPLY-207', description: reason });
+        notify.warning(`Added ${ok} task${ok !== 1 ? 's' : ''}, ${fail} template${fail !== 1 ? 's' : ''} failed`, { code: 'TPL-APPLY-207', description: reason });
       } else if (firstFailure) {
         // All-fail path — surface the actual server error (e.g.
         // missing_required_fields) rather than the generic
@@ -3463,8 +3454,9 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
 // ─── Add Root Deliverable Dialog (template → tasks at project root) ──────────
 //
 // Picks a deliverable template (template type=task_list) and materializes
-// its tasks at the project root (zoneId=null). Mirrors the "Add Zone from
-// Template" flow but skips the zone-creation step.
+// its tasks — with their dependency edges — at the project root
+// (zoneId=null) via POST /zones/apply-task-template. Mirrors the "Add
+// Zone from Template" flow but skips the zone-creation step.
 
 function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId: number; onClose: () => void; onApplied: () => void }) {
   const [search, setSearch] = useState('');
@@ -3472,9 +3464,9 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
 
   // The /templates listing endpoint REPLACES `templateTasks` with a
   // synthesized [SERVICE:xxx] placeholder list for the UI's services
-  // badge — it isn't the real task catalog. To materialize a deliverable
-  // we have to fetch GET /templates/:id which returns the actual tasks
-  // (with code/name/budgetHours/serviceType/etc).
+  // badge — it isn't the real task catalog. Applying reads the real
+  // tasks server-side (POST /zones/apply-task-template), so the list is
+  // only used to pick from.
   const { data: templates = [], isLoading } = useQuery({
     queryKey: ['templates', 'task_list'],
     queryFn: () => client.get('/templates?type=task_list').then((r) => r.data?.data ?? r.data),
@@ -3499,58 +3491,24 @@ function AddRootDeliverableDialog({ projectId, onClose, onApplied }: { projectId
     if (applying) return;
     setApplying(true);
     try {
-      // Fetch the real template detail (with the actual templateTasks
-      // array — code, name, budgetHours, etc). The listing endpoint
-      // returns a fake placeholder list and can't be used here.
-      const detailResp = await client.get(`/templates/${template.id}`);
-      const detail = detailResp.data?.data ?? detailResp.data;
-      const tasks: any[] = (detail?.templateTasks ?? []).filter(
-        // Skip [SERVICE:xxx] marker rows (synthetic) — we want real tasks.
-        (t: any) => !(t.description?.match?.(/^\[SERVICE:.+\]$/)),
-      );
-
-      if (tasks.length === 0) {
+      // One server transaction creates the deliverable's tasks at the
+      // project root (zoneId = null) AND their dependency edges (lag /
+      // lagUnit / reason) — the old per-task POST /tasks loop dropped
+      // every TemplateTaskDependency. The server reads the template
+      // itself: catalog-live name / budget, the deliverable's Service,
+      // the deliverable link (tasks group under the template's name).
+      // All-or-nothing, so there is no partial-success toast any more.
+      const result = await zonesApi.applyTaskTemplateToTarget({
+        projectId,
+        templateId: template.id,
+        zoneId: null,
+      });
+      const created = result?.tasks?.length ?? 0;
+      if (created === 0) {
         notify.warning('Template has no tasks');
-        setApplying(false);
         return;
       }
-
-      // Tag every materialized task with the source Template id so the
-      // planning grid groups them under the Template's name (matches
-      // /templates/deliverables exactly). The old find-or-create-
-      // ServiceType workaround is gone — we still send `serviceTypeId`
-      // when the TemplateTask had its own, but it's no longer the
-      // Deliverable identity.
-      // PR-013: routed through the shared buildTaskAddPayload helper so
-      // requiresReview is set explicitly (core-fields guardrail on
-      // tasks.service#create treats undefined requiresReview as missing).
-      const results = await Promise.allSettled(
-        tasks.map((t: any) => tasksApi.create(
-          buildTaskAddPayload(
-            {
-              code: t.code,
-              name: t.name,
-              description: t.description,
-              defaultBudgetHours: t.defaultBudgetHours,
-              defaultBudgetAmount: t.defaultBudgetAmount,
-              serviceTypeId: t.serviceTypeId ?? undefined,
-              // Service the Deliverable belongs to. Falls back to the
-              // template-task's own phase if the template isn't linked.
-              phaseId: template.phaseId ?? t.phaseId ?? undefined,
-            },
-            {
-              zoneId: null,
-              deliverableTemplateId: template.id,
-            },
-            { projectId },
-          ) as never,
-        )),
-      );
-      const ok = results.filter((r) => r.status === 'fulfilled').length;
-      const fail = results.length - ok;
-      if (fail === 0) notify.success(`Created ${ok} task${ok !== 1 ? 's' : ''}`, { code: 'DELIVERABLE-APPLY-200' });
-      else if (ok > 0) notify.warning(`Created ${ok}, ${fail} failed`, { code: 'DELIVERABLE-APPLY-207' });
-      else notify.error('Failed to apply deliverable', { code: 'DELIVERABLE-APPLY-500' });
+      notify.success(`Created ${created} task${created !== 1 ? 's' : ''}`, { code: 'DELIVERABLE-APPLY-200' });
       onApplied();
       onClose();
     } catch (err: any) {

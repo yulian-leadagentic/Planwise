@@ -6,20 +6,48 @@ import {
   UnprocessableEntityException,
   HttpException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, Task } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { withQueryTimeout } from '../../common/query-timeout';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 import { ProjectDeliverablesService } from '../project-deliverables/project-deliverables.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
 import { UpdateZoneDto } from './dto/update-zone.dto';
 import { buildCatalogMap, resolveBudget as resolveBudgetUtil } from './zones.util';
+
+/**
+ * Where a Deliverable Template's tasks land: a zone, or the project root
+ * (`zoneId = null`).
+ */
+export interface TaskTemplateApplyTarget {
+  projectId: number;
+  zoneId: number | null;
+}
+
+/**
+ * Group context the planning-modal pickers pre-fill when a Deliverable
+ * Template is added from a group card (mirrors the web `TaskAddContext`).
+ * Every field is optional; see `applyTaskTemplateToTarget` for how each
+ * one merges with the template's own values.
+ */
+export interface TaskTemplateApplyContext {
+  projectDeliverableId?: number | null;
+  deliverableTemplateId?: number | null;
+  phaseId?: number | null;
+  serviceTypeId?: number | null;
+}
+
+/** Gap between consecutive `Task.sortOrder` values — same step as
+ *  `TasksService.computeInsertSortOrder` (midpoint headroom for drags). */
+const TASK_SORT_STEP = 1000;
 
 @Injectable()
 export class ZonesService {
   constructor(
     private prisma: PrismaService,
     private projectDeliverables: ProjectDeliverablesService,
+    private activityLog: ActivityLogService,
   ) {}
 
   /**
@@ -458,11 +486,94 @@ export class ZonesService {
     }, { timeout: 30_000 });
   }
 
+  /**
+   * `POST /zones/:id/apply-task-template` — apply a Deliverable Template
+   * into an existing zone with no group context. Thin wrapper over
+   * `applyTaskTemplateToTarget` (the one materializer); keeps this
+   * endpoint's response shape (the created task rows).
+   */
   async applyTaskTemplate(zoneId: number, templateId: number, userId: number) {
-    return this.prisma.$transaction(async (tx) => {
-      const zone = await tx.zone.findUniqueOrThrow({ where: { id: zoneId } });
-      const template = await tx.template.findUniqueOrThrow({
-        where: { id: templateId },
+    const zone = await this.prisma.zone.findFirst({
+      where: { id: zoneId, deletedAt: null },
+      select: { projectId: true },
+    });
+    if (!zone) throw new NotFoundException('Zone not found');
+    const { tasks } = await this.applyTaskTemplateToTarget(
+      { projectId: zone.projectId, zoneId },
+      templateId,
+      userId,
+    );
+    return tasks;
+  }
+
+  /**
+   * The single server-side materializer for "add a Deliverable Template
+   * (Template.type = 'task_list') into a zone or the project root".
+   * One transaction creates every template task AND the dependency edges
+   * between them, so a partial apply can't leave tasks without their
+   * TemplateTaskDependency graph (the bug when the planning-modal
+   * pickers created tasks one by one via POST /tasks).
+   *
+   * Field resolution per created task (template = the applied Template,
+   * tt = its TemplateTask, context = the picker's group context):
+   *   • zoneId / projectId — the target (zoneId null = project root).
+   *   • name / budget — DN-ext: live from the catalog row when tt is
+   *     linked, else tt's snapshot, then (budget only) catalog-by-code.
+   *   • phaseId — context.phaseId (the Service group the PM added from)
+   *     → template.phaseId (the deliverable's Service) → tt.phaseId.
+   *   • serviceTypeId — tt.serviceTypeId → context.serviceTypeId.
+   *   • deliverableTemplateId — context.deliverableTemplateId (the
+   *     template-backed group the PM added from) → tt's own FK (QA4 · B1)
+   *     → the template itself when it is a task_list.
+   *   • projectDeliverableId — context.projectDeliverableId; otherwise
+   *     filled by `materializeFromTasks` at the end of the tx.
+   *   • priority — tt.defaultPriority; requiresReview — true (same
+   *     default as POST /tasks); status — not_started.
+   *   • sortOrder — appended after the target container's current last
+   *     task (projectId + zoneId, as `TasksService.computeInsertSortOrder`
+   *     does for one task), in the template's own order, 1000 apart.
+   *
+   * Dependencies: every TemplateTaskDependency edge whose both ends are
+   * tasks of this template becomes a TaskDependency with the same
+   * lag / lagUnit / reason (T1-3 + T1-Lag). Edges to tasks outside the
+   * applied set, and self-edges, are skipped.
+   *
+   * Side effects kept from `TasksService.create`: ZoneServiceType upsert
+   * (zone targets only), ProjectDeliverable materialization (in-tx
+   * here), one `task.create` activity-log row per task (after commit,
+   * best-effort, like the original). Plus `Template.usageCount += 1`.
+   */
+  async applyTaskTemplateToTarget(
+    target: TaskTemplateApplyTarget,
+    templateId: number,
+    userId: number,
+    context: TaskTemplateApplyContext = {},
+  ): Promise<{ tasks: Task[]; dependenciesCreated: number }> {
+    const { projectId, zoneId } = target;
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      if (zoneId != null) {
+        const zone = await tx.zone.findFirst({
+          where: { id: zoneId, deletedAt: null },
+          select: { projectId: true },
+        });
+        if (!zone) throw new NotFoundException('Zone not found');
+        if (zone.projectId !== projectId) {
+          throw new BadRequestException('Zone does not belong to this project');
+        }
+      }
+      if (context.projectDeliverableId != null) {
+        const deliverable = await tx.projectDeliverable.findFirst({
+          where: { id: context.projectDeliverableId, projectId, deletedAt: null },
+          select: { id: true },
+        });
+        if (!deliverable) {
+          throw new BadRequestException('Deliverable does not belong to this project');
+        }
+      }
+
+      const template = await tx.template.findFirst({
+        where: { id: templateId, deletedAt: null },
         include: {
           // T1-3 (2026-10-20) — pull template tasks in their declared
           // `sortOrder` so the project tasks are created in the same
@@ -471,7 +582,6 @@ export class ZonesService {
           // `TaskDependency` rows AFTER every project task exists.
           templateTasks: {
             include: {
-              serviceType: true,
               // T1-Lag (2026-11-03) — carry lag/lagUnit/reason through
               // to the project side so the materialized `TaskDependency`
               // rows preserve the Deliverable Template's wait semantics.
@@ -497,13 +607,12 @@ export class ZonesService {
                 },
               },
             },
-            orderBy: { sortOrder: 'asc' },
+            orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
           },
         },
       });
+      if (!template) throw new NotFoundException('Template not found');
 
-      // Use the service template's phaseId for all tasks (falls back to per-task phaseId)
-      const templatePhaseId = template.phaseId;
       const catalog = await this.loadCatalogMap(tx);
       // deliverableTemplateId is only meaningful when the source is a
       // task_list template (a real Deliverable). Zone templates aren't
@@ -512,15 +621,26 @@ export class ZonesService {
       // the description marker / serviceType for display.
       const deliverableId = template.type === 'task_list' ? template.id : null;
 
-      const createdTasks: any[] = [];
+      // Append after the container's current last task, keeping the
+      // template's order (planning sorts by sortOrder ASC, id ASC).
+      const tail = await tx.task.aggregate({
+        where: { projectId, zoneId, deletedAt: null },
+        _max: { sortOrder: true },
+      });
+      let sortOrder = tail._max.sortOrder ?? 0;
+
+      const createdTasks: Task[] = [];
       // T1-3 — map templateTask.id → projectTask.id so we can wire
       // TaskDependency rows after the loop below.
       const idMap = new Map<number, number>();
+      const linkedServiceTypeIds = new Set<number>();
       for (const tt of template.templateTasks) {
-        if (tt.serviceTypeId) {
+        const serviceTypeId = tt.serviceTypeId ?? context.serviceTypeId ?? null;
+        if (zoneId != null && serviceTypeId != null && !linkedServiceTypeIds.has(serviceTypeId)) {
+          linkedServiceTypeIds.add(serviceTypeId);
           await tx.zoneServiceType.upsert({
-            where: { zoneId_serviceTypeId: { zoneId, serviceTypeId: tt.serviceTypeId } },
-            create: { zoneId, serviceTypeId: tt.serviceTypeId },
+            where: { zoneId_serviceTypeId: { zoneId, serviceTypeId } },
+            create: { zoneId, serviceTypeId },
             update: {},
           });
         }
@@ -533,40 +653,40 @@ export class ZonesService {
         // resolution path yet (we never did a code-match for name),
         // so the catalog FK is the only live source — the local
         // snapshot is the fallback.
-        const catalogTask = (tt as any).catalogTask ?? null;
-        const ttWithCatalog = {
-          ...tt,
-          defaultBudgetHours: catalogTask?.defaultBudgetHours ?? tt.defaultBudgetHours,
-          defaultBudgetAmount: catalogTask?.defaultBudgetAmount ?? tt.defaultBudgetAmount,
-        };
-        const effectiveName = catalogTask?.name ?? tt.name;
-        const { budgetHours, budgetAmount } = this.resolveBudget(ttWithCatalog, catalog);
+        const catalogTask = tt.catalogTask ?? null;
+        const { budgetHours, budgetAmount } = this.resolveBudget(
+          {
+            code: tt.code,
+            defaultBudgetHours: catalogTask?.defaultBudgetHours ?? tt.defaultBudgetHours,
+            defaultBudgetAmount: catalogTask?.defaultBudgetAmount ?? tt.defaultBudgetAmount,
+          },
+          catalog,
+        );
+        sortOrder += TASK_SORT_STEP;
         const task = await tx.task.create({
           data: {
             zoneId,
-            projectId: zone.projectId,
-            serviceTypeId: tt.serviceTypeId,
-            // Track the source Deliverable directly so the planning grid
-            // can group by Template.name (matches /templates/deliverables).
-            // Gated on `template.type === 'task_list'` — zone templates
-            // are spatial scaffolding, not deliverables.
-            // QA4 · B1 (2026-09-28): if the individual templateTask has
-            // its own FK (post-picker-fix or migration backfill), that
-            // wins over the outer default so a rename-safe link comes
-            // through even when the outer template is a zone template.
-            deliverableTemplateId: (tt as any).deliverableTemplateId ?? deliverableId,
+            projectId,
+            serviceTypeId,
+            // Group context first (the PM added from that deliverable
+            // group), then the templateTask's own FK (QA4 · B1 — a
+            // rename-safe link), then the applied task_list template.
+            deliverableTemplateId: context.deliverableTemplateId ?? tt.deliverableTemplateId ?? deliverableId,
+            // First-class project deliverable from the group; tasks
+            // without one are linked by the materialize pass below.
+            projectDeliverableId: context.projectDeliverableId ?? null,
             code: tt.code,
-            name: effectiveName,
+            name: catalogTask?.name ?? tt.name,
             description: tt.description,
             budgetHours,
             budgetAmount,
-            phaseId: templatePhaseId ?? tt.phaseId,
+            // Service: the group's (when added from a Service group),
+            // else the deliverable template's, else the task's own.
+            phaseId: context.phaseId ?? template.phaseId ?? tt.phaseId,
             priority: tt.defaultPriority,
             status: 'not_started',
-            // T1-3 — carry the template's explicit order forward so the
-            // project respects the PM's chosen sequence (and the planning
-            // sort — which uses Task.sortOrder — matches the template).
-            sortOrder: tt.sortOrder,
+            requiresReview: true,
+            sortOrder,
             createdBy: userId,
           },
         });
@@ -576,37 +696,32 @@ export class ZonesService {
 
       // T1-3 — translate TemplateTaskDependency edges into project
       // TaskDependency rows using the id map above. `createMany` with
-      // `skipDuplicates` guards against the unique(taskId, dependsOnId)
-      // index in the rare case the same template is re-applied against
-      // tasks already present in the project (idempotent re-apply).
+      // `skipDuplicates` guards the unique(taskId, dependsOnId) index.
       // T1-Lag (2026-11-03) — carry lag/lagUnit/reason through so a
       // "wait 3 calendar days for customer approval" edge in the
       // template arrives on the project with the same semantics the
-      // scheduler will read next (D1 gap=lag — follow-up task).
-      const depEdges: {
-        taskId: number;
-        dependsOnId: number;
-        lag: number;
-        lagUnit: 'WORKING_DAYS' | 'CALENDAR_DAYS';
-        reason: string | null;
-      }[] = [];
+      // scheduler reads.
+      const depEdges: Prisma.TaskDependencyCreateManyInput[] = [];
       for (const tt of template.templateTasks) {
         const taskId = idMap.get(tt.id);
-        if (!taskId) continue;
-        for (const pred of (tt as any).predecessors ?? []) {
+        if (taskId == null) continue;
+        for (const pred of tt.predecessors) {
           const dependsOnId = idMap.get(pred.dependsOnTemplateTaskId);
-          if (!dependsOnId) continue;
+          // Predecessor outside the applied set (or a self-edge) — skip.
+          if (dependsOnId == null || dependsOnId === taskId) continue;
           depEdges.push({
             taskId,
             dependsOnId,
             lag: Number(pred.lag ?? 0),
-            lagUnit: (pred.lagUnit as 'WORKING_DAYS' | 'CALENDAR_DAYS') ?? 'WORKING_DAYS',
+            lagUnit: pred.lagUnit ?? 'WORKING_DAYS',
             reason: pred.reason ?? null,
           });
         }
       }
+      let dependenciesCreated = 0;
       if (depEdges.length > 0) {
-        await tx.taskDependency.createMany({ data: depEdges, skipDuplicates: true });
+        const written = await tx.taskDependency.createMany({ data: depEdges, skipDuplicates: true });
+        dependenciesCreated = written.count;
       }
 
       await tx.template.update({
@@ -617,33 +732,37 @@ export class ZonesService {
       // this apply just created (grouped by deliverableTemplate.name or
       // [SERVICE:xxx] marker) so the Deliverable Planning grid isn't
       // empty on a template-seeded project.
-      await this.materializeProjectDeliverablesForProject(tx, zone.projectId);
-      return createdTasks;
-    }, { timeout: 30_000 });
+      await this.materializeProjectDeliverablesForProject(tx, projectId);
+      return { tasks: createdTasks, dependenciesCreated };
+    }, { timeout: 30_000 }).catch((err: unknown) => this.wrapPrismaError(err));
+
+    // Same per-task audit row `TasksService.create` writes, after the
+    // commit so a rolled-back apply never logs. Best-effort by contract
+    // (ActivityLogService swallows its own errors).
+    for (const task of result.tasks) {
+      await this.activityLog.logTaskCreated({
+        actorUserId: userId,
+        projectId,
+        entityId: task.id,
+        taskCode: task.code ?? null,
+        taskName: task.name,
+      });
+    }
+
+    return result;
   }
 
+  /**
+   * `POST /zones/:id/duplicate` — copy a zone with its whole live subtree
+   * (any depth), every live task, the zone service-type links, and the
+   * TaskDependency edges between copied tasks (lag / lagUnit / reason
+   * kept). Task `sortOrder` is carried so the copy keeps the original's
+   * order; dates, status and progress are NOT copied (a fresh plan).
+   * Edges to a task outside the copied subtree are not copied.
+   */
   async duplicateZone(zoneId: number, newName: string, userId: number) {
-    const zone = await this.prisma.zone.findUniqueOrThrow({
-      where: { id: zoneId },
-      include: {
-        tasks: { where: { deletedAt: null } },
-        zoneServiceTypes: true,
-        children: {
-          where: { deletedAt: null },
-          include: {
-            tasks: { where: { deletedAt: null } },
-            zoneServiceTypes: true,
-            children: {
-              where: { deletedAt: null },
-              include: {
-                tasks: { where: { deletedAt: null } },
-                zoneServiceTypes: true,
-              },
-            },
-          },
-        },
-      },
-    });
+    const zone = await this.prisma.zone.findFirst({ where: { id: zoneId, deletedAt: null } });
+    if (!zone) throw new NotFoundException('Zone not found');
 
     const existing = await this.prisma.zone.findFirst({
       where: { projectId: zone.projectId, name: newName, deletedAt: null },
@@ -651,7 +770,70 @@ export class ZonesService {
     if (existing) throw new ConflictException('Zone name must be unique within project');
 
     return this.prisma.$transaction(async (tx) => {
-      const copyZoneRecursive = async (sourceZone: any, parentId: number | null, parentPath: string, depth: number, zoneName: string) => {
+      // The zone tree is parentId-based (Zone.path can be stale after a
+      // re-parent — see scheduling/target-scope.util), so load the
+      // project's live zones flat and walk parentId in memory: no depth
+      // limit (the old nested include stopped at 3 levels).
+      const projectZones = await tx.zone.findMany({
+        where: { projectId: zone.projectId, deletedAt: null },
+        orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      });
+      const childrenOf = new Map<number, typeof projectZones>();
+      for (const z of projectZones) {
+        if (z.parentId == null) continue;
+        const siblings = childrenOf.get(z.parentId) ?? [];
+        siblings.push(z);
+        childrenOf.set(z.parentId, siblings);
+      }
+      const subtree = new Set<number>();
+      const pending = [zone.id];
+      while (pending.length > 0) {
+        const id = pending.pop()!;
+        if (subtree.has(id)) continue; // guards a corrupt parent loop
+        subtree.add(id);
+        for (const child of childrenOf.get(id) ?? []) pending.push(child.id);
+      }
+      const subtreeIds = [...subtree];
+
+      const tasks = await tx.task.findMany({
+        where: { zoneId: { in: subtreeIds }, deletedAt: null },
+        orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      });
+      const zoneServiceTypes = await tx.zoneServiceType.findMany({
+        where: { zoneId: { in: subtreeIds } },
+      });
+      const sourceTaskIds = tasks.map((t) => t.id);
+      // Edges whose BOTH ends are copied (both live — `tasks` excludes
+      // soft-deleted rows).
+      const sourceEdges = sourceTaskIds.length === 0
+        ? []
+        : await tx.taskDependency.findMany({
+            where: { taskId: { in: sourceTaskIds }, dependsOnId: { in: sourceTaskIds } },
+            select: { taskId: true, dependsOnId: true, lag: true, lagUnit: true, reason: true },
+          });
+      const tasksByZone = new Map<number, typeof tasks>();
+      for (const t of tasks) {
+        const list = tasksByZone.get(t.zoneId!) ?? [];
+        list.push(t);
+        tasksByZone.set(t.zoneId!, list);
+      }
+      const serviceTypesByZone = new Map<number, typeof zoneServiceTypes>();
+      for (const zst of zoneServiceTypes) {
+        const list = serviceTypesByZone.get(zst.zoneId) ?? [];
+        list.push(zst);
+        serviceTypesByZone.set(zst.zoneId, list);
+      }
+
+      const taskIdMap = new Map<number, number>(); // source task id → copy id
+      const copied = new Set<number>();
+      const copyZoneRecursive = async (
+        sourceZone: (typeof projectZones)[number],
+        parentId: number | null,
+        parentPath: string,
+        depth: number,
+        zoneName: string,
+      ) => {
+        copied.add(sourceZone.id);
         const newZone = await tx.zone.create({
           data: {
             projectId: sourceZone.projectId,
@@ -668,15 +850,16 @@ export class ZonesService {
         await tx.zone.update({ where: { id: newZone.id }, data: { path } });
 
         // Copy service types
-        for (const zst of (sourceZone.zoneServiceTypes || [])) {
+        for (const zst of serviceTypesByZone.get(sourceZone.id) ?? []) {
           await tx.zoneServiceType.create({
             data: { zoneId: newZone.id, serviceTypeId: zst.serviceTypeId, sortOrder: zst.sortOrder },
           });
         }
 
-        // Copy ALL tasks
-        for (const task of (sourceZone.tasks || [])) {
-          await tx.task.create({
+        // Copy every live task — planning attributes and order, not the
+        // dates / status / progress.
+        for (const task of tasksByZone.get(sourceZone.id) ?? []) {
+          const copy = await tx.task.create({
             data: {
               zoneId: newZone.id, projectId: sourceZone.projectId,
               serviceTypeId: task.serviceTypeId, code: task.code, name: task.name,
@@ -684,20 +867,40 @@ export class ZonesService {
               // grouping under the same template name.
               deliverableTemplateId: task.deliverableTemplateId,
               description: task.description, budgetHours: task.budgetHours, budgetAmount: task.budgetAmount,
-              phaseId: task.phaseId, priority: task.priority, status: 'not_started', completionPct: 0, createdBy: userId,
+              phaseId: task.phaseId, priority: task.priority, status: 'not_started', completionPct: 0,
+              sortOrder: task.sortOrder,
+              createdBy: userId,
             },
           });
+          taskIdMap.set(task.id, copy.id);
         }
 
-        // Recursively copy children
-        for (const child of (sourceZone.children || [])) {
+        // Recursively copy children (any depth)
+        for (const child of childrenOf.get(sourceZone.id) ?? []) {
+          if (copied.has(child.id)) continue;
           await copyZoneRecursive(child, newZone.id, path, depth + 1, child.name);
         }
 
         return { ...newZone, path };
       };
 
-      const result = await copyZoneRecursive(zone, zone.parentId, '', zone.depth, newName);
+      // The copy sits next to the original, so it shares the original's
+      // parent path (empty for a top-level zone).
+      const parentPath = zone.parentId == null ? '' : zone.path.split('/').slice(0, -1).join('/');
+      const result = await copyZoneRecursive(zone, zone.parentId, parentPath, zone.depth, newName);
+
+      // Re-create the dependency graph between the copies.
+      const copiedEdges: Prisma.TaskDependencyCreateManyInput[] = [];
+      for (const e of sourceEdges) {
+        const taskId = taskIdMap.get(e.taskId);
+        const dependsOnId = taskIdMap.get(e.dependsOnId);
+        if (taskId == null || dependsOnId == null) continue;
+        copiedEdges.push({ taskId, dependsOnId, lag: e.lag, lagUnit: e.lagUnit, reason: e.reason });
+      }
+      if (copiedEdges.length > 0) {
+        await tx.taskDependency.createMany({ data: copiedEdges, skipDuplicates: true });
+      }
+
       // DP-EMPTY-3 (2026-11-08) — mirror applyTaskTemplate /
       // applyProjectTemplate: the recursive copy above carries
       // `deliverableTemplateId` forward on every task but never sets
@@ -764,6 +967,40 @@ export class ZonesService {
     throw err;
   }
 
+  /**
+   * Loads a template's zones FLAT (by templateId) and builds the parentId
+   * tree in memory, so a zone tree of any depth comes back. The nested
+   * include this replaces stopped at 3 levels for the applied template
+   * and 2 for a referenced one: deeper zones were dropped, and at the
+   * last level `children` was never loaded, so `isPureSlot` read "no
+   * children" and could inline a zone that had some.
+   *
+   * Siblings come back in `sortOrder`, then `id` order. Roots are the
+   * zones with `parentId = null`; a zone whose parent isn't part of this
+   * template is unreachable, as before (this also means a corrupt parent
+   * loop can't recurse forever — no node in it hangs off a root).
+   */
+  private async loadTemplateZoneTree(
+    client: PrismaService | Prisma.TransactionClient,
+    templateId: number,
+    include: Prisma.TemplateZoneInclude,
+  ): Promise<any[]> {
+    const rows: any[] = await client.templateZone.findMany({
+      where: { templateId },
+      include,
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    });
+    const nodes = new Map<number, any>();
+    for (const row of rows) nodes.set(row.id, { ...row, children: [] });
+    const roots: any[] = [];
+    for (const row of rows) {
+      const node = nodes.get(row.id);
+      if (row.parentId == null) roots.push(node);
+      else nodes.get(row.parentId)?.children.push(node);
+    }
+    return roots;
+  }
+
   async applyProjectTemplate(projectId: number, templateId: number, userId: number, zoneName?: string) {
     // T1-3 (2026-10-20) — pull TemplateTask rows in `sortOrder` ASC
     // AND include their `predecessors` so we can materialize matching
@@ -807,36 +1044,21 @@ export class ZonesService {
         catalogTask: { select: catalogTaskSelect },
       },
     };
+    // What every template zone carries, at any depth (see
+    // `loadTemplateZoneTree`). linkedTaskTemplate is a service template —
+    // its phaseId is available.
+    const templateZoneInclude = {
+      templateZoneTasks: templateZoneTaskInclude,
+      linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
+    };
 
     const template = await this.prisma.template.findUniqueOrThrow({
       where: { id: templateId },
       include: {
         templateTasks: templateTaskInclude,
-        templateZones: {
-          include: {
-            templateZoneTasks: templateZoneTaskInclude,
-            linkedTaskTemplate: {
-              include: { templateTasks: templateTaskInclude },
-              // linkedTaskTemplate is a service template — its phaseId is available
-            },
-            children: {
-              include: {
-                templateZoneTasks: templateZoneTaskInclude,
-                linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
-                children: {
-                  include: {
-                    templateZoneTasks: templateZoneTaskInclude,
-                    linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
-                  },
-                },
-              },
-            },
-          },
-          where: { parentId: null },
-          orderBy: { sortOrder: 'asc' },
-        },
       },
     });
+    const templateZones = await this.loadTemplateZoneTree(this.prisma, templateId, templateZoneInclude);
 
     const resolveBudget = this.resolveBudget.bind(this);
 
@@ -1004,7 +1226,17 @@ export class ZonesService {
       // times. Each instance is a separate, individually-renameable zone in
       // the project, with the same children/tasks underneath. Default 1 keeps
       // legacy templates' behaviour unchanged.
-      const createZoneRecursive = async (tz: any, parentId: number | null, parentPath: string, depth: number) => {
+      // `refChain` — ids of the templates whose zones we are inside
+      // (the applied one, then each referenced one on the way down). A
+      // reference back into that chain is skipped so a referencing loop
+      // in template data can't recurse forever.
+      const createZoneRecursive = async (
+        tz: any,
+        parentId: number | null,
+        parentPath: string,
+        depth: number,
+        refChain: ReadonlySet<number>,
+      ) => {
         // #196 — pure slot: inline parent-ward, skip Zone creation.
         // Mixed zones (linked + own tasks/children) fall through to
         // `createSingleZone` and keep today's behavior as a safety net.
@@ -1015,18 +1247,25 @@ export class ZonesService {
         const rawCount = Number(tz.instanceCount);
         const instanceCount = Number.isFinite(rawCount) && rawCount > 1 ? Math.floor(rawCount) : 1;
         if (instanceCount === 1) {
-          await createSingleZone(tz, tz.name, parentId, parentPath, depth);
+          await createSingleZone(tz, tz.name, parentId, parentPath, depth, refChain);
           return;
         }
         for (let i = 0; i < instanceCount; i++) {
           // Default naming: "<Template name> <N>". The user can rename each
           // instance afterwards via the inline edit in the planning view.
           const instanceName = `${tz.name} ${i + 1}`;
-          await createSingleZone(tz, instanceName, parentId, parentPath, depth);
+          await createSingleZone(tz, instanceName, parentId, parentPath, depth, refChain);
         }
       };
 
-      const createSingleZone = async (tz: any, instanceName: string, parentId: number | null, parentPath: string, depth: number) => {
+      const createSingleZone = async (
+        tz: any,
+        instanceName: string,
+        parentId: number | null,
+        parentPath: string,
+        depth: number,
+        refChain: ReadonlySet<number>,
+      ) => {
         const zone = await tx.zone.create({
           data: {
             projectId,
@@ -1103,7 +1342,7 @@ export class ZonesService {
         }
 
         // Handle referenced template — fetch and copy its tasks + zones recursively
-        if (tz.referencedTemplateId) {
+        if (tz.referencedTemplateId && !refChain.has(tz.referencedTemplateId)) {
           const refTemplate = await tx.template.findUnique({
             where: { id: tz.referencedTemplateId },
             include: {
@@ -1111,20 +1350,6 @@ export class ZonesService {
               // so the materialized project tasks respect the referenced
               // template's order AND copy its dependency graph.
               templateTasks: templateTaskInclude,
-              templateZones: {
-                include: {
-                  templateZoneTasks: templateZoneTaskInclude,
-                  linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
-                  children: {
-                    include: {
-                      templateZoneTasks: templateZoneTaskInclude,
-                      linkedTaskTemplate: { include: { templateTasks: templateTaskInclude } },
-                    },
-                  },
-                },
-                where: { parentId: null },
-                orderBy: { sortOrder: 'asc' },
-              },
             },
           });
 
@@ -1160,16 +1385,19 @@ export class ZonesService {
             }
             await materializeDeps(createdInRef);
 
-            // Recursively create child zones from referenced template
-            for (const childTz of (refTemplate.templateZones || [])) {
-              await createZoneRecursive(childTz, zone.id, path, depth + 1);
+            // Recursively create child zones from referenced template —
+            // its whole zone tree, any depth.
+            const refZones = await this.loadTemplateZoneTree(tx, refTemplate.id, templateZoneInclude);
+            const refChainBelow = new Set(refChain).add(refTemplate.id);
+            for (const childTz of refZones) {
+              await createZoneRecursive(childTz, zone.id, path, depth + 1, refChainBelow);
             }
           }
         }
 
         // Recurse into direct children
         for (const child of (tz.children || [])) {
-          await createZoneRecursive(child, zone.id, path, depth + 1);
+          await createZoneRecursive(child, zone.id, path, depth + 1, refChain);
         }
       };
 
@@ -1217,8 +1445,9 @@ export class ZonesService {
       }
 
       // Create child zones from templateZones under the main zone
-      for (const rootZone of template.templateZones) {
-        await createZoneRecursive(rootZone, mainZone.id, mainPath, 1);
+      const appliedChain = new Set([templateId]);
+      for (const rootZone of templateZones) {
+        await createZoneRecursive(rootZone, mainZone.id, mainPath, 1, appliedChain);
       }
 
       // Increment usage count
