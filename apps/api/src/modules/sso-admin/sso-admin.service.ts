@@ -67,7 +67,10 @@ export class SsoAdminService {
     // Google is on the roadmap (P2). Block writes for now so the UI
     // can render a placeholder without also permitting a partial config.
     if (provider === 'google') {
-      throw new ForbiddenException('Google SSO is coming in P2 and cannot be configured yet.');
+      throw new ForbiddenException({
+        code: 'SSO_PROVIDER_UNAVAILABLE',
+        message: "Google sign-in isn't available yet, so it can't be configured.",
+      });
     }
     return provider as SsoProvider;
   }

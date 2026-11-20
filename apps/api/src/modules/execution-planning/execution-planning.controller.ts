@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, Query, ParseIntPipe, UseGuards, ForbiddenException } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, ParseIntPipe, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 
 import { ExecutionPlanningService } from './execution-planning.service';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
@@ -32,7 +33,9 @@ export class ExecutionPlanningController {
   ) {
     // Only admins can see arbitrary users' workload; everyone else only their own
     if (user.id !== userId && !isAdminUser(user)) {
-      throw new ForbiddenException('You can only view your own workload');
+      throw new PermissionDeniedException("You can only view your own workload. Other people's workload is for Admins.", {
+        reason: 'NOT_OWNER',
+      });
     }
     return this.eps.getUserWorkload(userId, from, to);
   }

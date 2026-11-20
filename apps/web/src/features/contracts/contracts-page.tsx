@@ -11,6 +11,8 @@ import { useDebounce } from '@/hooks/use-debounce';
 import { formatDate } from '@/lib/date-utils';
 import { formatCurrency } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
+import { isPermissionDenied } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import type { Contract } from '@/types';
 import type { ColumnDef } from '@tanstack/react-table';
 
@@ -94,7 +96,7 @@ export function ContractsPage() {
   const { contractSearch, contractStatus, setContractFilters } = useFilterStore();
   const debouncedSearch = useDebounce(contractSearch, 300);
 
-  const { data, isLoading } = useContracts({
+  const { data, isLoading, error } = useContracts({
     search: debouncedSearch || undefined,
     status: contractStatus.length ? contractStatus[0] : undefined,
   });
@@ -136,7 +138,11 @@ export function ContractsPage() {
         onReset={() => setContractFilters({ contractSearch: '', contractStatus: [] })}
       />
 
-      {!isLoading && contracts.length === 0 ? (
+      {/* Permission messages (2026-11-20) — a 403 says "no access"
+          instead of offering to create a first contract. */}
+      {isPermissionDenied(error) ? (
+        <NoAccess variant="page" what="contracts" />
+      ) : !isLoading && contracts.length === 0 ? (
         <EmptyState
           icon={FileText}
           title="No contracts yet"

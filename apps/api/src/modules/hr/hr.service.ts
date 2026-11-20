@@ -3,7 +3,6 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -15,6 +14,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { FilesService } from '../files/files.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { userHasModulePermission } from '../../common/guards/roles.guard';
+import { PermissionDeniedException, permissionDenied } from '../../common/errors/permission-denied';
 import { UpdateHrEmployeeDto } from './dto/update-employee.dto';
 import { CreateEligibilityDto } from './dto/create-eligibility.dto';
 import { UpdateEligibilityDto } from './dto/update-eligibility.dto';
@@ -890,9 +890,9 @@ export class HrService {
       throw new NotFoundException(`Absence ${recordId} not found`);
     }
     if (existing.userId !== callerId) {
-      throw new ForbiddenException(
-        'You can only delete your own absence records.',
-      );
+      throw new PermissionDeniedException('You can only delete your own absence records.', {
+        reason: 'NOT_OWNER',
+      });
     }
     await this.prisma.absenceRecord.delete({ where: { id: recordId } });
     this.writeAudit({
@@ -1043,7 +1043,8 @@ export class HrService {
     const isOwner = user?.id === row.userId;
     const canReadHr = userHasModulePermission(user, 'hr', 'read');
     if (!isOwner && !canReadHr) {
-      throw new ForbiddenException('Insufficient permissions');
+      // "You don't have permission to view HR data. Ask your administrator for access."
+      throw permissionDenied('hr', 'read');
     }
 
     // Resolve on-disk path with path-traversal guard — fileUrl is

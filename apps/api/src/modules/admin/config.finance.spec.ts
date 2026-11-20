@@ -66,7 +66,9 @@ describe('admin/config rate routes need finance (B-06 / B-14)', () => {
     const prisma = makePrisma();
     const ctrl = new ConfigController(prisma);
     await expect(call(ctrl, ADMIN_NO_FINANCE)).rejects.toThrow(ForbiddenException);
-    await expect(call(ctrl, ADMIN_FINANCE_READ)).rejects.toThrow(/finance:write/);
+    await expect(call(ctrl, ADMIN_FINANCE_READ)).rejects.toThrow(
+      "You don't have permission to change financial data. Ask your administrator for access.",
+    );
     expect(prisma.seniorityLevel.create).not.toHaveBeenCalled();
     expect(prisma.seniorityLevel.update).not.toHaveBeenCalled();
     expect(prisma.seniorityLevel.delete).not.toHaveBeenCalled();

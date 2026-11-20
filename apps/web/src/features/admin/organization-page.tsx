@@ -30,7 +30,6 @@ import {
   Users as UsersIcon,
   Network as NetworkIcon,
   Move as MoveIcon,
-  Shield,
   UserPlus,
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -43,6 +42,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { PageHeader } from '@/components/shared/page-header';
 import { EmptyState } from '@/components/shared/empty-state';
+import { NoAccess } from '@/components/shared/no-access';
 import { Modal } from '@/components/shared/modal';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { UserAvatar } from '@/components/shared/user-avatar';
@@ -186,13 +186,7 @@ export function OrganizationPage() {
   });
 
   if (!canRead) {
-    return (
-      <EmptyState
-        icon={Shield}
-        title="Permission required"
-        description="You don't have access to the Organization admin surface. Ask an admin to grant you the 'org' module."
-      />
-    );
+    return <NoAccess variant="page" what="the organization structure" />;
   }
 
   return (

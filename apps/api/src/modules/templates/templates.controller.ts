@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch, Delete, Body, Param, Query,
-  ParseIntPipe, UseGuards, ForbiddenException,
+  ParseIntPipe, UseGuards, NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { TemplatesService } from './templates.service';
@@ -9,6 +9,7 @@ import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { assertFinanceFieldWrites } from '../../common/finance/finance-access';
+import { permissionDenied } from '../../common/errors/permission-denied';
 
 /**
  * Permissions round 2 (B-16) — `defaultBudgetAmount` is the price list:
@@ -75,10 +76,12 @@ export class TemplatesController {
    */
   private async assertByTemplateId(user: any, templateId: number, action: Action) {
     const tpl = await this.templatesService.findOne(templateId);
-    if (!tpl) throw new ForbiddenException('Template not found');
+    // Not found is a 404 (was a 403 that read like a permission problem).
+    if (!tpl) throw new NotFoundException('Template not found');
     const mod = TYPE_TO_MODULE[(tpl as any).type] ?? 'templates';
     if (!hasPerm(user, mod, action)) {
-      throw new ForbiddenException(`Insufficient permissions for ${mod}`);
+      // e.g. "You don't have permission to change zone templates. Ask your administrator for access."
+      throw permissionDenied(mod, action);
     }
   }
 
@@ -88,7 +91,7 @@ export class TemplatesController {
   findAll(@CurrentUser() user: any, @Query('type') type?: string) {
     if (type && TYPE_TO_MODULE[type]) {
       if (!hasPerm(user, TYPE_TO_MODULE[type], 'read')) {
-        throw new ForbiddenException(`Insufficient permissions for ${TYPE_TO_MODULE[type]}`);
+        throw permissionDenied(TYPE_TO_MODULE[type], 'read');
       }
     }
     return this.templatesService.findAll(type);
@@ -100,7 +103,7 @@ export class TemplatesController {
   async create(@CurrentUser() user: any, @Body() body: any) {
     const mod = TYPE_TO_MODULE[body.type ?? 'task_list'] ?? 'templates';
     if (!hasPerm(user, mod, 'write')) {
-      throw new ForbiddenException(`Insufficient permissions for ${mod}`);
+      throw permissionDenied(mod, 'write');
     }
     for (const t of Array.isArray(body?.tasks) ? body.tasks : []) {
       await assertFinanceFieldWrites(user, t, TEMPLATE_MONEY_FIELDS, null);

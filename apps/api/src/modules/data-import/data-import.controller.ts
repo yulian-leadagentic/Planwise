@@ -11,7 +11,6 @@ import {
   Body,
   Query,
   BadRequestException,
-  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -26,6 +25,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { canSeeFinance as callerCanSeeFinance } from '../../common/finance/finance-access';
+import { PermissionDeniedException, permissionDenied } from '../../common/errors/permission-denied';
 
 import { ExcelParserService } from './excel-parser.service';
 import { UsersImporterService } from './importers/users-importer.service';
@@ -85,9 +85,8 @@ export class DataImportController {
    */
   private assertCanImport(user: any, target: DataImportTarget) {
     if (!userHasModulePermission(user, `data-import/${target}`, 'write')) {
-      throw new ForbiddenException(
-        `You need "data-import/${target}" permission to import ${target}.`,
-      );
+      // "You don't have permission to import employees. Ask your administrator for access."
+      throw permissionDenied(`data-import/${target}`, 'write');
     }
   }
 
@@ -323,7 +322,9 @@ export class DataImportController {
     // back to the legacy name check pre-handover.
     const isAdmin = isAdminUser(user);
     if (!isAdmin && imp.userId !== user.id) {
-      throw new ForbiddenException('You can only view your own imports.');
+      throw new PermissionDeniedException('You can only view imports you ran yourself.', {
+        reason: 'NOT_OWNER',
+      });
     }
     return this.prisma.dataImportRow.findMany({
       where: { importId: id },
@@ -345,7 +346,9 @@ export class DataImportController {
     // back to the legacy name check pre-handover.
     const isAdmin = isAdminUser(user);
     if (!isAdmin && imp.userId !== user.id) {
-      throw new ForbiddenException('You can only roll back your own imports.');
+      throw new PermissionDeniedException('You can only roll back imports you ran yourself.', {
+        reason: 'NOT_OWNER',
+      });
     }
     if (imp.status === 'rolled_back') {
       throw new BadRequestException('This import has already been rolled back.');

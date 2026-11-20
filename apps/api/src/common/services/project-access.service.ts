@@ -1,5 +1,26 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionDeniedException } from '../errors/permission-denied';
+
+/** What the caller tried to open — only changes the wording of the 403. */
+type AccessSubject = 'project' | 'task' | 'zone';
+
+const ASK_TO_BE_ADDED = 'Ask the project leader or an administrator to add you.';
+
+/**
+ * Permission messages (2026-11-20) — the "not a member" refusal, in
+ * plain words, with the PERMISSION_DENIED code.
+ */
+function notProjectMember(subject: AccessSubject): PermissionDeniedException {
+  const lead =
+    subject === 'project'
+      ? "You're not a member of this project."
+      : `This ${subject} belongs to a project you're not a member of.`;
+  return new PermissionDeniedException(`${lead} ${ASK_TO_BE_ADDED}`, {
+    module: 'projects',
+    reason: 'NOT_PROJECT_MEMBER',
+  });
+}
 
 /**
  * Centralizes project-scoped authorization. Use this in any service that
@@ -81,6 +102,16 @@ export class ProjectAccessService {
     projectId: number,
     isAdmin: boolean,
   ): Promise<void> {
+    return this.assertProjectMembership(userId, projectId, isAdmin, 'project');
+  }
+
+  /** Body of assertProjectAccess; `subject` only picks the 403 wording. */
+  private async assertProjectMembership(
+    userId: number,
+    projectId: number,
+    isAdmin: boolean,
+    subject: AccessSubject,
+  ): Promise<void> {
     if (this.adminBypass(isAdmin)) return;
 
     const project = await this.prisma.project.findFirst({
@@ -127,7 +158,7 @@ export class ProjectAccessService {
       if (subMembership) return;
     }
 
-    throw new ForbiddenException('You do not have access to this project');
+    throw notProjectMember(subject);
   }
 
   /**
@@ -162,12 +193,15 @@ export class ProjectAccessService {
       const isOwner = task.createdBy === userId;
       const isAssigned = (task.assignees ?? []).length > 0;
       if (!isOwner && !isAssigned) {
-        throw new ForbiddenException('You do not have access to this task');
+        throw new PermissionDeniedException(
+          'This is a personal task — only the person who created it and its assignees can open it.',
+          { module: 'tasks', reason: 'PERSONAL_TASK' },
+        );
       }
       return null;
     }
 
-    await this.assertProjectAccess(userId, task.projectId, isAdmin);
+    await this.assertProjectMembership(userId, task.projectId, isAdmin, 'task');
     return task.projectId;
   }
 
@@ -194,7 +228,7 @@ export class ProjectAccessService {
     });
     if (!zone) throw new NotFoundException('Zone not found');
 
-    await this.assertProjectAccess(userId, zone.projectId, isAdmin);
+    await this.assertProjectMembership(userId, zone.projectId, isAdmin, 'zone');
     return zone.projectId;
   }
 

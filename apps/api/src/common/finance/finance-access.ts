@@ -36,8 +36,13 @@
  * materializers, importers gated by `canSeeFinance`) are not user input
  * and do not go through this.
  */
-import { ForbiddenException } from '@nestjs/common';
-
+import {
+  PermissionDeniedException,
+  describePermission,
+  joinLabels,
+  permissionDenied,
+  prettifyFieldName,
+} from '../errors/permission-denied';
 import { userHasModulePermission } from '../guards/roles.guard';
 
 // ─── Who ────────────────────────────────────────────────────────────
@@ -68,7 +73,8 @@ export function canApproveFinance(user: any): boolean {
 export function assertFinanceAccess(user: any, action: 'read' | 'write' | 'approve'): void {
   const ok =
     action === 'read' ? canSeeFinance(user) : action === 'write' ? canWriteFinance(user) : canApproveFinance(user);
-  if (!ok) throw new ForbiddenException(`This action requires finance:${action} permission.`);
+  // "You don't have permission to view financial data. Ask your administrator for access."
+  if (!ok) throw permissionDenied('finance', action);
 }
 
 // ─── Read side: the global key list ─────────────────────────────────
@@ -302,6 +308,37 @@ export function findFinanceFieldChanges(
 export type FinanceWriteAction = 'write' | 'approve';
 
 /**
+ * End-user names of the money fields `assertFinanceFieldWrites` guards,
+ * written to read after "You can't change …". Unknown keys fall back to
+ * a prettified field name — never the raw key.
+ */
+export const FINANCE_FIELD_LABELS: Readonly<Record<string, string>> = {
+  budgetAmount: 'budget amounts',
+  defaultBudgetAmount: 'price-list amounts',
+  hourlyRate: 'hourly rates',
+  salaryHourly: 'salary rates',
+  seniorityLevelId: 'the labor category',
+  budget: 'the project budget',
+  estimatedValue: 'the estimated value',
+  totalAmount: 'contract totals',
+  amount: 'amounts',
+  unitPrice: 'unit prices',
+  total: 'item totals',
+  quantity: 'quantities',
+  // Only BILLING_STATUS_FIELDS (billings.controller) sends `status` here.
+  status: 'the billing status',
+};
+
+/**
+ * "You can't change budget amounts — that needs permission to change
+ * financial data. Ask your administrator."
+ */
+export function financeFieldDeniedMessage(fields: readonly string[], action: FinanceWriteAction = 'write'): string {
+  const labels = fields.map((f) => FINANCE_FIELD_LABELS[f] ?? prettifyFieldName(f));
+  return `You can't change ${joinLabels(labels)} — that needs permission to ${describePermission('finance', action)}. Ask your administrator.`;
+}
+
+/**
  * Throw 403 when the caller lacks `finance:<action>` and `incoming`
  * changes one of `fields`. `existing` is the stored row, a loader for it
  * (only called when actually needed — the caller lacks the grant AND
@@ -328,8 +365,11 @@ export async function assertFinanceFieldWrites(
   const row = typeof existing === 'function' ? await existing() : existing;
   const changed = findFinanceFieldChanges(incoming, row, sent);
   if (changed.length > 0) {
-    throw new ForbiddenException(
-      `Changing ${changed.join(', ')} requires finance:${action} permission.`,
-    );
+    throw new PermissionDeniedException(financeFieldDeniedMessage(changed, action), {
+      module: 'finance',
+      action,
+      field: changed[0],
+      ...(changed.length > 1 ? { fields: changed } : {}),
+    });
   }
 }

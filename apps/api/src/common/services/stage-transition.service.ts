@@ -1,6 +1,21 @@
-import { Injectable, ForbiddenException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isAdminUser } from '../guards/roles.guard';
+import { PermissionDeniedException } from '../errors/permission-denied';
+
+/** Board column names as the web shows them (apps/web/src/lib/task-constants.ts STATUS_LABEL). */
+const STATUS_LABELS: Record<string, string> = {
+  not_started: 'To Do',
+  in_progress: 'In Progress',
+  in_review: 'In Review',
+  completed: 'Done',
+  on_hold: 'On Hold',
+  cancelled: 'Cancelled',
+};
+
+function statusLabel(status: string): string {
+  return STATUS_LABELS[status] ?? status.replace(/_/g, ' ');
+}
 
 /**
  * Enforces per-role Kanban stage transition rules.
@@ -34,7 +49,10 @@ export class StageTransitionService {
     const roleId = user?.roleId;
 
     if (!roleId) {
-      throw new ForbiddenException('Role required to change task status');
+      throw new PermissionDeniedException(
+        "Your account has no access role, so you can't change task status. Ask your administrator.",
+        { module: 'tasks', reason: 'NO_ROLE' },
+      );
     }
 
     // Check if any transitions are configured for this role
@@ -53,8 +71,9 @@ export class StageTransitionService {
     });
 
     if (!allowed) {
-      throw new ForbiddenException(
-        `Your role cannot move tasks from "${fromStatus}" to "${toStatus}"`,
+      throw new PermissionDeniedException(
+        `Your access role can't move a task from "${statusLabel(fromStatus)}" to "${statusLabel(toStatus)}". Ask your administrator.`,
+        { module: 'tasks', reason: 'STAGE_TRANSITION' },
       );
     }
   }

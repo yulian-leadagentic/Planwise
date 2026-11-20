@@ -91,7 +91,7 @@ describe('task money writes (B-13)', () => {
   it('POST /tasks with a budgetAmount and no finance:write → 403', async () => {
     const { ctrl, tasksService } = makeController();
     await expect(ctrl.create(EMPLOYEE, { projectId: 59, name: 'x', budgetAmount: 100 } as any)).rejects.toThrow(
-      /budgetAmount requires finance:write/,
+      /You can't change budget amounts — that needs permission to change financial data/,
     );
     expect(tasksService.create).not.toHaveBeenCalled();
     await ctrl.create(EMPLOYEE, { projectId: 59, name: 'x', budgetHours: 8 } as any);
@@ -116,7 +116,7 @@ describe('task money writes (B-13)', () => {
   it('POST /tasks/:id/assignees with an hourlyRate and no finance:write → 403', async () => {
     const { ctrl, tasksService } = makeController();
     await expect(ctrl.addAssignee(11, { userId: 7, hourlyRate: 150 }, EMPLOYEE)).rejects.toThrow(
-      /hourlyRate requires finance:write/,
+      /You can't change hourly rates — that needs permission to change financial data/,
     );
     expect(tasksService.addAssignee).not.toHaveBeenCalled();
     await ctrl.addAssignee(11, { userId: 7 }, EMPLOYEE);

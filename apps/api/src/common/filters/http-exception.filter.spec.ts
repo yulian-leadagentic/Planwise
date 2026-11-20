@@ -1,6 +1,14 @@
-import { HttpException, HttpStatus, NotFoundException, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  NotFoundException,
+  BadRequestException,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ArgumentsHost } from '@nestjs/common';
 import { HttpExceptionFilter } from './http-exception.filter';
+import { PermissionDeniedException, permissionDenied } from '../errors/permission-denied';
 
 function makeHost(): { host: ArgumentsHost; statusMock: jest.Mock; jsonMock: jest.Mock } {
   const jsonMock = jest.fn();
@@ -72,6 +80,48 @@ describe('HttpExceptionFilter', () => {
     const body = jsonMock.mock.calls[0][0];
     expect(body.error.message).toBe('Validation failed');
     expect(body.error.details).toEqual(['email must be an email', 'password too short']);
+  });
+
+  describe('403 codes (permission messages, 2026-11-20)', () => {
+    it('a PermissionDeniedException becomes PERMISSION_DENIED with its message and details', () => {
+      const { host, statusMock, jsonMock } = makeHost();
+      filter.catch(permissionDenied('finance', 'write'), host);
+      expect(statusMock).toHaveBeenCalledWith(403);
+      expect(jsonMock.mock.calls[0][0]).toEqual({
+        success: false,
+        error: {
+          code: 'PERMISSION_DENIED',
+          message: "You don't have permission to change financial data. Ask your administrator for access.",
+          details: { module: 'finance', action: 'write' },
+        },
+      });
+    });
+
+    it('field rules carry { field } in details', () => {
+      const { host, jsonMock } = makeHost();
+      filter.catch(new PermissionDeniedException("Only an Admin can change a user's access role.", { field: 'roleId' }), host);
+      expect(jsonMock.mock.calls[0][0].error).toEqual({
+        code: 'PERMISSION_DENIED',
+        message: "Only an Admin can change a user's access role.",
+        details: { field: 'roleId' },
+      });
+    });
+
+    it('a business-rule 403 keeps its own code; a plain 403 stays FORBIDDEN', () => {
+      const rule = makeHost();
+      filter.catch(new ForbiddenException({ code: 'ROLE_IS_SYSTEM', message: 'built-in' }), rule.host);
+      expect(rule.jsonMock.mock.calls[0][0].error).toMatchObject({ code: 'ROLE_IS_SYSTEM', message: 'built-in', details: null });
+
+      const plain = makeHost();
+      filter.catch(new ForbiddenException('This account has been deactivated.'), plain.host);
+      expect(plain.jsonMock.mock.calls[0][0].error).toMatchObject({ code: 'FORBIDDEN', message: 'This account has been deactivated.' });
+    });
+
+    it('a custom code on a non-403 does not override the status code', () => {
+      const { host, jsonMock } = makeHost();
+      filter.catch(new BadRequestException({ code: 'MONTHLY_NOT_YET_COMPUTED', message: 'x' }), host);
+      expect(jsonMock.mock.calls[0][0].error.code).toBe('BAD_REQUEST');
+    });
   });
 
   describe('unhandled Error (info-disclosure defense)', () => {

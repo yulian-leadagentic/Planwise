@@ -32,6 +32,9 @@ export class DriveFileNotAccessibleException extends HttpException {
           `The service account can't access file "${fileId}". Ensure it lives inside the configured Shared Drive.` +
           (originalMessage ? ` (Google says: ${originalMessage})` : ''),
         error: 'DriveFileNotAccessible',
+        // A Drive configuration problem, not the caller's permissions —
+        // its own code so the web does not show it as "No permission".
+        code: 'DRIVE_FILE_NOT_ACCESSIBLE',
       },
       HttpStatus.FORBIDDEN,
     );

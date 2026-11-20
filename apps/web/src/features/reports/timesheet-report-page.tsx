@@ -231,8 +231,12 @@ export function TimesheetReportPage() {
   // cost fields server-side for non-finance users; this just hides
   // the now-empty column / total slots so the UI stays clean. No
   // admin bypass — admins must hold Finance:read explicitly.
-  const { can } = usePermissions();
+  const { can, isAdmin } = usePermissions();
   const showFinance = can('finance', 'read');
+  // The server-side Excel export needs reports:export (Admins bypass it,
+  // as in the API's RolesGuard; CSV and Print are built in the browser).
+  // Without it the option is disabled with the reason the API would give.
+  const canExportExcel = isAdmin || can('reports', 'export');
 
   const [from, setFrom] = useState(firstOfMonth);
   const [to, setTo] = useState(lastOfMonth);
@@ -466,7 +470,9 @@ export function TimesheetReportPage() {
                 <button
                   type="button"
                   onClick={handleExportExcel}
-                  className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left"
+                  disabled={!canExportExcel}
+                  title={canExportExcel ? undefined : "You don't have permission to export reports"}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent text-left disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
                 >
                   <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> Excel (.xlsx)
                 </button>

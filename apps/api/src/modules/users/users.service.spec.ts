@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { isAdminLevelRole } from './user-write-policy';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 
 /**
  * Permissions round 1 (2026-11-20) — protected user fields and who may
@@ -108,17 +109,31 @@ describe('isAdminLevelRole', () => {
 
 describe('UsersService — PATCH /users/:id protected fields', () => {
   it.each([
-    ['password', { password: 'new-password-1' }, '"password"'],
-    ['roleId', { roleId: 1 }, '"roleId"'],
-    ['email', { email: 'evil@x.com' }, '"email"'],
-    ['isActive', { isActive: false }, '"isActive"'],
-    ['orgUnitId', { orgUnitId: 99 }, '"orgUnitId"'],
-    ['orgUnitId (cleared)', { orgUnitId: null }, '"orgUnitId"'],
-  ])('non-admin with partners:write gets 403 when changing %s', async (_f, dto, fieldInMessage) => {
+    ['password', { password: 'new-password-1' }, 'password', "Only an Admin can set a user's password."],
+    ['roleId', { roleId: 1 }, 'roleId', "Only an Admin can change a user's access role."],
+    ['email', { email: 'evil@x.com' }, 'email', "Only an Admin or HR can change a user's email address."],
+    ['isActive', { isActive: false }, 'isActive', 'Only an Admin or HR can activate or deactivate a user.'],
+    [
+      'orgUnitId',
+      { orgUnitId: 99 },
+      'orgUnitId',
+      "Only an Admin, HR or someone who can change the organization structure can change a user's department.",
+    ],
+    [
+      'orgUnitId (cleared)',
+      { orgUnitId: null },
+      'orgUnitId',
+      "Only an Admin, HR or someone who can change the organization structure can change a user's department.",
+    ],
+  ])('non-admin with partners:write gets 403 when changing %s', async (_f, dto, field, message) => {
     const { svc, prisma, activityLog } = makeService();
     const err = await svc.update(50, dto as any, PARTNERS_WRITER).catch((e) => e);
     expect(err).toBeInstanceOf(ForbiddenException);
-    expect(err.message).toContain(fieldInMessage);
+    expect(err).toBeInstanceOf(PermissionDeniedException);
+    // Plain words for the user; the raw field name only in details.
+    expect(err.message).toBe(message);
+    expect(err.message).not.toContain(`"${field}"`);
+    expect(err.getResponse()).toMatchObject({ code: 'PERMISSION_DENIED', details: { field } });
     expect(prisma.user.update).not.toHaveBeenCalled();
     expect(activityLog.logSecurityEvent).not.toHaveBeenCalled();
   });
@@ -137,6 +152,9 @@ describe('UsersService — PATCH /users/:id protected fields', () => {
   it('a caller with neither Admin, partners:write nor hr:write cannot open the route', async () => {
     const { svc } = makeService();
     await expect(svc.update(50, { firstName: 'X' } as any, NOBODY)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.update(50, { firstName: 'X' } as any, NOBODY)).rejects.toThrow(
+      "You don't have permission to edit people. Ask your administrator for access.",
+    );
   });
 
   it('HR may change email and isActive of an employee (audited old → new)', async () => {
@@ -153,22 +171,26 @@ describe('UsersService — PATCH /users/:id protected fields', () => {
 
   it('HR may not change roleId or password', async () => {
     const { svc } = makeService();
-    await expect(svc.update(50, { roleId: 3 } as any, HR)).rejects.toThrow('"roleId"');
-    await expect(svc.update(50, { password: 'x-123456' } as any, HR)).rejects.toThrow('"password"');
+    await expect(svc.update(50, { roleId: 3 } as any, HR)).rejects.toThrow("Only an Admin can change a user's access role.");
+    await expect(svc.update(50, { password: 'x-123456' } as any, HR)).rejects.toThrow("Only an Admin can set a user's password.");
   });
 
   it('nobody but an Admin changes their own isActive / roleId', async () => {
     const self = existingUser({ id: HR.id });
     const { svc } = makeService({ target: self });
-    await expect(svc.update(HR.id, { isActive: false } as any, HR)).rejects.toThrow('own active state');
-    await expect(svc.update(HR.id, { roleId: 1 } as any, HR)).rejects.toThrow('own access role');
+    await expect(svc.update(HR.id, { isActive: false } as any, HR)).rejects.toThrow("You can't change your own active status.");
+    await expect(svc.update(HR.id, { roleId: 1 } as any, HR)).rejects.toThrow("You can't change your own access role.");
   });
 
   it('HR may not change email / isActive of an Admin user', async () => {
     const adminTarget = existingUser({ id: 60, roleId: 1, role: ROLES[1] });
     const { svc, prisma } = makeService({ target: adminTarget });
-    await expect(svc.update(60, { email: 'hr-owned@x.com' } as any, HR)).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.update(60, { isActive: false } as any, HR)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.update(60, { email: 'hr-owned@x.com' } as any, HR)).rejects.toThrow(
+      'Only an Admin can change the email address of an Admin user.',
+    );
+    await expect(svc.update(60, { isActive: false } as any, HR)).rejects.toThrow(
+      'Only an Admin can activate or deactivate an Admin user.',
+    );
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
@@ -242,6 +264,7 @@ describe('UsersService — POST /users (create)', () => {
   it('partners:write alone cannot create users', async () => {
     const { svc, prisma } = makeService();
     await expect(svc.create(createDto(5) as any, PARTNERS_WRITER)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.create(createDto(5) as any, PARTNERS_WRITER)).rejects.toThrow('Only an Admin or HR can add employees.');
     expect(prisma.user.create).not.toHaveBeenCalled();
   });
 
@@ -263,7 +286,8 @@ describe('UsersService — POST /users (create)', () => {
       const { svc, prisma } = makeService();
       const err = await svc.create(createDto(roleId) as any, HR).catch((e) => e);
       expect(err).toBeInstanceOf(ForbiddenException);
-      expect(err.message).toContain('"roleId"');
+      expect(err.message).toMatch(/^Only an Admin can give someone the ".+" access role/);
+      expect(err.getResponse().details).toEqual({ field: 'roleId', reason: 'ADMIN_ONLY' });
       expect(prisma.user.create).not.toHaveBeenCalled();
     },
   );
@@ -279,6 +303,7 @@ describe('UsersService — DELETE /users/:id', () => {
   it('partners:write (+delete) cannot delete users', async () => {
     const { svc, prisma } = makeService();
     await expect(svc.remove(50, PARTNERS_WRITER)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(svc.remove(50, PARTNERS_WRITER)).rejects.toThrow('Only an Admin or HR can delete employees.');
     expect(prisma.user.delete).not.toHaveBeenCalled();
   });
 
@@ -325,8 +350,8 @@ describe('UsersService — money on a person needs finance:write', () => {
     ['seniorityLevelId', { seniorityLevelId: 3 }],
   ])('PATCH changing %s without finance:write → 403, nothing written', async (_f, dto) => {
     const { svc, prisma } = makeService({ target: stored() });
-    await expect(svc.update(50, dto as any, PARTNERS_WRITER)).rejects.toThrow(/requires finance:write/);
-    await expect(svc.update(50, dto as any, ADMIN)).rejects.toThrow(/requires finance:write/);
+    await expect(svc.update(50, dto as any, PARTNERS_WRITER)).rejects.toThrow(/needs permission to change financial data/);
+    await expect(svc.update(50, dto as any, ADMIN)).rejects.toThrow(/needs permission to change financial data/);
     expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
@@ -346,8 +371,12 @@ describe('UsersService — money on a person needs finance:write', () => {
 
   it('POST with a pay rate or a labor category needs finance:write', async () => {
     const { svc, prisma } = makeService();
-    await expect(svc.create({ ...createDto(5), salaryHourly: 90 } as any, HR)).rejects.toThrow(/salaryHourly requires finance:write/);
-    await expect(svc.create({ ...createDto(5), seniorityLevelId: 2 } as any, HR)).rejects.toThrow(/seniorityLevelId/);
+    await expect(svc.create({ ...createDto(5), salaryHourly: 90 } as any, HR)).rejects.toThrow(
+      "You can't change salary rates — that needs permission to change financial data. Ask your administrator.",
+    );
+    await expect(svc.create({ ...createDto(5), seniorityLevelId: 2 } as any, HR)).rejects.toThrow(
+      "You can't change the labor category — that needs permission to change financial data. Ask your administrator.",
+    );
     expect(prisma.user.create).not.toHaveBeenCalled();
   });
 });

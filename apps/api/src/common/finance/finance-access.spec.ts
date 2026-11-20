@@ -11,6 +11,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { PermissionDeniedException } from '../errors/permission-denied';
 import {
   assertFinanceAccess,
   assertFinanceFieldWrites,
@@ -45,6 +46,9 @@ describe('finance grants', () => {
     expect(canWriteFinance(ADMIN)).toBe(false);
     expect(canApproveFinance(ADMIN)).toBe(false);
     expect(() => assertFinanceAccess(ADMIN, 'read')).toThrow(ForbiddenException);
+    expect(() => assertFinanceAccess(ADMIN, 'read')).toThrow(
+      "You don't have permission to view financial data. Ask your administrator for access.",
+    );
   });
 
   it('no user → nothing', () => {
@@ -89,10 +93,37 @@ describe('findFinanceFieldChanges', () => {
 describe('assertFinanceFieldWrites', () => {
   const EMPLOYEE = { id: 2, isAdmin: false, roleModules: [{ module: { route: '/tasks' }, canRead: true, canWrite: true }] };
 
-  it('403 naming the field when a money value changes without finance:write', async () => {
-    await expect(
-      assertFinanceFieldWrites(EMPLOYEE, { budgetAmount: 900 }, ['budgetAmount'], { budgetAmount: '500.00' }),
-    ).rejects.toThrow(/budgetAmount requires finance:write/);
+  it('403 naming the field in plain words when a money value changes without finance:write', async () => {
+    const err = await assertFinanceFieldWrites(EMPLOYEE, { budgetAmount: 900 }, ['budgetAmount'], {
+      budgetAmount: '500.00',
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(PermissionDeniedException);
+    expect(err.message).toBe(
+      "You can't change budget amounts — that needs permission to change financial data. Ask your administrator.",
+    );
+    expect(err.getResponse()).toMatchObject({
+      code: 'PERMISSION_DENIED',
+      details: { module: 'finance', action: 'write', field: 'budgetAmount' },
+    });
+  });
+
+  it('several changed fields are listed together; no raw keys or permission names in the text', async () => {
+    const err = await assertFinanceFieldWrites(
+      EMPLOYEE,
+      { salaryHourly: 90, seniorityLevelId: 3 },
+      ['salaryHourly', 'seniorityLevelId'],
+      null,
+    ).catch((e) => e);
+    expect(err.message).toBe(
+      "You can't change salary rates and the labor category — that needs permission to change financial data. Ask your administrator.",
+    );
+    expect(err.message).not.toMatch(/salaryHourly|seniorityLevelId|finance:/);
+    expect(err.getResponse().details).toEqual({
+      module: 'finance',
+      action: 'write',
+      field: 'salaryHourly',
+      fields: ['salaryHourly', 'seniorityLevelId'],
+    });
   });
 
   it('an unchanged echo passes (whole-object forms)', async () => {
@@ -125,7 +156,9 @@ describe('assertFinanceFieldWrites', () => {
   it('billing status needs finance:approve — finance:write is not enough', async () => {
     await expect(
       assertFinanceFieldWrites(WRITER, { status: 'approved' }, ['status'], { status: 'draft' }, 'approve'),
-    ).rejects.toThrow(/status requires finance:approve/);
+    ).rejects.toThrow(
+      "You can't change the billing status — that needs permission to approve billings. Ask your administrator.",
+    );
     await expect(
       assertFinanceFieldWrites(APPROVER, { status: 'approved' }, ['status'], { status: 'draft' }, 'approve'),
     ).resolves.toBeUndefined();

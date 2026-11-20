@@ -26,6 +26,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     if (exception instanceof HttpException) {
       status = exception.getStatus();
       const exceptionResponse = exception.getResponse();
+      code = this.getErrorCode(status);
 
       if (typeof exceptionResponse === 'string') {
         message = exceptionResponse;
@@ -39,9 +40,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
           details = resp.message;
           message = 'Validation failed';
         }
-      }
 
-      code = this.getErrorCode(status);
+        // Permission messages (2026-11-20) — a 403 may carry its own
+        // stable code: PERMISSION_DENIED for every "you may not do this"
+        // (PermissionDeniedException, details = { module, action } /
+        // { field } / { reason }), or a business-rule code such as
+        // ROLE_IS_SYSTEM. The web shows PERMISSION_DENIED as a "No
+        // permission" alert. Other statuses keep the status-derived code.
+        if (status === HttpStatus.FORBIDDEN && typeof resp.code === 'string' && resp.code) {
+          code = resp.code;
+        }
+      }
     } else if (exception instanceof Error) {
       // Log the real error server-side, but never leak it to clients in prod.
       this.logger.error(`Unhandled error: ${exception.message}`, exception.stack);

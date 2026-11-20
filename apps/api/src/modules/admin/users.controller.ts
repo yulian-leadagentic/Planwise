@@ -8,7 +8,6 @@ import {
   UseGuards,
   BadRequestException,
   NotFoundException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
@@ -18,6 +17,7 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 
 /**
  * §14 RBAC multi-role · Admin → Users surface (2026-10-18).
@@ -104,7 +104,10 @@ export class AdminUsersController {
     @CurrentUser() actor: any,
   ) {
     if (!isAdminUser(actor)) {
-      throw new ForbiddenException('Only an Admin can change a user\'s roles.');
+      throw new PermissionDeniedException("Only an Admin can change a user's roles.", {
+        field: 'roles',
+        reason: 'ADMIN_ONLY',
+      });
     }
     const addIds = Array.from(new Set((body.addRoleIds ?? []).filter((n) => Number.isInteger(n) && n > 0)));
     const removeIds = Array.from(new Set((body.removeRoleIds ?? []).filter((n) => Number.isInteger(n) && n > 0)));

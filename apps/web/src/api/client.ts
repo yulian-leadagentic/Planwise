@@ -158,8 +158,27 @@ client.interceptors.response.use(
       // that would swallow the underlying request error.
     }
 
+    await decodeBlobErrorBody(error);
     return Promise.reject(error);
   },
 );
+
+/**
+ * File downloads use `responseType: 'blob'`, so an error response (e.g.
+ * a 403 "You can't export cost reports …") arrives as a Blob and
+ * notify.apiError could only show axios' "Request failed with status
+ * code 403". Turn a JSON error body back into the normal envelope so the
+ * server's message reaches the user. Anything else is left untouched.
+ */
+async function decodeBlobErrorBody(error: any): Promise<void> {
+  const data = error?.response?.data;
+  if (typeof Blob === 'undefined' || !(data instanceof Blob)) return;
+  if (!/json/i.test(data.type || '')) return;
+  try {
+    error.response.data = JSON.parse(await data.text());
+  } catch {
+    // Not JSON after all — keep the blob.
+  }
+}
 
 export default client;

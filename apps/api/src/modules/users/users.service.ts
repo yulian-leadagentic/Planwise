@@ -3,7 +3,6 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
-  ForbiddenException,
   OnModuleInit,
 } from '@nestjs/common';
 import { Prisma, UserType } from '@prisma/client';
@@ -21,6 +20,7 @@ import { ActivityLogService } from '../../common/services/activity-log.service';
 import { isAdminUser, userHasModulePermission } from '../../common/guards/roles.guard';
 import { canEditPeople, canManageEmployees, isAdminLevelRole, USER_FINANCE_FIELDS } from './user-write-policy';
 import { assertFinanceFieldWrites } from '../../common/finance/finance-access';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import * as Sentry from '@sentry/node';
 
 /** What a PATCH /users/:id actually changes among the protected fields. */
@@ -267,15 +267,19 @@ export class UsersService implements OnModuleInit {
     // Permissions round 1 (2026-11-20) — only Admin or HR add people,
     // and only an Admin may hand out an admin-level role.
     if (!canManageEmployees(actor)) {
-      throw new ForbiddenException('Only an Admin or HR (hr:write) can add employees.');
+      throw new PermissionDeniedException('Only an Admin or HR can add employees.', {
+        module: 'hr',
+        action: 'write',
+      });
     }
     const assignedRole = await this.loadRoleForPolicy(dto.roleId);
     if (!assignedRole) {
       throw new BadRequestException(`"roleId": role ${dto.roleId} does not exist`);
     }
     if (!isAdminUser(actor) && isAdminLevelRole(assignedRole)) {
-      throw new ForbiddenException(
-        `"roleId": only an Admin can assign the admin-level role "${assignedRole.name}".`,
+      throw new PermissionDeniedException(
+        `Only an Admin can give someone the "${assignedRole.name}" access role — it has admin rights.`,
+        { field: 'roleId', reason: 'ADMIN_ONLY' },
       );
     }
     // Permissions round 2 — a pay rate or a labor category (cost tier)
@@ -674,7 +678,10 @@ export class UsersService implements OnModuleInit {
 
   async update(id: number, dto: UpdateUserDto, actor: any) {
     if (!canEditPeople(actor)) {
-      throw new ForbiddenException('Editing people requires Admin, partners:write or hr:write.');
+      throw new PermissionDeniedException(
+        "You don't have permission to edit people. Ask your administrator for access.",
+        { module: 'partners', action: 'write' },
+      );
     }
     const existing = await this.findOne(id);
     const protectedChanges = await this.assertProtectedFieldWrites(existing, dto, actor);
@@ -863,14 +870,17 @@ export class UsersService implements OnModuleInit {
     // Permissions round 1 (2026-11-20) — only Admin or HR remove people;
     // nobody deletes themselves; only an Admin removes an Admin.
     if (!canManageEmployees(actor)) {
-      throw new ForbiddenException('Only an Admin or HR (hr:write) can delete employees.');
+      throw new PermissionDeniedException('Only an Admin or HR can delete employees.', {
+        module: 'hr',
+        action: 'write',
+      });
     }
     if (actor?.id === id) {
-      throw new ForbiddenException('You cannot delete your own account.');
+      throw new PermissionDeniedException("You can't delete your own account.", { reason: 'SELF' });
     }
     const existing = await this.findOne(id);
     if (!isAdminUser(actor) && (await this.isAdminLevelUser(id))) {
-      throw new ForbiddenException('Only an Admin can delete an Admin user.');
+      throw new PermissionDeniedException('Only an Admin can delete an Admin user.', { reason: 'ADMIN_ONLY' });
     }
     await this.prisma.user.delete({ where: { id } });
     await this.activityLog.logSecurityEvent({
@@ -919,43 +929,46 @@ export class UsersService implements OnModuleInit {
     const orgUnitChanged =
       dto.orgUnitId !== undefined && (dto.orgUnitId ?? null) !== (existing.orgUnitId ?? null);
 
+    // Permission messages (2026-11-20) — plain words for the user; the
+    // protected field travels in `details.field` (PERMISSION_DENIED).
+    const denied = (message: string, field: string, reason?: string) =>
+      new PermissionDeniedException(message, { field, ...(reason ? { reason } : {}) });
     if (passwordChanged && !isAdmin) {
-      throw new ForbiddenException('"password": only an Admin can set a user password.');
+      throw denied("Only an Admin can set a user's password.", 'password', 'ADMIN_ONLY');
     }
     if (roleChanged && !isAdmin) {
-      throw new ForbiddenException(
-        isSelf
-          ? '"roleId": you cannot change your own access role.'
-          : '"roleId": only an Admin can change the access role.',
-      );
+      throw isSelf
+        ? denied("You can't change your own access role.", 'roleId', 'SELF')
+        : denied("Only an Admin can change a user's access role.", 'roleId', 'ADMIN_ONLY');
     }
     if (emailChanged && !isAdmin && !isHr) {
-      throw new ForbiddenException('"email": only an Admin or HR can change the email.');
+      throw denied("Only an Admin or HR can change a user's email address.", 'email');
     }
     if (activeChanged && !isAdmin) {
       if (!isHr) {
-        throw new ForbiddenException('"isActive": only an Admin or HR can activate or deactivate a user.');
+        throw denied('Only an Admin or HR can activate or deactivate a user.', 'isActive');
       }
       if (isSelf) {
-        throw new ForbiddenException('"isActive": you cannot change your own active state.');
+        throw denied("You can't change your own active status. Ask an Admin.", 'isActive', 'SELF');
       }
     }
     if (orgUnitChanged && !isAdmin) {
       if (!isHr && !isOrgWriter) {
-        throw new ForbiddenException(
-          '"orgUnitId": only an Admin, HR or org:write can change the department (org unit).',
+        throw denied(
+          "Only an Admin, HR or someone who can change the organization structure can change a user's department.",
+          'orgUnitId',
         );
       }
       if (isSelf) {
-        throw new ForbiddenException('"orgUnitId": you cannot change your own department (org unit).');
+        throw denied("You can't change your own department. Ask an Admin.", 'orgUnitId', 'SELF');
       }
     }
     // HR manages employees, not Admins — changing an Admin's email
     // would hand over the account (SSO links identities by email).
     if ((emailChanged || activeChanged) && !isAdmin && (await this.isAdminLevelUser(existing.id))) {
-      throw new ForbiddenException(
-        `"${emailChanged ? 'email' : 'isActive'}": only an Admin can change this on an Admin user.`,
-      );
+      throw emailChanged
+        ? denied('Only an Admin can change the email address of an Admin user.', 'email', 'ADMIN_ONLY')
+        : denied('Only an Admin can activate or deactivate an Admin user.', 'isActive', 'ADMIN_ONLY');
     }
 
     let nextRole: { id: number; name: string } | null = null;

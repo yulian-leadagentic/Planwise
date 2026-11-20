@@ -1,8 +1,8 @@
-import { Controller, Get, Query, UseGuards, Res, ForbiddenException } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, Res } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Response } from 'express';
 
-import { ReportsService, scrubTimesheetCost, isCostExportType } from './reports.service';
+import { ReportsService, scrubTimesheetCost, isCostExportType, costReportsDenied } from './reports.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
@@ -141,7 +141,7 @@ export class ReportsController {
     //     per-currency totals for callers without finance:read.
     const showFinance = canSeeFinance(user);
     if (isCostExportType(type) && !showFinance) {
-      throw new ForbiddenException('Cost reports require finance:read permission.');
+      throw costReportsDenied();
     }
     const result = await this.reportsService.exportReport(type, format, query, {
       canSeeFinance: showFinance,

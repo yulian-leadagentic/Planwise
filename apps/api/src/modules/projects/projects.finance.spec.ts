@@ -136,7 +136,7 @@ describe('POST / PATCH /projects (B-13 / B-15)', () => {
 
   it('PATCH with a changed budget and no finance:write → 403, nothing written', async () => {
     const { ctrl, projectsService } = makeController();
-    await expect(ctrl.update(PM, 59, { budget: 1 } as any)).rejects.toThrow(/budget requires finance:write/);
+    await expect(ctrl.update(PM, 59, { budget: 1 } as any)).rejects.toThrow(/You can't change the project budget — that needs permission to change financial data/);
     expect(projectsService.update).not.toHaveBeenCalled();
   });
 

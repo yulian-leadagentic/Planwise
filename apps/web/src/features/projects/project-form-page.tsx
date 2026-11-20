@@ -918,7 +918,7 @@ export function ProjectFormPage() {
                         step="0.01"
                         placeholder="0.00"
                         readOnly={!canEditFinance}
-                        title={canEditFinance ? undefined : 'Changing the budget requires finance:write'}
+                        title={canEditFinance ? undefined : "You don't have permission to change financial data"}
                         className={cn(
                           'w-full pl-7 pr-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none',
                           !canEditFinance && 'bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 cursor-not-allowed',

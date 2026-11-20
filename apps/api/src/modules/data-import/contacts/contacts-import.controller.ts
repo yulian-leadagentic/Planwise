@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Delete,
-  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -18,6 +17,7 @@ import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagg
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard, userHasModulePermission } from '../../../common/guards/roles.guard';
 import { RequirePermissions } from '../../../common/decorators/roles.decorator';
+import { permissionDenied } from '../../../common/errors/permission-denied';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 
 import { ContactsTriageService, TriageResult } from './triage.service';
@@ -66,7 +66,8 @@ export class ContactsImportController {
    */
   private assertCanImport(user: any) {
     if (!userHasModulePermission(user, 'data-import/contacts', 'write')) {
-      throw new ForbiddenException('You need "data-import/contacts" write permission.');
+      // "You don't have permission to import contacts. Ask your administrator for access."
+      throw permissionDenied('data-import/contacts', 'write');
     }
   }
 

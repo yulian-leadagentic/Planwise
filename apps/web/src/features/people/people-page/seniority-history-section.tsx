@@ -3,9 +3,10 @@ import { Pencil, X } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied } from '@/lib/notify';
 import client from '@/api/client';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { NoAccess } from '@/components/shared/no-access';
 import type { SeniorityHistoryRow } from './types';
 
 /**
@@ -55,7 +56,7 @@ export function SeniorityHistorySection({
   const [editStartDate, setEditStartDate] = useState<string>('');
   const [editEndDate, setEditEndDate] = useState<string>('');
 
-  const { data: history = [], isLoading } = useQuery<SeniorityHistoryRow[]>({
+  const { data: history = [], isLoading, error: historyError } = useQuery<SeniorityHistoryRow[]>({
     queryKey: ['users', userId, 'seniorities'],
     queryFn: () =>
       client.get(`/users/${userId}/seniorities`).then((r) => {
@@ -235,11 +236,15 @@ export function SeniorityHistorySection({
       )}
 
       {/* History list */}
-      {isLoading ? (
+      {isPermissionDenied(historyError) ? (
+        <NoAccess what="this person's labor category history" />
+      ) : isLoading ? (
         <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">Loading…</p>
       ) : history.length === 0 ? (
         <p className="text-[12px] text-slate-400 dark:text-slate-500 italic">
-          No labor category history. Add the first entry to start tracking cost.
+          {canEditTier
+            ? 'No labor category history. Add the first entry to start tracking cost.'
+            : 'No labor category history yet.'}
         </p>
       ) : (
         <div className="space-y-1.5">

@@ -9,8 +9,9 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { StatusBadge } from '@/components/shared/status-badge';
 import { TextField, Field } from '@/components/shared/field';
 import { Modal } from '@/components/shared/modal';
+import { NoAccess } from '@/components/shared/no-access';
 import client from '@/api/client';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { usePermissions } from '@/hooks/use-permissions';
 
@@ -84,7 +85,7 @@ export function SeniorityLevelsPage() {
   // QA3 item 1 — rate-history modal targets one level at a time.
   const [rateModalFor, setRateModalFor] = useState<SeniorityRow | null>(null);
 
-  const { data, isLoading } = useQuery<SeniorityRow[]>({
+  const { data, isLoading, error: listError } = useQuery<SeniorityRow[]>({
     queryKey: ['admin', 'seniority-levels'],
     enabled: showRates,
     queryFn: () =>
@@ -266,15 +267,14 @@ export function SeniorityLevelsPage() {
     return base;
   }, [showRates, canEditRates, confirm, deleteMutation]);
 
-  if (!showRates) {
+  // Permission messages (2026-11-20) — no finance:read (known up front,
+  // the list query never fires) or a 403 from the API: one plain "no
+  // access" note instead of an empty table or an error toast.
+  if (!showRates || isPermissionDenied(listError)) {
     return (
       <div className="space-y-6">
         <PageHeader title="Labor Categories" description="Labor categories carry the hourly cost rates used by project costing." />
-        <EmptyState
-          icon={GraduationCap}
-          title="Finance permission required"
-          description="Labor categories and their rates are visible only with the Finance permission (finance:read)."
-        />
+        <NoAccess variant="page" what="labor categories and their rates" />
       </div>
     );
   }
@@ -378,12 +378,16 @@ function RateHistoryModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { can } = usePermissions();
+  const canReadRates = can('finance', 'read');
+  const canEditRates = can('finance', 'write');
   const [hourlyCost, setHourlyCost] = useState('');
   const [currency, setCurrency] = useState(level.currency ?? '');
   const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
 
-  const { data: rates = [], isLoading } = useQuery<SeniorityRateRow[]>({
+  const { data: rates = [], isLoading, error: ratesError } = useQuery<SeniorityRateRow[]>({
     queryKey: ['admin', 'seniority-rates', level.id],
+    enabled: canReadRates,
     queryFn: () =>
       client.get(`/admin/config/seniority-levels/${level.id}/rates`).then((r) => {
         const d = r.data?.data ?? r.data;
@@ -429,8 +433,11 @@ function RateHistoryModal({
       widthClass="w-full max-w-lg"
       isDirty={isDirty}
     >
+      {!canReadRates || isPermissionDenied(ratesError) ? (
+        <NoAccess what="the rate history of this labor category" />
+      ) : (
       <div className="space-y-4">
-        <div>
+        {canEditRates && <div>
           <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
             Change rate — forward effective
           </h4>
@@ -469,7 +476,7 @@ function RateHistoryModal({
             Closes the current row at the day before, opens a new row starting {effectiveFrom || '…'}.
             Entries before that date keep the prior rate for this labor category.
           </p>
-        </div>
+        </div>}
 
         <div>
           <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
@@ -513,6 +520,7 @@ function RateHistoryModal({
           )}
         </div>
       </div>
+      )}
     </Modal>
   );
 }

@@ -5,12 +5,15 @@ import { Toaster } from 'sonner';
 import { AppRouter } from './router/app-router';
 import { AuthBootstrap } from './router/auth-bootstrap';
 import { ConfirmMount } from './components/shared/confirm-dialog';
+import { isPermissionDenied } from './lib/notify';
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 5 * 60 * 1000,
-      retry: 1,
+      // One retry for flaky errors — but never for a permission 403:
+      // retrying can't help and only delays the "no access" note.
+      retry: (failureCount, error) => !isPermissionDenied(error) && failureCount < 1,
       refetchOnWindowFocus: false,
     },
   },

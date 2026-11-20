@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   UseGuards,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
@@ -104,11 +105,14 @@ export class RolesController {
         where: { id },
         select: { id: true, name: true, isSystem: true },
       });
-      if (!role) throw new ForbiddenException('Role not found');
+      if (!role) throw new NotFoundException('Role not found');
       if (role.isSystem && body.name !== role.name) {
-        throw new ForbiddenException(
-          `ROLE_IS_SYSTEM: "${role.name}" is a system group — its name is managed by code (apps/api/prisma/seed.ts §14.1 grid). You can edit the description, or create a non-system role with a different name.`,
-        );
+        // Not a permission problem (nobody may rename a built-in role) —
+        // its own code, so the web shows it as a rule, not "No permission".
+        throw new ForbiddenException({
+          code: 'ROLE_IS_SYSTEM',
+          message: `"${role.name}" is a built-in role, so its name can't be changed. You can edit its description, or create a new role with a different name.`,
+        });
       }
     }
     const before = await this.prisma.role.findUnique({ where: { id } });
@@ -151,11 +155,12 @@ export class RolesController {
       where: { id },
       select: { id: true, name: true, isSystem: true },
     });
-    if (!role) throw new ForbiddenException('Role not found');
+    if (!role) throw new NotFoundException('Role not found');
     if (role.isSystem) {
-      throw new ForbiddenException(
-        `ROLE_IS_SYSTEM: "${role.name}" is a system group — it cannot be deleted. The seed would re-create it on next boot. Edit its permissions in the matrix instead, or move its users to a different role first.`,
-      );
+      throw new ForbiddenException({
+        code: 'ROLE_IS_SYSTEM',
+        message: `"${role.name}" is a built-in role and can't be deleted. Change its permissions in the matrix instead, or move its users to another role.`,
+      });
     }
 
     // Clean up all related records before deleting the role.
@@ -201,7 +206,7 @@ export class RolesController {
       where: { id: roleId },
       select: { id: true, name: true, isSystem: true },
     });
-    if (!role) throw new ForbiddenException('Role not found');
+    if (!role) throw new NotFoundException('Role not found');
 
     const existing = await this.prisma.roleModule.findFirst({
       where: { roleId, moduleId: body.moduleId },
@@ -265,7 +270,7 @@ export class RolesController {
       where: { id: roleId },
       select: { id: true, name: true, isSystem: true },
     });
-    if (!role) throw new ForbiddenException('Role not found');
+    if (!role) throw new NotFoundException('Role not found');
 
     const existing = await this.prisma.roleModule.findFirst({
       where: { roleId, moduleId },

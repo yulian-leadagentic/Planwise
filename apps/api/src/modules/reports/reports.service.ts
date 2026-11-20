@@ -1,9 +1,18 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { startOfDay, endOfDay, parseISO } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ReportQueryDto } from './dto/report-query.dto';
 import { redactFinanceFields } from '../../common/finance/finance-access';
+import { PermissionDeniedException, describePermission } from '../../common/errors/permission-denied';
+
+/** 403 for a cost-* export without finance:read (controller + service). */
+export function costReportsDenied(): PermissionDeniedException {
+  return new PermissionDeniedException(
+    `You can't export cost reports — that needs permission to ${describePermission('finance', 'read')}. Ask your administrator.`,
+    { module: 'finance', action: 'read' },
+  );
+}
 
 /**
  * `/reports/export` types that are cost reports (finance:read only).
@@ -604,7 +613,7 @@ export class ReportsService {
     opts: { canSeeFinance: boolean } = { canSeeFinance: false },
   ): Promise<Buffer> {
     if (isCostExportType(type) && !opts.canSeeFinance) {
-      throw new ForbiddenException('Cost reports require finance:read permission.');
+      throw costReportsDenied();
     }
     // The detailed timesheet is the customer-facing export — it gets
     // a purpose-built Excel layout with proper columns, currency

@@ -32,7 +32,7 @@ describe('template price list writes (B-16)', () => {
   it('PATCH /templates/tasks/:id — a changed price needs finance:write; an echo passes', async () => {
     const { ctrl, templatesService } = make();
     await expect(ctrl.updateTask(EDITOR, 1, { defaultBudgetAmount: 2000 })).rejects.toThrow(
-      /defaultBudgetAmount requires finance:write/,
+      /You can't change price-list amounts — that needs permission to change financial data/,
     );
     expect(templatesService.updateTask).not.toHaveBeenCalled();
     await ctrl.updateTask(EDITOR, 1, { name: 'Renamed', defaultBudgetAmount: 1500 });

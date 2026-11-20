@@ -84,7 +84,7 @@ export function MonthlyReviewDrawer({
       if (code === 'MONTHLY_NOT_YET_COMPUTED') {
         notify.warning('יש לחשב מחדש לפני אישור');
       } else {
-        notify.error('Approve failed');
+        notify.apiError(e, 'Approve failed');
       }
     },
   });
@@ -96,7 +96,7 @@ export function MonthlyReviewDrawer({
       qc.invalidateQueries({ queryKey: listKey });
       notify.success('בוטל אישור · Reopened');
     },
-    onError: () => notify.error('Reopen failed'),
+    onError: (e: any) => notify.apiError(e, 'Reopen failed'),
   });
 
   const row = data?.row;
@@ -155,7 +155,7 @@ export function MonthlyReviewDrawer({
                         ? 'bg-blue-600 hover:bg-blue-700 text-white'
                         : 'cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500',
                     )}
-                    title={canApprove ? 'Approve this employee' : 'Requires hr:approve'}
+                    title={canApprove ? 'Approve this employee' : "You don't have permission to approve monthly HR reviews"}
                   >
                     <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                     אשר
@@ -172,7 +172,7 @@ export function MonthlyReviewDrawer({
                         ? 'border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 hover:bg-slate-50 dark:hover:bg-slate-800'
                         : 'cursor-not-allowed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500',
                     )}
-                    title={canApprove ? 'Reopen this row' : 'Requires hr:approve'}
+                    title={canApprove ? 'Reopen this row' : "You don't have permission to approve monthly HR reviews"}
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
                     בטל אישור

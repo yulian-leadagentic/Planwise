@@ -12,6 +12,7 @@ import { PageHeader } from '@/components/shared/page-header';
 import { PeopleMultiSelect, type Person } from '@/components/shared/people-multi-select';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 
@@ -230,9 +231,8 @@ export function HrReportsPage() {
       />
 
       {!canExport && (
-        <div className="rounded-[14px] border border-amber-200 dark:border-amber-800/60 bg-amber-50 dark:bg-amber-900/20 p-4 text-[13px] text-amber-800 dark:text-amber-200">
-          Requires <span className="font-mono">hr:export</span>. HR Manager and
-          HR Clerk hold this grant by default.
+        <div dir="ltr">
+          <NoAccess what="HR report exports" />
         </div>
       )}
 

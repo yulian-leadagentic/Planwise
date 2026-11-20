@@ -151,7 +151,7 @@ export function HrMonthlyReviewPage() {
         notify.success(`חישוב מחדש · ${computed} עודכנו`);
       }
     },
-    onError: () => notify.error('Recompute failed'),
+    onError: (e: any) => notify.apiError(e, 'Recompute failed'),
   });
 
   const approveAll = useMutation({
@@ -175,7 +175,7 @@ export function HrMonthlyReviewPage() {
       if (fail > 0) notify.warning(`אושרו ${ok}, נכשלו ${fail}`);
       else notify.success(`אושרו ${ok} עובדים`);
     },
-    onError: () => notify.error('Approve all failed'),
+    onError: (e: any) => notify.apiError(e, 'Approve all failed'),
   });
 
   const columns = useMemo<ColumnDef<MonthlyRosterRow, unknown>[]>(
@@ -388,7 +388,7 @@ export function HrMonthlyReviewPage() {
                   ? `Recompute all employees${
                       missingCount > 0 ? ` · ${missingCount} missing` : ''
                     }`
-                  : 'Requires hr:write'
+                  : "You don't have permission to change HR data"
               }
             >
               <Calculator className="h-3.5 w-3.5" />
@@ -423,7 +423,7 @@ export function HrMonthlyReviewPage() {
                   : 'cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500',
               )}
               title={
-                canApprove ? `Approve ${openCount} open rows` : 'Requires hr:approve'
+                canApprove ? `Approve ${openCount} open rows` : "You don't have permission to approve monthly HR reviews"
               }
             >
               <CheckCheck className="h-3.5 w-3.5" />

@@ -51,7 +51,7 @@ describe('billings (B-12 / B-13)', () => {
 
   it('a changed amount needs finance:write', async () => {
     const { ctrl, billingsService } = make();
-    await expect(ctrl.update(CONTRACTS_WRITER, 1, { amount: 900 })).rejects.toThrow(/amount requires finance:write/);
+    await expect(ctrl.update(CONTRACTS_WRITER, 1, { amount: 900 })).rejects.toThrow(/You can't change amounts — that needs permission to change financial data/);
     expect(billingsService.update).not.toHaveBeenCalled();
     await ctrl.update(FINANCE_WRITER, 1, { amount: 900 });
     expect(billingsService.update).toHaveBeenCalled();
@@ -59,7 +59,7 @@ describe('billings (B-12 / B-13)', () => {
 
   it('a status change needs finance:approve — finance:write is not enough', async () => {
     const { ctrl, billingsService } = make();
-    await expect(ctrl.update(FINANCE_WRITER, 1, { status: 'approved' })).rejects.toThrow(/status requires finance:approve/);
+    await expect(ctrl.update(FINANCE_WRITER, 1, { status: 'approved' })).rejects.toThrow(/You can't change the billing status — that needs permission to approve billings/);
     await expect(ctrl.update(CONTRACTS_WRITER, 1, { status: 'approved' })).rejects.toThrow(ForbiddenException);
     expect(billingsService.update).not.toHaveBeenCalled();
     await ctrl.update(FINANCE_APPROVER, 1, { status: 'approved' });
@@ -75,8 +75,8 @@ describe('billings (B-12 / B-13)', () => {
   it('create: an amount needs finance:write, a non-draft status needs finance:approve', async () => {
     const { ctrl, billingsService } = make();
     const dto: any = { contractId: 1, type: 'invoice', amount: 100, billingDate: '2026-11-20' };
-    await expect(ctrl.create(CONTRACTS_WRITER, dto)).rejects.toThrow(/amount requires finance:write/);
-    await expect(ctrl.create(FINANCE_WRITER, { ...dto, status: 'approved' })).rejects.toThrow(/finance:approve/);
+    await expect(ctrl.create(CONTRACTS_WRITER, dto)).rejects.toThrow(/You can't change amounts — that needs permission to change financial data/);
+    await expect(ctrl.create(FINANCE_WRITER, { ...dto, status: 'approved' })).rejects.toThrow(/permission to approve billings/);
     await ctrl.create(FINANCE_WRITER, { ...dto, status: 'draft' });
     expect(billingsService.create).toHaveBeenCalledTimes(1);
   });
@@ -123,7 +123,7 @@ describe('contracts (B-12 / B-13)', () => {
 
   it('items: a changed quantity / price needs finance:write; the echo drops item money', async () => {
     const { ctrl, contractsService } = make();
-    await expect(ctrl.updateItem(CONTRACTS_WRITER, 1, { quantity: 3 })).rejects.toThrow(/quantity requires finance:write/);
+    await expect(ctrl.updateItem(CONTRACTS_WRITER, 1, { quantity: 3 })).rejects.toThrow(/You can't change quantities — that needs permission to change financial data/);
     const out: any = await ctrl.updateItem(CONTRACTS_WRITER, 1, { description: 'x', quantity: 2, unitPrice: 100 });
     expect(out).toEqual({ id: 1, description: 'x' });
     // a new item always carries a unit price → finance:write

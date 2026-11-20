@@ -10,6 +10,10 @@
  *   businessRule — red,   sticky (stickier than warning),
  *                  optional action button + always-visible error
  *                  reference code chip + "Copy details" for support
+ *   permission   — neutral card, amber accent + lock, ~8s. "No
+ *                  permission" + the server's plain-English reason +
+ *                  ref-code chip; no "Copy details" (nothing broke).
+ *                  `apiError` picks it for every permission 403.
  *
  * Why one component instead of stock Sonner toasts: the spec needs
  * three different sizes (small / medium / large), richer content
@@ -26,12 +30,12 @@
 
 import { toast as sonnerToast } from 'sonner';
 import { useState } from 'react';
-import { CheckCircle2, Info as InfoIcon, AlertTriangle, XCircle, Ban, X, Copy, Check } from 'lucide-react';
+import { CheckCircle2, Info as InfoIcon, AlertTriangle, XCircle, Ban, Lock, X, Copy, Check } from 'lucide-react';
 import { cn } from './utils';
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
-type Variant = 'success' | 'info' | 'warning' | 'validation' | 'businessRule';
+type Variant = 'success' | 'info' | 'warning' | 'validation' | 'businessRule' | 'permission';
 
 interface BaseOptions {
   /** Error reference code shown as a chip on errors (e.g. "TASK-CREATE-400"). */
@@ -65,6 +69,7 @@ const VARIANT_DURATION: Record<Variant, number> = {
   warning: Infinity,       // sticky
   validation: Infinity,    // sticky
   businessRule: Infinity,  // stickier than warning per spec — both Infinity, but BR has Copy details so user dismisses last
+  permission: 8000,        // informative, not a failure — long enough to read, never piles up
 };
 
 // Tailwind classes per variant. Order: container bg, container border,
@@ -83,6 +88,9 @@ const VARIANT_STYLES: Record<Variant, {
   warning:      { bg: 'bg-amber-50',   border: 'border-amber-200',   iconWrap: 'bg-amber-100',   iconColor: 'text-amber-700',   title: 'text-amber-900',   body: 'text-amber-800',   Icon: AlertTriangle },
   validation:   { bg: 'bg-red-50',     border: 'border-red-200',     iconWrap: 'bg-red-100',     iconColor: 'text-red-700',     title: 'text-red-900',     body: 'text-red-800',     Icon: XCircle },
   businessRule: { bg: 'bg-red-50',     border: 'border-red-300',     iconWrap: 'bg-red-100',     iconColor: 'text-red-800',     title: 'text-red-900',     body: 'text-red-800',     Icon: Ban },
+  // Not an error: neutral surface, amber left accent (toast rule in the
+  // design system) and a lock — "you may not", not "something broke".
+  permission:   { bg: 'bg-white dark:bg-slate-900', border: 'border-slate-200 dark:border-slate-700 border-l-[3px] border-l-amber-500 dark:border-l-amber-500', iconWrap: 'bg-amber-50 dark:bg-amber-500/10', iconColor: 'text-amber-600 dark:text-amber-400', title: 'text-slate-900 dark:text-slate-100', body: 'text-slate-600 dark:text-slate-300', Icon: Lock },
 };
 
 // ─── Diagnostic payload (Copy details) ─────────────────────────────────
@@ -225,6 +233,7 @@ function NotificationCard({ variant, title, description, code, issues, action, c
                   variant === 'info' && 'bg-blue-100 text-blue-800',
                   variant === 'warning' && 'bg-amber-100 text-amber-800',
                   (variant === 'validation' || variant === 'businessRule') && 'bg-red-100 text-red-800',
+                  variant === 'permission' && 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300',
                 )}
                 title="Reference code — quote this when contacting support"
               >
@@ -257,6 +266,8 @@ function render(
     issues?: string[];
     action?: { label: string; onClick: () => void };
     copyDetails?: string;
+    /** Stable Sonner id — a second toast with the same id replaces the first. */
+    id?: string;
   } = {},
 ): string | number {
   const duration = opts.duration ?? VARIANT_DURATION[variant];
@@ -277,6 +288,7 @@ function render(
       // Sonner accepts Infinity for sticky — alias undefined removes
       // the default timer.
       duration: duration === Infinity ? undefined : duration,
+      ...(opts.id ? { id: opts.id } : {}),
     },
   );
 }
@@ -297,6 +309,37 @@ export function getErrorCode(error: any, fallbackModule = 'APP', fallbackAction 
   };
   const action = actionMap[method] || fallbackAction;
   return `${module}-${action}-${status || 'ERR'}`;
+}
+
+// ─── Permission 403s ───────────────────────────────────────────────────
+
+/** Envelope code the API puts on every "you may not do this" 403. */
+export const PERMISSION_DENIED_CODE = 'PERMISSION_DENIED';
+
+const GENERIC_NO_PERMISSION = "You don't have permission to do this. Ask your administrator for access.";
+
+/**
+ * True for a permission refusal: the API's `PERMISSION_DENIED` code, or a
+ * plain 403 without a business-rule code of its own (an older API build,
+ * Nest's default "Forbidden resource"). A 403 that carries its own code —
+ * e.g. ROLE_IS_SYSTEM (built-in roles can't be renamed) — is a rule, not
+ * a permission, and keeps the regular error alert.
+ */
+export function isPermissionDenied(error: any): boolean {
+  const code = error?.response?.data?.error?.code;
+  if (code === PERMISSION_DENIED_CODE) return true;
+  const status = error?.response?.status ?? error?.status;
+  return status === 403 && (code == null || code === 'FORBIDDEN');
+}
+
+/** The server's plain-English reason for a permission 403 (never axios' "Request failed with status code 403"). */
+export function getPermissionMessage(error: any): string {
+  const data = error?.response?.data;
+  const msg = data?.error?.message ?? data?.message;
+  if (typeof msg === 'string' && msg.trim() && msg !== 'Forbidden resource' && msg !== 'Forbidden') {
+    return msg;
+  }
+  return GENERIC_NO_PERMISSION;
 }
 
 export function getErrorMessage(error: any, fallback = 'An unexpected error occurred'): string {
@@ -354,6 +397,15 @@ export const notify = {
   // array of validation `details`, route to .validation() instead.
   apiError: (error: any, fallbackMessage = 'Operation failed', module?: string, action?: string) => {
     const code = getErrorCode(error, module, action);
+
+    // Permission refusal (403) — not a crash: "No permission" + the
+    // server's reason, lock icon, ref chip, no "Copy details". The id
+    // collapses repeats of the same refusal into one card.
+    if (isPermissionDenied(error)) {
+      const description = getPermissionMessage(error);
+      return render('permission', 'No permission', { code, description, id: `permission:${description}` });
+    }
+
     const message = getErrorMessage(error, fallbackMessage);
 
     // Structured "missing_required_fields" 400 — surface each missing

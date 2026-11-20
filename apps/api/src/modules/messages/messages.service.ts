@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma, MessageEntityType, MessageType } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { QueryMessagesDto } from './dto/query-messages.dto';
 
@@ -458,7 +459,9 @@ export class MessagesService {
     });
 
     if (!message) throw new NotFoundException('Message not found');
-    if (message.authorId !== userId) throw new ForbiddenException('Can only edit own messages');
+    if (message.authorId !== userId) {
+      throw new PermissionDeniedException('You can only edit your own messages.', { reason: 'NOT_OWNER' });
+    }
 
     return this.prisma.message.update({
       where: { id },

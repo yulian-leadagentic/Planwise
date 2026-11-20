@@ -1,6 +1,7 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { ROLES_KEY, OWN_DATA_KEY, RequiredPermission } from '../decorators/roles.decorator';
+import { permissionDenied } from '../errors/permission-denied';
 
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -24,7 +25,9 @@ export class RolesGuard implements CanActivate {
     const { user } = context.switchToHttp().getRequest();
     if (!user || !user.roleModules) {
       if (isOwnData) return true;
-      throw new ForbiddenException('Insufficient permissions');
+      // Permission messages (2026-11-20) — name what is missing, in plain
+      // words, with the PERMISSION_DENIED code (see permission-denied.ts).
+      throw permissionDenied(requiredPermissions[0].module, requiredPermissions[0].action);
     }
 
     // Admin role short-circuit — admins bypass the standard permission
@@ -72,7 +75,7 @@ export class RolesGuard implements CanActivate {
       });
     };
 
-    const hasPermission = requiredPermissions.every((required) => {
+    const holds = (required: RequiredPermission): boolean => {
       // Most-specific match first; fall back to parent path so a role with
       // permission on /admin still satisfies /admin/roles unless an explicit
       // /admin/roles entry exists and denies it.
@@ -89,11 +92,13 @@ export class RolesGuard implements CanActivate {
         }
       }
       return false;
-    });
+    };
 
-    if (!hasPermission) {
+    // Entries are ANDed; the message names the first one the user lacks.
+    const missing = requiredPermissions.find((required) => !holds(required));
+    if (missing) {
       if (isOwnData) return true;
-      throw new ForbiddenException('Insufficient permissions');
+      throw permissionDenied(missing.module, missing.action);
     }
 
     return true;

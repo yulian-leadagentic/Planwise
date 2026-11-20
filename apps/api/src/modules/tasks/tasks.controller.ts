@@ -9,7 +9,7 @@ import {
   Query,
   ParseIntPipe,
   UseGuards,
-  ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
@@ -252,7 +252,8 @@ export class TasksController {
   ) {
     await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     const text = (body?.text ?? '').trim();
-    if (!text) throw new ForbiddenException('text is required');
+    // A missing field is a 400, not a 403 (the web shows 403s as "No permission").
+    if (!text) throw new BadRequestException('Checklist item text is required.');
     return this.checklist.create(taskId, user.id, text);
   }
 
@@ -311,7 +312,7 @@ export class TasksController {
   async reorder(@CurrentUser() user: any, @Body() body: { items: { id: number; sortOrder: number; zoneId?: number }[] }) {
     // Verify access to every task being reordered
     if (!Array.isArray(body?.items) || body.items.length === 0) {
-      throw new ForbiddenException('items required');
+      throw new BadRequestException('Nothing to reorder — the list of tasks is empty.');
     }
     for (const item of body.items) {
       await this.access.assertTaskAccess(user.id, item.id, isAdminUser(user));

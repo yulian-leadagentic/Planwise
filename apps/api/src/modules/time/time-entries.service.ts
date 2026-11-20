@@ -1,8 +1,9 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { startOfDay, endOfDay, addDays, parseISO, format } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { minutesOverlap } from '../../common/overlap';
 import { taskCompletionValue } from '../../common/task-completion';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
@@ -392,9 +393,9 @@ export class TimeEntriesService {
     // keyed off the row's owner and would silently leak another user's
     // calendar state through 409 messaging).
     if (userId != null && existing.userId !== userId) {
-      throw new ForbiddenException({
-        message: 'You can only edit your own time entries.',
-        code: 'TIME_ENTRY_NOT_OWNER',
+      throw new PermissionDeniedException('You can only edit your own time entries.', {
+        module: 'time',
+        reason: 'TIME_ENTRY_NOT_OWNER',
       });
     }
 
@@ -486,9 +487,9 @@ export class TimeEntriesService {
 
     // Ownership gate — same rule as update() (TIME_ENTRY_NOT_OWNER).
     if (userId != null && existing.userId !== userId) {
-      throw new ForbiddenException({
-        message: 'You can only delete your own time entries.',
-        code: 'TIME_ENTRY_NOT_OWNER',
+      throw new PermissionDeniedException('You can only delete your own time entries.', {
+        module: 'time',
+        reason: 'TIME_ENTRY_NOT_OWNER',
       });
     }
 

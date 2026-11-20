@@ -460,7 +460,9 @@ export function PeoplePage() {
       (user) => setResettingUser(user),
       savingUserId,
       // Employees only — external partners don't carry cost overrides today.
-      isPartners ? undefined : (user) => setOverrideUser(user),
+      // Cost-rate override needs finance:read (the modal's routes do) —
+      // no button rather than a modal that can only say "no access".
+      isPartners || !showEffectiveRate ? undefined : (user) => setOverrideUser(user),
       // QA3 round-2 item 4 — inline cells for Department / Seniority / Active.
       // Only wire them on the Employees tab; external partners have no
       // seniority or department concept today.

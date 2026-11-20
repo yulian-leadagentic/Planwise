@@ -3,6 +3,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ProjectAccessService } from './project-access.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isAdminUser } from '../guards/roles.guard';
+import { PermissionDeniedException } from '../errors/permission-denied';
 import { attachMergedPermissions } from '../../modules/auth/strategies/jwt.strategy';
 
 /**
@@ -410,6 +411,43 @@ describe('ProjectAccessService', () => {
       await expect(service.assertProjectAccess(8, 42, 1 as any)).rejects.toBeInstanceOf(ForbiddenException);
       prisma.zone.findFirst.mockResolvedValue({ projectId: 42 });
       await expect(service.assertZoneAccess(8, 5, 1 as any)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  // Permission messages (2026-11-20) — plain words + PERMISSION_DENIED.
+  describe('the "not a member" answer', () => {
+    const ASK = 'Ask the project leader or an administrator to add you.';
+    beforeEach(() => {
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88 });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+    });
+
+    it('project', async () => {
+      const err = await service.assertProjectAccess(1, 42, false).catch((e) => e);
+      expect(err).toBeInstanceOf(PermissionDeniedException);
+      expect(err.message).toBe(`You're not a member of this project. ${ASK}`);
+      expect(err.getResponse()).toMatchObject({
+        code: 'PERMISSION_DENIED',
+        details: { module: 'projects', reason: 'NOT_PROJECT_MEMBER' },
+      });
+    });
+
+    it('task and zone name what was opened', async () => {
+      prisma.task.findFirst.mockResolvedValue({ projectId: 42, createdBy: 5, assignees: [] });
+      await expect(service.assertTaskAccess(1, 10, false)).rejects.toThrow(
+        `This task belongs to a project you're not a member of. ${ASK}`,
+      );
+      prisma.zone.findFirst.mockResolvedValue({ projectId: 42 });
+      await expect(service.assertZoneAccess(1, 5, false)).rejects.toThrow(
+        `This zone belongs to a project you're not a member of. ${ASK}`,
+      );
+    });
+
+    it('someone else\'s personal task', async () => {
+      prisma.task.findFirst.mockResolvedValue({ projectId: null, createdBy: 5, assignees: [] });
+      const err = await service.assertTaskAccess(1, 10, false).catch((e) => e);
+      expect(err).toBeInstanceOf(PermissionDeniedException);
+      expect(err.message).toMatch(/^This is a personal task/);
     });
   });
 });

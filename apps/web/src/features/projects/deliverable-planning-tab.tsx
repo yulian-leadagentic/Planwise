@@ -5575,9 +5575,11 @@ function DeliverableTasksModal({
       // `saving` only flips back in `finally`, after this line.
       closeNow();
     } catch (err: any) {
-      notify.error(
-        err?.response?.data?.message
-          ?? (targetDirty && !targetSaved ? 'Failed to save the target date' : 'Failed to save due dates'),
+      // The envelope's message lives at data.error.message — apiError
+      // reads it (and shows a 403 as "No permission").
+      notify.apiError(
+        err,
+        targetDirty && !targetSaved ? 'Failed to save the target date' : 'Failed to save due dates',
       );
       // §10 · The target may already be saved even though a task PATCH
       // failed — refresh so the Gantt does not keep the stale saved date.

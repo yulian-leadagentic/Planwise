@@ -14,6 +14,8 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Users, Clock, DollarSign } from 'lucide-react';
 import client from '@/api/client';
 import { cn } from '@/lib/utils';
+import { isPermissionDenied } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 
 interface ByUserRow {
@@ -93,6 +95,10 @@ export function LaborCostTab({ projectId }: { projectId: number }) {
 
   if (isLoading) {
     return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading labor cost…</div>;
+  }
+  // Permission messages (2026-11-20) — a 403 is "no access", not a failure.
+  if (isPermissionDenied(error)) {
+    return <NoAccess what="this project's labor costs" />;
   }
   if (error || !data) {
     return (

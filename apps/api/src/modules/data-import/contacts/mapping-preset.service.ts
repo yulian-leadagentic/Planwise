@@ -71,7 +71,10 @@ export class ContactsMappingPresetService {
       });
       if (!existing) throw new NotFoundException(`preset ${input.id} not found`);
       if (existing.isSystem) {
-        throw new ForbiddenException('system presets are read-only');
+        throw new ForbiddenException({
+          code: 'SYSTEM_PRESET_READ_ONLY',
+          message: "Built-in mapping presets can't be changed. Save your mapping as a new preset instead.",
+        });
       }
       return this.prisma.importMappingPreset.update({
         where: { id: input.id },
@@ -109,7 +112,12 @@ export class ContactsMappingPresetService {
   async remove(id: number) {
     const existing = await this.prisma.importMappingPreset.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException(`preset ${id} not found`);
-    if (existing.isSystem) throw new ForbiddenException('system presets cannot be deleted');
+    if (existing.isSystem) {
+      throw new ForbiddenException({
+        code: 'SYSTEM_PRESET_READ_ONLY',
+        message: "Built-in mapping presets can't be deleted.",
+      });
+    }
     await this.prisma.importMappingPreset.delete({ where: { id } });
     return { message: 'preset removed' };
   }

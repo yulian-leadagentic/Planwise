@@ -396,7 +396,7 @@ export function EditPersonModal({
                   ? undefined
                   : isSelf && !isAdmin && (can('hr', 'write') || can('org', 'write'))
                     ? 'Admin only for your own account'
-                    : 'Admin, HR or org admin only'
+                    : 'Admin, HR or organization editors only'
               }
               value={form.orgUnitId}
               onChange={(e) => patch('orgUnitId', e.target.value === '' ? '' : Number(e.target.value))}

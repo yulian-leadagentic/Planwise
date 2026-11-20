@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback, createContext, useCo
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil, SlidersHorizontal, Archive, Undo2, Calendar } from 'lucide-react';
-import { notify, getErrorMessage } from '@/lib/notify';
+import { notify, getErrorMessage, isPermissionDenied } from '@/lib/notify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
@@ -1931,6 +1931,24 @@ function PhaseTemplatePickerForZone({ context, projectId, onClose, onDone }: {
 
 // ─── Bulk Action Bar — floating bar for operating on selected tasks ─────────
 
+/**
+ * Permission messages (2026-11-20) — when EVERY item of a bulk action
+ * failed and the first failure is a permission 403 (e.g. "Your access
+ * role can't move a task from …"), show that reason as a "No
+ * permission" alert instead of the bare "Could not …". Other failures
+ * keep the existing summary toast.
+ */
+function notifyBulkFailure(results: PromiseSettledResult<unknown>[], fallback: string, code: string) {
+  // 409 = "already in that state" — counted as skipped by the callers, not a failure.
+  const firstFailure = (
+    results.find(
+      (r) => r.status === 'rejected' && (r as PromiseRejectedResult).reason?.response?.status !== 409,
+    ) as PromiseRejectedResult | undefined
+  )?.reason;
+  if (isPermissionDenied(firstFailure)) notify.apiError(firstFailure, fallback);
+  else notify.error(fallback, { code });
+}
+
 function BulkActionBar({
   selectedCount,
   selectedTaskIds,
@@ -2025,7 +2043,7 @@ function BulkActionBar({
     } else if (succeeded === 0 && alreadyAssigned > 0 && failed === 0) {
       notify.info(`${name} is already assigned to all selected tasks`);
     } else {
-      notify.error(`Could not assign ${name}`, { code: 'TASK-ASSIGN-500' });
+      notifyBulkFailure(results, `Could not assign ${name}`, 'TASK-ASSIGN-500');
     }
     onClear();
   };
@@ -2051,7 +2069,7 @@ function BulkActionBar({
     } else if (succeeded > 0 && failed > 0) {
       notify.warning(`Updated ${succeeded}, ${failed} failed`, { code: 'TASK-UPDATE-207' });
     } else {
-      notify.error(`Could not update status`, { code: 'TASK-UPDATE-500' });
+      notifyBulkFailure(results, 'Could not update status', 'TASK-UPDATE-500');
     }
     onClear();
   };
@@ -2077,7 +2095,7 @@ function BulkActionBar({
     } else if (succeeded > 0 && failed > 0) {
       notify.warning(`Updated ${succeeded}, ${failed} failed`, { code: 'TASK-UPDATE-207' });
     } else {
-      notify.error(`Could not set priority`, { code: 'TASK-UPDATE-500' });
+      notifyBulkFailure(results, 'Could not set priority', 'TASK-UPDATE-500');
     }
     onClear();
   };
@@ -2103,7 +2121,7 @@ function BulkActionBar({
     } else if (succeeded > 0 && failed > 0) {
       notify.warning(`Deleted ${succeeded}, ${failed} failed`, { code: 'TASK-DELETE-207' });
     } else {
-      notify.error(`Could not delete`, { code: 'TASK-DELETE-500' });
+      notifyBulkFailure(results, 'Could not delete', 'TASK-DELETE-500');
     }
     onClear();
   };
@@ -2229,7 +2247,7 @@ function AssigneePicker({
     } else if (ok === 0 && skipped > 0 && fail === 0) {
       notify.info('No change — already in that state');
     } else if (fail > 0) {
-      notify.error(`${verb}: all failed`, { code: 'TASK-BULK-ASSIGN-500' });
+      notifyBulkFailure(results, `${verb}: all failed`, 'TASK-BULK-ASSIGN-500');
     }
   };
 

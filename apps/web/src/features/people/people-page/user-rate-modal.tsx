@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Coins, Save, Trash2 } from 'lucide-react';
 import client from '@/api/client';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { Modal } from '@/components/shared/modal';
 import { TextField } from '@/components/shared/field';
+import { NoAccess } from '@/components/shared/no-access';
 import { usePermissions } from '@/hooks/use-permissions';
 import type { UserListItem } from '@/types';
 
@@ -39,14 +40,18 @@ export function UserRateModal({ user, onClose }: Props) {
   // Permissions round 2 (B-14) — setting / removing an override needs
   // finance:write; a finance reader sees the current rate + history only.
   const { can } = usePermissions();
+  const canReadRates = can('finance', 'read');
   const canEditRates = can('finance', 'write');
   const [hourlyCost, setHourlyCost] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
   // Empty = "Current" (open-ended). Any date = bounded window.
   const [effectiveTo, setEffectiveTo] = useState('');
 
-  const { data: rates = [], isLoading } = useQuery<UserRateRow[]>({
+  // Permission messages (2026-11-20) — the rate routes need finance:read;
+  // without it the request is not fired and the modal says so.
+  const { data: rates = [], isLoading, error: ratesError } = useQuery<UserRateRow[]>({
     queryKey: ['admin', 'user-rates', user.id],
+    enabled: canReadRates,
     queryFn: () =>
       client.get(`/admin/config/user-rates/${user.id}`).then((r) => {
         const d = r.data?.data ?? r.data;
@@ -131,6 +136,9 @@ export function UserRateModal({ user, onClose }: Props) {
       widthClass="w-full max-w-lg"
       isDirty={isDirty}
     >
+      {!canReadRates || isPermissionDenied(ratesError) ? (
+        <NoAccess what="cost rates" />
+      ) : (
       <div className="space-y-4">
         <div className="rounded-md bg-slate-50 dark:bg-slate-800/60 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
           {currentOverride ? (
@@ -259,6 +267,7 @@ export function UserRateModal({ user, onClose }: Props) {
           )}
         </div>
       </div>
+      )}
     </Modal>
   );
 }
