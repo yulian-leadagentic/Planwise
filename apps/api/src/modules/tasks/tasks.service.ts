@@ -9,6 +9,7 @@ import { ProjectDeliverablesService } from '../project-deliverables/project-deli
 import { taskCompletionValue } from '../../common/task-completion';
 import { resolveStartForMovedEnd } from '../../common/task-dates';
 import { LIVE_PREDECESSOR_EDGE, LIVE_SUCCESSOR_EDGE } from '../../common/task-dependency-filters';
+import { restoreDeletedZoneChain } from '../zones/zone-restore.util';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
@@ -321,7 +322,8 @@ export class TasksService {
         take: query.take,
         orderBy: { createdAt: 'desc' },
         include: {
-          zone: { select: { id: true, name: true } },
+          // deletedAt: the Archive panel marks a task whose zone was deleted too.
+          zone: { select: { id: true, name: true, deletedAt: true } },
           serviceType: { select: { id: true, name: true, code: true, color: true } },
           phase: { select: { id: true, name: true } },
           deliverableTemplate: { select: { id: true, name: true } },
@@ -883,14 +885,15 @@ export class TasksService {
   }
 
   async remove(id: number) {
-    await this.findOne(id);
+    const task = await this.findOne(id);
 
     // Soft-delete AND flip status to 'cancelled' so any report or
     // rollup that reads status (not just deletedAt) reflects the
-    // deletion. Restore() puts the status back to not_started.
+    // deletion. The status it had is kept in statusBeforeDelete so
+    // restore() can put it back.
     await this.prisma.task.update({
       where: { id },
-      data: { deletedAt: new Date(), status: 'cancelled' },
+      data: { deletedAt: new Date(), statusBeforeDelete: task.status, status: 'cancelled' },
     });
 
     return { message: 'Task deleted' };
@@ -898,8 +901,12 @@ export class TasksService {
 
   /**
    * Restore a soft-deleted task — clears deletedAt so the task reappears
-   * in normal lists. The /tasks Archived tab uses this. Throws 404 if
-   * the task isn't soft-deleted (preventing accidental no-ops).
+   * in normal lists, and puts back the status it had before the delete.
+   * When the task's zone was deleted too (zone delete archives its
+   * tasks), that zone and its deleted ancestors come back with it so the
+   * task has a place in the planning tree; they are listed in
+   * `restoredZones`. The Archive panel uses this. Throws 404 if the task
+   * doesn't exist (an already-active task returns `alreadyActive`).
    */
   async restore(id: number) {
     // IMPORTANT: a global soft-delete middleware rewrites findUnique →
@@ -913,7 +920,7 @@ export class TasksService {
     // "Task not found" on restore.)
     const existing = await this.prisma.task.findFirst({
       where: { id, deletedAt: { not: null } },
-      select: { id: true },
+      select: { id: true, zoneId: true, status: true, statusBeforeDelete: true },
     });
     if (!existing) {
       // Either the id doesn't exist at all, or it's already active.
@@ -922,15 +929,25 @@ export class TasksService {
       if (live) return { message: 'Task is not archived', alreadyActive: true };
       throw new NotFoundException('Task not found');
     }
-    // `update` is not touched by the soft-delete middleware, so clearing
-    // deletedAt here works directly. Reset status from 'cancelled' (set
-    // on delete) back to not_started so the restored task isn't stuck
-    // looking cancelled.
-    await this.prisma.task.update({
-      where: { id },
-      data: { deletedAt: null, status: 'not_started' },
+    // Status: the one saved at delete time. Tasks deleted before
+    // statusBeforeDelete existed have null → the old behaviour (the
+    // delete's 'cancelled' becomes not_started). Paths that soft-delete
+    // through the middleware never changed the status → keep it.
+    const status =
+      existing.statusBeforeDelete ?? (existing.status === 'cancelled' ? 'not_started' : existing.status);
+
+    // One transaction: the task and the zone chain it needs come back
+    // together or not at all. `update` is not touched by the soft-delete
+    // middleware, so clearing deletedAt here works directly.
+    const restoredZones = await this.prisma.$transaction(async (tx) => {
+      const zones = existing.zoneId != null ? await restoreDeletedZoneChain(tx, existing.zoneId) : [];
+      await tx.task.update({
+        where: { id },
+        data: { deletedAt: null, status, statusBeforeDelete: null },
+      });
+      return zones;
     });
-    return { message: 'Task restored', id };
+    return { message: 'Task restored', id, restoredZones };
   }
 
   async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }, actorId?: number) {

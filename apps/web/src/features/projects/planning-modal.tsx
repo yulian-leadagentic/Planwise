@@ -2509,6 +2509,12 @@ function TemplatePickerDialog({ projectId, onClose, onApplied }: { projectId: nu
 // archive view uses, so visibility / soft-delete semantics are
 // consistent.
 
+// Zone delete renames each deleted zone to `<name> #deleted-<id>-<epochMs>`
+// (zones.service.ts removeImpl); show the original name.
+function stripDeletedZoneSuffix(name: string): string {
+  return name.replace(/(?: #deleted-\d+-\d+)+$/, '');
+}
+
 function ProjectArchivedTasksModal({
   projectId,
   onClose,
@@ -2548,10 +2554,28 @@ function ProjectArchivedTasksModal({
 
   const restoreMutation = useMutation({
     mutationFn: (id: number) => client.post(`/tasks/${id}/restore`).then((r) => r.data),
-    onSuccess: () => {
-      notify.success('Task restored', { code: 'TASK-RESTORE-200' });
+    onSuccess: (res: any) => {
+      // Restoring a task whose zone was deleted brings that zone (and its
+      // deleted ancestors) back too — the API lists them in restoredZones.
+      const payload = res?.data ?? res;
+      const restoredZones: Array<{ id: number; name: string }> = Array.isArray(payload?.restoredZones)
+        ? payload.restoredZones
+        : [];
+      const zoneNote =
+        restoredZones.length === 0
+          ? ''
+          : ` · ${restoredZones.length === 1 ? 'zone' : 'zones'} ${restoredZones.map((z) => `"${z.name}"`).join(', ')} restored too`;
+      notify.success(`Task restored${zoneNote}`, { code: 'TASK-RESTORE-200' });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      // ['planning', projectId] (/planning-data) is the zone tree source
+      // for this modal and the project page.
       queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
+      if (restoredZones.length > 0) {
+        // Zone pickers outside planning-data: ['zones', …] (create-task
+        // modal, useZoneTree) and the personal-task dialog.
+        queryClient.invalidateQueries({ queryKey: ['zones'] });
+        queryClient.invalidateQueries({ queryKey: ['project-zones', projectId] });
+      }
       onRestored();
     },
     onError: (err: any) => notify.apiError(err, 'Failed to restore task'),
@@ -2626,7 +2650,16 @@ function ProjectArchivedTasksModal({
                         <span className="block truncate font-medium text-slate-700 dark:text-slate-200" title={t.name}>{t.name}</span>
                       </td>
                       <td className="px-3 py-2 text-slate-600 dark:text-slate-300 truncate max-w-[200px]">
-                        {t.zone?.name ?? <span className="italic text-slate-400 dark:text-slate-500">Project Root</span>}
+                        {t.zone?.name != null ? (
+                          <>
+                            {stripDeletedZoneSuffix(t.zone.name)}
+                            {t.zone.deletedAt && (
+                              <span className="ml-1 text-[11px] text-slate-400 dark:text-slate-500">(zone deleted)</span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="italic text-slate-400 dark:text-slate-500">Project Root</span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-slate-500 dark:text-slate-400 tabular-nums whitespace-nowrap">
                         {t.deletedAt ? new Date(t.deletedAt).toLocaleDateString() : '—'}

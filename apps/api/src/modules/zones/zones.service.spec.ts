@@ -18,6 +18,7 @@
  * calls' shape (zoneId, deliverableTemplateId, sortOrder, dep edges).
  */
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import { ZonesService } from './zones.service';
 
@@ -1033,5 +1034,68 @@ describe('ZonesService.duplicateZone — dependencies, order and depth', () => {
     prisma.zone.findFirst.mockResolvedValue(null);
     await expect(service.duplicateZone(10, 'Fresh', 42)).rejects.toBeInstanceOf(NotFoundException);
     expect(tx.zone.create).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Zone delete keeps each task's status for restore (2026-11-20) ────
+//
+// The cascade flips the zone tree's tasks to 'cancelled'. It now saves
+// the status each task had in status_before_delete first, so
+// POST /tasks/:id/restore can put it back. updateMany cannot copy one
+// column into another, so this is one raw UPDATE in the same
+// transaction as the zone writes.
+describe('ZonesService.remove — the task cascade saves status_before_delete', () => {
+  function makeRemove() {
+    const zoneUpdateOp = { op: 'zone.update' };
+    const rawTaskOp = { op: 'tasks raw update' };
+    const prisma: any = {
+      zone: {
+        findFirst: jest.fn(async () => ({ id: 10, projectId: 59, name: 'Tower' })), // findOne
+        findMany: jest.fn(async () => [
+          { id: 10, name: 'Tower' },
+          { id: 11, name: 'Level 1' },
+          { id: 12, name: 'Level 2' },
+        ]),
+        update: jest.fn(() => zoneUpdateOp),
+      },
+      // collectDescendantIds (recursive CTE)
+      $queryRaw: jest.fn(async () => [{ id: 11 }, { id: 12 }]),
+      timeEntry: { count: jest.fn(async () => 0) },
+      task: { count: jest.fn(async () => 0), updateMany: jest.fn() },
+      $executeRaw: jest.fn(() => rawTaskOp),
+      $transaction: jest.fn(async (ops: unknown[]) => ops),
+    };
+    const service = new ZonesService(prisma, {} as any, {} as any);
+    return { service, prisma, zoneUpdateOp, rawTaskOp };
+  }
+
+  it('issues the raw UPDATE (status_before_delete = status, then cancelled) inside the transaction, with the zones\' timestamp', async () => {
+    const { service, prisma, zoneUpdateOp, rawTaskOp } = makeRemove();
+
+    const result = await service.remove(10);
+
+    expect(result).toEqual({ message: 'Zone deleted', deletedZoneCount: 3 });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    const ops = prisma.$transaction.mock.calls[0][0];
+    expect(ops).toEqual([zoneUpdateOp, zoneUpdateOp, zoneUpdateOp, rawTaskOp]);
+    expect(prisma.task.updateMany).not.toHaveBeenCalled();
+
+    // Rebuild the tagged-template call into the statement Prisma sends.
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = prisma.$executeRaw.mock.calls[0];
+    const query = Prisma.sql(strings, ...values);
+    expect(query.sql.replace(/\s+/g, ' ').trim()).toBe(
+      "UPDATE tasks SET status_before_delete = status, status = 'cancelled', deleted_at = ?, updated_at = ? " +
+        'WHERE zone_id IN (?,?,?) AND deleted_at IS NULL',
+    );
+    // Same `now` as the zone soft-deletes; the zone tree's ids.
+    const zoneNow = prisma.zone.update.mock.calls[0][0].data.deletedAt;
+    expect(zoneNow).toBeInstanceOf(Date);
+    expect(query.values).toEqual([zoneNow, zoneNow, 10, 11, 12]);
+    // Zones are still renamed with the #deleted suffix at that timestamp.
+    expect(prisma.zone.update.mock.calls[1][0]).toEqual({
+      where: { id: 11 },
+      data: { deletedAt: zoneNow, name: `Level 1 #deleted-11-${zoneNow.getTime()}` },
+    });
   });
 });

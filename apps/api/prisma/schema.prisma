@@ -1489,6 +1489,8 @@ model Task {
   budgetAmount          Decimal?     @map("budget_amount") @db.Decimal(14, 2)
   phaseId               Int?         @map("phase_id")
   status                TaskStatus   @default(not_started)
+  // Status the task had when it was soft-deleted (delete flips status to cancelled); restore puts it back, then clears it.
+  statusBeforeDelete    TaskStatus?  @map("status_before_delete")
   priority              TaskPriority @default(medium)
   completionPct         Int          @default(0) @map("completion_pct")
   // Estimated start date — forecast set during planning, separate from

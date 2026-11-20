@@ -341,12 +341,21 @@ export class ZonesService {
       // Soft-delete tasks belonging to any of the affected zones. Tasks
       // already have a deletedAt column (used for the manual delete
       // path); reusing it keeps the archive list consistent.
-      this.prisma.task.updateMany({
-        where: { zoneId: { in: allIds }, deletedAt: null },
-        // Match the single-task delete behaviour: also flip status to
-        // 'cancelled' so status-based reports reflect the deletion.
-        data: { deletedAt: now, status: 'cancelled' },
-      }),
+      // Match the single-task delete behaviour: flip status to
+      // 'cancelled' so status-based reports reflect the deletion, and
+      // keep the old status in status_before_delete for restore. Raw SQL
+      // because updateMany cannot copy one column into another. MySQL
+      // applies SET assignments left to right, so status_before_delete
+      // must come BEFORE status is overwritten. updated_at is set by hand
+      // (Prisma's @updatedAt only fills it for client writes).
+      this.prisma.$executeRaw`
+        UPDATE tasks
+           SET status_before_delete = status,
+               status = 'cancelled',
+               deleted_at = ${now},
+               updated_at = ${now}
+         WHERE zone_id IN (${Prisma.join(allIds)})
+           AND deleted_at IS NULL`,
     ]);
 
     return {

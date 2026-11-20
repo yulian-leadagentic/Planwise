@@ -629,4 +629,258 @@ describe('TasksService', () => {
       expect(include.dependencies.include.dependsOn.select).toEqual({ id: true, code: true, name: true, endDate: true });
     });
   });
+
+  // ─── 2026-11-20 · task restore: its deleted zone comes back, and so does its status ──
+  //
+  // Zone delete archives the zone's tasks; restoring one used to bring
+  // the task back under a zone that stayed deleted (no place in the
+  // planning tree, no UI to restore the zone). And delete flips status
+  // to 'cancelled' while restore always wrote 'not_started', so a
+  // completed task came back as not started.
+  describe('restore — deleted zone chain and previous status', () => {
+    const TASK_ID = 5;
+    const DELETED_AT = new Date('2026-11-19T08:00:00.000Z');
+
+    type ZoneRow = { id: number; projectId: number; parentId: number | null; name: string; deletedAt: Date | null };
+    type TaskRow = {
+      id: number;
+      zoneId: number | null;
+      status: string;
+      statusBeforeDelete: string | null;
+      deletedAt: Date | null;
+    };
+
+    /**
+     * In-memory task + zone tables behind the mocked Prisma. The
+     * interactive transaction hands the same client to the callback,
+     * so writes inside it land in these rows. `findFirst` honours the
+     * explicit `deletedAt` predicates restore and findOne use.
+     */
+    function seed(task: TaskRow, zones: ZoneRow[] = []) {
+      const taskRow = { ...task };
+      const zoneRows = new Map(zones.map((z) => [z.id, { ...z }]));
+      const p = prisma as any;
+
+      p.task.findFirst.mockImplementation(async ({ where }: any) => {
+        if (where.id !== taskRow.id) return null;
+        const deleted = taskRow.deletedAt != null;
+        if (where.deletedAt === null && deleted) return null;
+        if (where.deletedAt && 'not' in where.deletedAt && !deleted) return null;
+        return { ...taskRow };
+      });
+      p.task.update.mockImplementation(async ({ where, data }: any) => {
+        if (where.id !== taskRow.id) throw new Error(`unexpected task.update on ${where.id}`);
+        Object.assign(taskRow, data);
+        return { ...taskRow };
+      });
+      p.task.updateMany = jest.fn();
+      p.zone = {
+        findUnique: jest.fn(async ({ where }: any) => {
+          const z = zoneRows.get(where.id);
+          return z ? { ...z } : null;
+        }),
+        findFirst: jest.fn(async ({ where }: any) => {
+          const hit = [...zoneRows.values()].find(
+            (z) =>
+              z.projectId === where.projectId &&
+              z.name === where.name &&
+              (where.deletedAt !== null || z.deletedAt == null),
+          );
+          return hit ? { id: hit.id } : null;
+        }),
+        update: jest.fn(async ({ where, data }: any) => {
+          Object.assign(zoneRows.get(where.id)!, data);
+          return { ...zoneRows.get(where.id)! };
+        }),
+        updateMany: jest.fn(),
+      };
+      p.$transaction = jest.fn(async (fn: any) => fn(p));
+      return { taskRow, zoneRows };
+    }
+
+    const zone = (id: number, parentId: number | null, name: string, deleted: boolean): ZoneRow => ({
+      id,
+      projectId: 59,
+      parentId,
+      name: deleted ? `${name} #deleted-${id}-${DELETED_AT.getTime()}` : name,
+      deletedAt: deleted ? DELETED_AT : null,
+    });
+
+    it('(a) zone is live → only the task is restored, no zone writes, restoredZones: []', async () => {
+      const { taskRow } = seed(
+        { id: TASK_ID, zoneId: 10, status: 'cancelled', statusBeforeDelete: 'in_progress', deletedAt: DELETED_AT },
+        [zone(1, null, 'Site', false), zone(10, 1, 'Level 1', false)],
+      );
+      const p = prisma as any;
+
+      const result = await service.restore(TASK_ID);
+
+      expect(result).toEqual({ message: 'Task restored', id: TASK_ID, restoredZones: [] });
+      // The archived row is found by an explicit deletedAt predicate (the middleware would hide it otherwise).
+      expect(p.task.findFirst.mock.calls[0][0].where).toEqual({ id: TASK_ID, deletedAt: { not: null } });
+      expect(p.zone.update).not.toHaveBeenCalled();
+      expect(p.task.update).toHaveBeenCalledTimes(1);
+      expect(p.task.update).toHaveBeenCalledWith({
+        where: { id: TASK_ID },
+        data: { deletedAt: null, status: 'in_progress', statusBeforeDelete: null },
+      });
+      expect(p.$transaction).toHaveBeenCalledTimes(1);
+      expect(taskRow.deletedAt).toBeNull();
+    });
+
+    it('a project-root task (no zone) restores without looking at zones', async () => {
+      seed({ id: TASK_ID, zoneId: null, status: 'cancelled', statusBeforeDelete: 'on_hold', deletedAt: DELETED_AT });
+      const p = prisma as any;
+
+      const result = await service.restore(TASK_ID);
+
+      expect(result).toEqual({ message: 'Task restored', id: TASK_ID, restoredZones: [] });
+      expect(p.zone.findUnique).not.toHaveBeenCalled();
+      expect(p.task.update.mock.calls[0][0].data.status).toBe('on_hold');
+    });
+
+    it('(b) deleted zone with a deleted parent and a live grandparent → both deleted zones restored, suffix stripped; nothing else', async () => {
+      // 1 Site (live) → 11 Building A (deleted) → 12 Level 1 (deleted, the task's zone)
+      //                                         → 13 Level 2 (deleted sibling)
+      //                                         12 → 14 Room (deleted descendant)
+      const { zoneRows } = seed(
+        { id: TASK_ID, zoneId: 12, status: 'cancelled', statusBeforeDelete: 'completed', deletedAt: DELETED_AT },
+        [
+          zone(1, null, 'Site', false),
+          zone(11, 1, 'Building A', true),
+          zone(12, 11, 'Level 1', true),
+          zone(13, 11, 'Level 2', true),
+          zone(14, 12, 'Room', true),
+        ],
+      );
+      const p = prisma as any;
+
+      const result = await service.restore(TASK_ID);
+
+      // Outermost ancestor first.
+      expect(result).toEqual({
+        message: 'Task restored',
+        id: TASK_ID,
+        restoredZones: [
+          { id: 11, name: 'Building A' },
+          { id: 12, name: 'Level 1' },
+        ],
+      });
+      expect(p.zone.update.mock.calls.map((c: any) => c[0])).toEqual([
+        { where: { id: 11 }, data: { deletedAt: null, name: 'Building A' } },
+        { where: { id: 12 }, data: { deletedAt: null, name: 'Level 1' } },
+      ]);
+      // The walk stopped at the live grandparent; it was read, never written.
+      expect(p.zone.findUnique.mock.calls.map((c: any) => c[0].where.id)).toEqual([12, 11, 1]);
+      expect(zoneRows.get(1)).toMatchObject({ name: 'Site', deletedAt: null });
+      // Sibling and descendant zones stay deleted.
+      expect(zoneRows.get(13)!.deletedAt).toEqual(DELETED_AT);
+      expect(zoneRows.get(14)!.deletedAt).toEqual(DELETED_AT);
+      // path / depth / parentId are not part of the write.
+      expect(zoneRows.get(12)!.parentId).toBe(11);
+      // Only this task: one single-row update, no bulk task / zone writes.
+      expect(p.task.update).toHaveBeenCalledTimes(1);
+      expect(p.task.update.mock.calls[0][0].where).toEqual({ id: TASK_ID });
+      expect(p.task.updateMany).not.toHaveBeenCalled();
+      expect(p.zone.updateMany).not.toHaveBeenCalled();
+      // Zone chain and task in the same transaction.
+      expect(p.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops at a missing ancestor row and at the project root', async () => {
+      seed(
+        { id: TASK_ID, zoneId: 12, status: 'cancelled', statusBeforeDelete: null, deletedAt: DELETED_AT },
+        [zone(12, 999, 'Level 1', true)], // parent 999 does not exist
+      );
+      const missing = await service.restore(TASK_ID);
+      expect((missing as any).restoredZones).toEqual([{ id: 12, name: 'Level 1' }]);
+
+      seed(
+        { id: TASK_ID, zoneId: 1, status: 'cancelled', statusBeforeDelete: null, deletedAt: DELETED_AT },
+        [zone(1, null, 'Site', true)],
+      );
+      const root = await service.restore(TASK_ID);
+      expect((root as any).restoredZones).toEqual([{ id: 1, name: 'Site' }]);
+    });
+
+    it('(c) a live zone already has the name → "<name> (restored)", then "(restored 2)", …', async () => {
+      seed(
+        { id: TASK_ID, zoneId: 12, status: 'cancelled', statusBeforeDelete: null, deletedAt: DELETED_AT },
+        [zone(1, null, 'Site', false), zone(12, 1, 'Level 1', true), zone(20, 1, 'Level 1', false)],
+      );
+      const first = await service.restore(TASK_ID);
+      expect((first as any).restoredZones).toEqual([{ id: 12, name: 'Level 1 (restored)' }]);
+
+      seed(
+        { id: TASK_ID, zoneId: 12, status: 'cancelled', statusBeforeDelete: null, deletedAt: DELETED_AT },
+        [
+          zone(1, null, 'Site', false),
+          zone(12, 1, 'Level 1', true),
+          zone(20, 1, 'Level 1', false),
+          zone(21, 1, 'Level 1 (restored)', false),
+          // A deleted zone holding the exact name does not count
+          // (explodeTypical soft-deletes without the #deleted suffix).
+          { ...zone(22, 1, 'Level 1 (restored 2)', false), deletedAt: DELETED_AT },
+        ],
+      );
+      const second = await service.restore(TASK_ID);
+      expect((second as any).restoredZones).toEqual([{ id: 12, name: 'Level 1 (restored 2)' }]);
+    });
+
+    it('(c) a restored ancestor counts as taken for a same-named descendant restored with it', async () => {
+      seed(
+        { id: TASK_ID, zoneId: 12, status: 'cancelled', statusBeforeDelete: null, deletedAt: DELETED_AT },
+        [zone(1, null, 'Site', false), zone(11, 1, 'Level', true), zone(12, 11, 'Level', true)],
+      );
+      const result = await service.restore(TASK_ID);
+      expect((result as any).restoredZones).toEqual([
+        { id: 11, name: 'Level' },
+        { id: 12, name: 'Level (restored)' },
+      ]);
+    });
+
+    it('(d) completed → delete → restore comes back completed, statusBeforeDelete cleared', async () => {
+      const { taskRow } = seed({
+        id: TASK_ID,
+        zoneId: null,
+        status: 'completed',
+        statusBeforeDelete: null,
+        deletedAt: null,
+      });
+      const p = prisma as any;
+
+      await service.remove(TASK_ID);
+
+      expect(p.task.update.mock.calls[0][0]).toEqual({
+        where: { id: TASK_ID },
+        data: { deletedAt: expect.any(Date), statusBeforeDelete: 'completed', status: 'cancelled' },
+      });
+      expect(taskRow).toMatchObject({ status: 'cancelled', statusBeforeDelete: 'completed' });
+
+      await service.restore(TASK_ID);
+
+      expect(taskRow).toMatchObject({ status: 'completed', statusBeforeDelete: null, deletedAt: null });
+    });
+
+    it('(d) statusBeforeDelete null: cancelled → not_started (deleted before the column existed); any other status is kept', async () => {
+      const legacy = seed({ id: TASK_ID, zoneId: null, status: 'cancelled', statusBeforeDelete: null, deletedAt: DELETED_AT });
+      await service.restore(TASK_ID);
+      expect(legacy.taskRow).toMatchObject({ status: 'not_started', statusBeforeDelete: null });
+
+      // A middleware soft delete (e.g. project delete) never touched the status.
+      const viaMiddleware = seed({ id: TASK_ID, zoneId: null, status: 'in_progress', statusBeforeDelete: null, deletedAt: DELETED_AT });
+      await service.restore(TASK_ID);
+      expect(viaMiddleware.taskRow).toMatchObject({ status: 'in_progress', statusBeforeDelete: null });
+    });
+
+    it('keeps the alreadyActive / 404 answers and writes nothing for them', async () => {
+      seed({ id: TASK_ID, zoneId: 12, status: 'in_progress', statusBeforeDelete: null, deletedAt: null });
+      const p = prisma as any;
+
+      await expect(service.restore(TASK_ID)).resolves.toEqual({ message: 'Task is not archived', alreadyActive: true });
+      await expect(service.restore(404)).rejects.toBeInstanceOf(NotFoundException);
+      expect(p.$transaction).not.toHaveBeenCalled();
+      expect(p.task.update).not.toHaveBeenCalled();
+    });
+  });
 });
