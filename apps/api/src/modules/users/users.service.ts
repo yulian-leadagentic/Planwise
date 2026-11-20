@@ -1,4 +1,11 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+  ForbiddenException,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Prisma, UserType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -10,7 +17,31 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { buildCostRateResolver, isRateableOutcome } from '../projects/cost-rate-resolver';
+import { ActivityLogService } from '../../common/services/activity-log.service';
+import { isAdminUser, userHasModulePermission } from '../../common/guards/roles.guard';
+import { canEditPeople, canManageEmployees, isAdminLevelRole } from './user-write-policy';
 import * as Sentry from '@sentry/node';
+
+/** What a PATCH /users/:id actually changes among the protected fields. */
+interface ProtectedChanges {
+  password: boolean;
+  roleId: boolean;
+  email: boolean;
+  isActive: boolean;
+  orgUnitId: boolean;
+  nextRole: { id: number; name: string } | null;
+  nextEmail: string | null;
+  nextOrgUnitId: number | null;
+}
+
+const ROLE_MODULE_POLICY_SELECT = {
+  canRead: true,
+  canWrite: true,
+  canDelete: true,
+  canApprove: true,
+  canExport: true,
+  module: { select: { route: true, name: true } },
+} as const;
 
 @Injectable()
 export class UsersService implements OnModuleInit {
@@ -19,6 +50,7 @@ export class UsersService implements OnModuleInit {
     private numberRanges: NumberRangesService,
     private userSeniorities: UserSenioritiesService,
     private bpService: BusinessPartnersService,
+    private activityLog: ActivityLogService,
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -230,7 +262,22 @@ export class UsersService implements OnModuleInit {
     return suppliedCode.trim();
   }
 
-  async create(dto: CreateUserDto) {
+  async create(dto: CreateUserDto, actor: any) {
+    // Permissions round 1 (2026-11-20) — only Admin or HR add people,
+    // and only an Admin may hand out an admin-level role.
+    if (!canManageEmployees(actor)) {
+      throw new ForbiddenException('Only an Admin or HR (hr:write) can add employees.');
+    }
+    const assignedRole = await this.loadRoleForPolicy(dto.roleId);
+    if (!assignedRole) {
+      throw new BadRequestException(`"roleId": role ${dto.roleId} does not exist`);
+    }
+    if (!isAdminUser(actor) && isAdminLevelRole(assignedRole)) {
+      throw new ForbiddenException(
+        `"roleId": only an Admin can assign the admin-level role "${assignedRole.name}".`,
+      );
+    }
+
     const existing = await this.prisma.user.findFirst({ where: { email: dto.email } });
     if (existing) {
       throw new ConflictException('Email already exists');
@@ -415,6 +462,20 @@ export class UsersService implements OnModuleInit {
       try { await this.syncPositionToProfession(user.id, dto.position); }
       catch (e) { Sentry.captureException(e); /* swallow */ }
     }
+
+    await this.activityLog.logSecurityEvent({
+      action: 'user.create',
+      description: `Created user ${user.email} with access role "${assignedRole.name}"`,
+      actorUserId: actor?.id ?? null,
+      entityType: 'user',
+      entityId: user.id,
+      entityName: user.email,
+      changes: {
+        email: { from: null, to: user.email },
+        roleId: { from: null, to: { id: assignedRole.id, name: assignedRole.name } },
+        isActive: { from: null, to: user.isActive },
+      },
+    });
 
     return user;
   }
@@ -607,8 +668,12 @@ export class UsersService implements OnModuleInit {
     });
   }
 
-  async update(id: number, dto: UpdateUserDto) {
+  async update(id: number, dto: UpdateUserDto, actor: any) {
+    if (!canEditPeople(actor)) {
+      throw new ForbiddenException('Editing people requires Admin, partners:write or hr:write.');
+    }
     const existing = await this.findOne(id);
+    const protectedChanges = await this.assertProtectedFieldWrites(existing, dto, actor);
 
     const data: any = { ...dto };
 
@@ -776,13 +841,226 @@ export class UsersService implements OnModuleInit {
       } catch (e) { Sentry.captureException(e); /* swallow */ }
     }
 
+    await this.auditProtectedChanges(existing, protectedChanges, actor);
+
     return updated;
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, actor: any) {
+    // Permissions round 1 (2026-11-20) — only Admin or HR remove people;
+    // nobody deletes themselves; only an Admin removes an Admin.
+    if (!canManageEmployees(actor)) {
+      throw new ForbiddenException('Only an Admin or HR (hr:write) can delete employees.');
+    }
+    if (actor?.id === id) {
+      throw new ForbiddenException('You cannot delete your own account.');
+    }
+    const existing = await this.findOne(id);
+    if (!isAdminUser(actor) && (await this.isAdminLevelUser(id))) {
+      throw new ForbiddenException('Only an Admin can delete an Admin user.');
+    }
     await this.prisma.user.delete({ where: { id } });
+    await this.activityLog.logSecurityEvent({
+      action: 'user.delete',
+      description: `Deleted user ${existing.email}`,
+      actorUserId: actor?.id ?? null,
+      entityType: 'user',
+      entityId: id,
+      entityName: existing.email,
+      severity: 'critical',
+      changes: {
+        email: { from: existing.email, to: null },
+        roleId: { from: { id: existing.roleId, name: existing.role?.name ?? null }, to: null },
+      },
+    });
     return { message: 'User deleted' };
+  }
+
+  // ─── Protected fields (permissions round 1, 2026-11-20) ─────────────
+
+  /**
+   * Enforce who may change `password`, `roleId`, `email`, `isActive` and
+   * `orgUnitId` on PATCH /users/:id. `orgUnitId` is protected because
+   * ProjectAccessService grants access to every project of the user's
+   * home unit — the same rule as `PATCH /users/:id/org-unit` (org:write),
+   * plus Admin / HR. A field only counts as written when its value
+   * differs from the stored one — the People edit modal sends the whole
+   * form, so an unchanged value passes for everyone. `password` always
+   * counts (comparing it would turn this route into a password oracle).
+   * Returns what actually changes, for the audit rows.
+   */
+  private async assertProtectedFieldWrites(
+    existing: { id: number; email: string | null; roleId: number; isActive: boolean; orgUnitId?: number | null },
+    dto: UpdateUserDto,
+    actor: any,
+  ): Promise<ProtectedChanges> {
+    const isAdmin = isAdminUser(actor);
+    const isHr = userHasModulePermission(actor, 'hr', 'write');
+    const isOrgWriter = userHasModulePermission(actor, 'org', 'write');
+    const isSelf = actor?.id === existing.id;
+
+    const passwordChanged = dto.password !== undefined;
+    const roleChanged = dto.roleId !== undefined && dto.roleId !== existing.roleId;
+    const emailChanged = dto.email !== undefined && dto.email !== existing.email;
+    const activeChanged = dto.isActive !== undefined && dto.isActive !== existing.isActive;
+    const orgUnitChanged =
+      dto.orgUnitId !== undefined && (dto.orgUnitId ?? null) !== (existing.orgUnitId ?? null);
+
+    if (passwordChanged && !isAdmin) {
+      throw new ForbiddenException('"password": only an Admin can set a user password.');
+    }
+    if (roleChanged && !isAdmin) {
+      throw new ForbiddenException(
+        isSelf
+          ? '"roleId": you cannot change your own access role.'
+          : '"roleId": only an Admin can change the access role.',
+      );
+    }
+    if (emailChanged && !isAdmin && !isHr) {
+      throw new ForbiddenException('"email": only an Admin or HR can change the email.');
+    }
+    if (activeChanged && !isAdmin) {
+      if (!isHr) {
+        throw new ForbiddenException('"isActive": only an Admin or HR can activate or deactivate a user.');
+      }
+      if (isSelf) {
+        throw new ForbiddenException('"isActive": you cannot change your own active state.');
+      }
+    }
+    if (orgUnitChanged && !isAdmin) {
+      if (!isHr && !isOrgWriter) {
+        throw new ForbiddenException(
+          '"orgUnitId": only an Admin, HR or org:write can change the department (org unit).',
+        );
+      }
+      if (isSelf) {
+        throw new ForbiddenException('"orgUnitId": you cannot change your own department (org unit).');
+      }
+    }
+    // HR manages employees, not Admins — changing an Admin's email
+    // would hand over the account (SSO links identities by email).
+    if ((emailChanged || activeChanged) && !isAdmin && (await this.isAdminLevelUser(existing.id))) {
+      throw new ForbiddenException(
+        `"${emailChanged ? 'email' : 'isActive'}": only an Admin can change this on an Admin user.`,
+      );
+    }
+
+    let nextRole: { id: number; name: string } | null = null;
+    if (roleChanged) {
+      const role = typeof dto.roleId === 'number' ? await this.loadRoleForPolicy(dto.roleId) : null;
+      if (!role) {
+        throw new BadRequestException(`"roleId": role ${dto.roleId} does not exist`);
+      }
+      nextRole = { id: role.id, name: role.name };
+    }
+
+    return {
+      password: passwordChanged,
+      roleId: roleChanged,
+      email: emailChanged,
+      isActive: activeChanged,
+      orgUnitId: orgUnitChanged,
+      nextRole,
+      nextEmail: emailChanged ? (dto.email ?? null) : null,
+      nextOrgUnitId: orgUnitChanged ? (dto.orgUnitId ?? null) : null,
+    };
+  }
+
+  /** One `security` activity row per protected field that changed. */
+  private async auditProtectedChanges(
+    existing: {
+      id: number;
+      email: string | null;
+      roleId: number;
+      isActive: boolean;
+      orgUnitId?: number | null;
+      role?: { name: string } | null;
+    },
+    changes: ProtectedChanges,
+    actor: any,
+  ): Promise<void> {
+    const common = {
+      actorUserId: actor?.id ?? null,
+      entityType: 'user',
+      entityId: existing.id,
+      entityName: existing.email,
+    };
+    const who = existing.email ?? `user #${existing.id}`;
+    if (changes.roleId && changes.nextRole) {
+      await this.activityLog.logSecurityEvent({
+        ...common,
+        action: 'user.role_change',
+        description: `Changed access role of ${who} from "${existing.role?.name ?? existing.roleId}" to "${changes.nextRole.name}"`,
+        changes: {
+          roleId: {
+            from: { id: existing.roleId, name: existing.role?.name ?? null },
+            to: changes.nextRole,
+          },
+        },
+      });
+    }
+    if (changes.password) {
+      // Record THAT it changed — never the value or the hash.
+      await this.activityLog.logSecurityEvent({
+        ...common,
+        action: 'user.password_change',
+        description: `Changed the password of ${who}`,
+        changes: { password: 'changed' },
+      });
+    }
+    if (changes.email) {
+      await this.activityLog.logSecurityEvent({
+        ...common,
+        action: 'user.email_change',
+        description: `Changed the email of ${who} to ${changes.nextEmail ?? '(none)'}`,
+        changes: { email: { from: existing.email, to: changes.nextEmail } },
+      });
+    }
+    if (changes.isActive) {
+      const next = !existing.isActive;
+      await this.activityLog.logSecurityEvent({
+        ...common,
+        action: next ? 'user.activate' : 'user.deactivate',
+        description: `${next ? 'Activated' : 'Deactivated'} ${who}`,
+        changes: { isActive: { from: existing.isActive, to: next } },
+      });
+    }
+    if (changes.orgUnitId) {
+      const from = existing.orgUnitId ?? null;
+      await this.activityLog.logSecurityEvent({
+        ...common,
+        action: 'user.org_unit_change',
+        description: `Moved ${who} from org unit ${from ?? '(none)'} to ${changes.nextOrgUnitId ?? '(none)'}`,
+        changes: { orgUnitId: { from, to: changes.nextOrgUnitId } },
+      });
+    }
+  }
+
+  /** Role row with its module grants, in the shape `isAdminLevelRole` reads. */
+  private async loadRoleForPolicy(roleId: number) {
+    if (!Number.isInteger(roleId)) return null;
+    return this.prisma.role.findUnique({
+      where: { id: roleId },
+      select: { id: true, name: true, roleModules: { select: ROLE_MODULE_POLICY_SELECT } },
+    });
+  }
+
+  /**
+   * True when any role the user holds — the `user_roles` grants or the
+   * legacy `users.role_id` — is admin-level (see `isAdminLevelRole`).
+   */
+  private async isAdminLevelUser(userId: number): Promise<boolean> {
+    const roleSelect = { name: true, roleModules: { select: ROLE_MODULE_POLICY_SELECT } };
+    const target = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: {
+        role: { select: roleSelect },
+        userRoles: { select: { role: { select: roleSelect } } },
+      },
+    });
+    if (!target) return false;
+    if (isAdminLevelRole(target.role)) return true;
+    return (target.userRoles ?? []).some((ur) => isAdminLevelRole(ur.role));
   }
 
   /**

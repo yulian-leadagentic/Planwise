@@ -165,10 +165,14 @@ For production at scale, plan to migrate to S3-compatible storage
 ### 7. First deploy → seed → cleanup
 
 The first time the api boots with `SEED=true`, the entrypoint runs
-`prisma migrate deploy` then `seed-runner.js`, which creates an
-`admin@amec.com` / `Admin@123` user. **After that first successful
-deploy, delete the `SEED` variable** so future deploys don't keep
-re-running it.
+`prisma migrate deploy` then `seed-runner.js`. The seed creates the
+`admin@amec.com` user **only** when that row is missing and
+`SEED_ADMIN_PASSWORD` is set to a password of at least 12 characters
+(there is no default password; without the variable the step is
+skipped and logged). Set `SEED_ADMIN_PASSWORD` for the first seed
+only, sign in and change the password, then remove the variable.
+**After that first successful deploy, delete the `SEED` variable** so
+future deploys don't keep re-running it.
 
 ### 8. Create the staging environment
 

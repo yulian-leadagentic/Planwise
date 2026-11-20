@@ -2,8 +2,9 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 
 @ApiTags('Admin - Activity Log')
@@ -17,6 +18,7 @@ export class ActivityLogController {
   @RequirePermissions({ module: 'admin/activity-log', action: 'read' })
   @ApiOperation({ summary: 'List activity logs with filters' })
   async findAll(
+    @CurrentUser() caller: any,
     @Query('page') page?: number,
     @Query('perPage') perPage?: number,
     @Query('category') category?: string,
@@ -31,6 +33,16 @@ export class ActivityLogController {
 
     const where: any = {};
     if (category) where.category = category;
+    // Permissions round 1 (2026-11-20) — `security` rows (role / grant /
+    // user-role / password / email / active / SSO changes) are visible
+    // to Admins only, including when `category=security` is asked for
+    // explicitly. Department leads hold `admin/activity-log:read` too.
+    // ANDed rather than folded into `where.category` so it holds whatever
+    // shape `category` arrives in (a string, or an object from qs's
+    // bracket syntax such as `category[in][]=security`).
+    if (!isAdminUser(caller)) {
+      where.AND = [{ category: { not: 'security' } }];
+    }
     if (severity) where.severity = severity;
     if (userId) where.userId = Number(userId);
     if (entityType) where.entityType = entityType;

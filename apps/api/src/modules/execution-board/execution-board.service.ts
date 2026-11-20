@@ -12,7 +12,7 @@ export class ExecutionBoardService {
 
   async getData(
     userId: number,
-    roleId: number | null | undefined,
+    isAdmin: boolean,
     projectId?: number,
     serviceId?: number,
   ) {
@@ -24,7 +24,7 @@ export class ExecutionBoardService {
     // returns a clean 503 to the caller and lets the loop continue
     // serving other requests while root-cause work proceeds.
     return withQueryTimeout(
-      () => this.getDataImpl(userId, roleId, projectId, serviceId),
+      () => this.getDataImpl(userId, isAdmin, projectId, serviceId),
       10_000,
       `execution-board(projectId=${projectId ?? 'ALL'})`,
     );
@@ -32,15 +32,15 @@ export class ExecutionBoardService {
 
   private async getDataImpl(
     userId: number,
-    roleId: number | null | undefined,
+    isAdmin: boolean,
     projectId?: number,
     serviceId?: number,
   ) {
     // Project-scoped authorization: filter to projects the caller can see
-    const accessible = await this.access.getAccessibleProjectIds(userId, roleId);
+    const accessible = await this.access.getAccessibleProjectIds(userId, isAdmin);
     if (projectId) {
       // explicit project filter — must be allowed
-      await this.access.assertProjectAccess(userId, projectId, roleId);
+      await this.access.assertProjectAccess(userId, projectId, isAdmin);
     }
 
     const projectWhere: any = {

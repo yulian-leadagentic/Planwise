@@ -23,7 +23,9 @@ function makeController() {
   return { controller, access, zonesService };
 }
 
-const user = { id: 42, roleId: 3 };
+// Permissions round 1 (2026-11-20) — the access service now takes
+// isAdminUser(user), not the legacy roleId.
+const user = { id: 42, roleId: 3, isAdmin: false };
 
 describe('ZonesController.applyTaskTemplateToTarget', () => {
   it('requires projects:write', () => {
@@ -41,7 +43,7 @@ describe('ZonesController.applyTaskTemplateToTarget', () => {
       phaseId: 9,
     });
 
-    expect(access.assertZoneAccess).toHaveBeenCalledWith(42, 12, 3);
+    expect(access.assertZoneAccess).toHaveBeenCalledWith(42, 12, false);
     expect(access.assertProjectAccess).not.toHaveBeenCalled();
     expect(zonesService.applyTaskTemplateToTarget).toHaveBeenCalledWith(
       { projectId: 59, zoneId: 12 },
@@ -61,7 +63,7 @@ describe('ZonesController.applyTaskTemplateToTarget', () => {
       deliverableTemplateId: 41,
     });
 
-    expect(access.assertProjectAccess).toHaveBeenCalledWith(42, 59, 3);
+    expect(access.assertProjectAccess).toHaveBeenCalledWith(42, 59, false);
     expect(access.assertZoneAccess).not.toHaveBeenCalled();
     expect(zonesService.applyTaskTemplateToTarget).toHaveBeenCalledWith(
       { projectId: 59, zoneId: null },

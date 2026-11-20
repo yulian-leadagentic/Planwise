@@ -159,12 +159,4 @@ export class AuthController {
   async uploadAvatar(@CurrentUser() user: any, @UploadedFile() file: Express.Multer.File) {
     return this.authService.updateAvatar(user.id, file);
   }
-
-  @Post('impersonate')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiOperation({ summary: 'Impersonate another user (admin only)' })
-  async impersonate(@CurrentUser() user: any, @Body('userId') userId: number) {
-    return this.authService.impersonate(user, userId);
-  }
 }

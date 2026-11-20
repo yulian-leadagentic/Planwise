@@ -14,7 +14,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { ProjectDeliverablesService } from './project-deliverables.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
@@ -39,7 +39,7 @@ export class ProjectDeliverablesController {
     @CurrentUser() user: any,
     @Query('projectId', ParseIntPipe) projectId: number,
   ) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.service.findAllForProject(projectId);
   }
 
@@ -47,7 +47,7 @@ export class ProjectDeliverablesController {
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Create a project deliverable' })
   async create(@CurrentUser() user: any, @Body() dto: CreateProjectDeliverableDto) {
-    await this.access.assertProjectAccess(user.id, dto.projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, dto.projectId, isAdminUser(user));
     return this.service.create(dto);
   }
 
@@ -58,7 +58,7 @@ export class ProjectDeliverablesController {
     if (!Array.isArray(dto?.items) || dto.items.length === 0) return { updated: 0 };
     for (const it of dto.items) {
       const projectId = await this.service.getProjectId(it.id);
-      await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+      await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     }
     return this.service.reorder(dto);
   }
@@ -72,7 +72,7 @@ export class ProjectDeliverablesController {
     @Body() dto: UpdateProjectDeliverableDto,
   ) {
     const projectId = await this.service.getProjectId(id);
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.service.update(id, dto);
   }
 
@@ -91,7 +91,7 @@ export class ProjectDeliverablesController {
     @Body() body: { months: number | null; baseDate?: string; zoneId?: number; durationWeeks?: number | null },
   ) {
     const projectId = await this.service.getProjectId(id);
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.service.setTarget(id, body.months, body.baseDate, body.zoneId, body.durationWeeks);
   }
 
@@ -110,7 +110,7 @@ export class ProjectDeliverablesController {
     if (!Array.isArray(body?.items) || body.items.length === 0) return { updated: 0, overriddenTasks: [] };
     for (const it of body.items) {
       const projectId = await this.service.getProjectId(it.id);
-      await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+      await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     }
     return this.service.batchSetTargets(body.items, body.baseDate, body.applyToTasks !== false, user.id);
   }
@@ -134,7 +134,7 @@ export class ProjectDeliverablesController {
   @ApiOperation({ summary: 'Soft delete a project deliverable' })
   async remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
     const projectId = await this.service.getProjectId(id);
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.service.remove(id);
   }
 }

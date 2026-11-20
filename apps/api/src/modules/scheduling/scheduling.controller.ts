@@ -12,7 +12,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { SchedulerService } from './scheduler.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
@@ -132,7 +132,7 @@ export class SchedulingController {
     }
 
     const projectId = await this.scheduler.getProjectIdForProjectDeliverable(id);
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
 
     return this.scheduler.scheduleProjectDeliverableDryRun({
       projectDeliverableId: id,

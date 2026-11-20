@@ -8,14 +8,16 @@ import {
   UseGuards,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 
 /**
  * §14 RBAC multi-role · Admin → Users surface (2026-10-18).
@@ -27,13 +29,20 @@ import { PrismaService } from '../../prisma/prisma.service';
  * (legacy)" display chip, writable via PATCH /users/:id as before).
  *
  * Guarded by `admin:write` — same bar as /admin/roles module edits.
+ * Permissions round 1 (2026-11-20): changing a user's roles is
+ * additionally Admin-only (`isAdminUser`) — `admin:write` alone no
+ * longer lets a non-admin hand out roles — and every add / remove is
+ * written to the activity log under category `security`.
  */
 @ApiTags('Admin - Users')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('admin/users')
 export class AdminUsersController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   /**
    * Read every role currently granted to a user. Returns the chip-
@@ -94,6 +103,9 @@ export class AdminUsersController {
     @Body() body: { addRoleIds?: number[]; removeRoleIds?: number[] },
     @CurrentUser() actor: any,
   ) {
+    if (!isAdminUser(actor)) {
+      throw new ForbiddenException('Only an Admin can change a user\'s roles.');
+    }
     const addIds = Array.from(new Set((body.addRoleIds ?? []).filter((n) => Number.isInteger(n) && n > 0)));
     const removeIds = Array.from(new Set((body.removeRoleIds ?? []).filter((n) => Number.isInteger(n) && n > 0)));
     if (addIds.length === 0 && removeIds.length === 0) {
@@ -109,9 +121,15 @@ export class AdminUsersController {
 
     const user = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
-      select: { id: true },
+      select: {
+        id: true,
+        email: true,
+        userRoles: { select: { roleId: true, role: { select: { id: true, name: true } } } },
+      },
     });
     if (!user) throw new NotFoundException('User not found');
+    const beforeRoles = user.userRoles.map((ur) => ({ id: ur.role.id, name: ur.role.name }));
+    const beforeIds = new Set(beforeRoles.map((r) => r.id));
 
     // Validate that every id in add[] refers to a real role (deleting
     // a non-existent one is a cheap no-op via deleteMany — no need to
@@ -151,6 +169,30 @@ export class AdminUsersController {
 
     // Return the fresh roster. Same shape as the GET for simple FE
     // consumption.
-    return this.listRoles(userId);
+    const roster = await this.listRoles(userId);
+
+    // Audit only what actually changed (adds of an already-granted role
+    // and removes of a non-granted one are no-ops).
+    const afterRoles = roster.roles.map((r) => ({ id: r.id, name: r.name }));
+    const afterIds = new Set(afterRoles.map((r) => r.id));
+    const added = afterRoles.filter((r) => !beforeIds.has(r.id));
+    const removed = beforeRoles.filter((r) => !afterIds.has(r.id));
+    if (added.length > 0 || removed.length > 0) {
+      const names = (rs: Array<{ name: string }>) => rs.map((r) => `"${r.name}"`).join(', ');
+      const parts = [
+        added.length > 0 ? `granted ${names(added)}` : null,
+        removed.length > 0 ? `revoked ${names(removed)}` : null,
+      ].filter(Boolean);
+      await this.activityLog.logSecurityEvent({
+        action: 'user.roles_change',
+        description: `Roles of ${user.email ?? `user #${userId}`}: ${parts.join('; ')}`,
+        actorUserId: actor?.id ?? null,
+        entityType: 'user',
+        entityId: userId,
+        entityName: user.email,
+        changes: { roles: { from: beforeRoles, to: afterRoles }, added, removed },
+      });
+    }
+    return roster;
   }
 }

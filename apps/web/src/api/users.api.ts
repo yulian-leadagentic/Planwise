@@ -53,10 +53,4 @@ export const usersApi = {
 
   delete: (id: number) =>
     client.delete(`/users/${id}`).then((r) => r.data),
-
-  activate: (id: number) =>
-    client.patch<ApiResponse<User>>(`/users/${id}/activate`).then((r) => r.data.data),
-
-  deactivate: (id: number) =>
-    client.patch<ApiResponse<User>>(`/users/${id}/deactivate`).then((r) => r.data.data),
 };

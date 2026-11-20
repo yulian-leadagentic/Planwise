@@ -15,10 +15,18 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 import { StageTransitionService } from '../../common/services/stage-transition.service';
 import { ResourceOverrideService } from '../../common/services/resource-override.service';
 
+/**
+ * Permissions round 1 (2026-11-20) — decision 3: an Admin may grant
+ * himself finance / hr, provided every permission change is audited.
+ * Role create / update / delete and every role-module grant change
+ * writes a `security` activity row (actor, role, before → after).
+ */
 @ApiTags('Admin - Roles')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -28,16 +36,27 @@ export class RolesController {
     private prisma: PrismaService,
     private stageTransitions: StageTransitionService,
     private resourceOverrides: ResourceOverrideService,
+    private activityLog: ActivityLogService,
   ) {}
 
   @Post()
   @RequirePermissions({ module: 'admin/roles', action: 'write' })
   @ApiOperation({ summary: 'Create a role' })
-  async create(@Body() body: { name: string; description?: string }) {
-    return this.prisma.role.create({
+  async create(@Body() body: { name: string; description?: string }, @CurrentUser() actor: any) {
+    const role = await this.prisma.role.create({
       data: { name: body.name, description: body.description },
       include: { roleModules: { include: { module: true } } },
     });
+    await this.activityLog.logSecurityEvent({
+      action: 'role.create',
+      description: `Created role "${role.name}"`,
+      actorUserId: actor?.id ?? null,
+      entityType: 'role',
+      entityId: role.id,
+      entityName: role.name,
+      changes: { name: { from: null, to: role.name }, description: { from: null, to: role.description ?? null } },
+    });
+    return role;
   }
 
   @Get()
@@ -72,6 +91,7 @@ export class RolesController {
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { name?: string; description?: string },
+    @CurrentUser() actor: any,
   ) {
     // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2b) — system
     // roles stay NON-RENAMABLE. The role name is the join key the
@@ -91,16 +111,37 @@ export class RolesController {
         );
       }
     }
-    return this.prisma.role.update({
+    const before = await this.prisma.role.findUnique({ where: { id } });
+    const updated = await this.prisma.role.update({
       where: { id },
       data: body,
     });
+    // before → after for every field the body touched (values only, no
+    // secrets live on a role row).
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const key of Object.keys(body ?? {})) {
+      const from = (before as any)?.[key] ?? null;
+      const to = (updated as any)?.[key] ?? null;
+      if (from !== to) changes[key] = { from, to };
+    }
+    if (Object.keys(changes).length > 0) {
+      await this.activityLog.logSecurityEvent({
+        action: 'role.update',
+        description: `Updated role "${updated.name}" — ${Object.keys(changes).join(', ')}`,
+        actorUserId: actor?.id ?? null,
+        entityType: 'role',
+        entityId: id,
+        entityName: updated.name,
+        changes: changes as any,
+      });
+    }
+    return updated;
   }
 
   @Delete(':id')
   @RequirePermissions({ module: 'admin/roles', action: 'delete' })
   @ApiOperation({ summary: 'Delete a role' })
-  async remove(@Param('id', ParseIntPipe) id: number) {
+  async remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() actor: any) {
     // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2b) — system
     // roles stay NON-DELETABLE. The seed would just re-create them
     // on next boot (upsert by name) and silently re-grant their
@@ -126,6 +167,16 @@ export class RolesController {
       this.prisma.resourceOverride.deleteMany({ where: { roleId: id } }),
       this.prisma.role.delete({ where: { id } }),
     ]);
+    await this.activityLog.logSecurityEvent({
+      action: 'role.delete',
+      description: `Deleted role "${role.name}"`,
+      actorUserId: actor?.id ?? null,
+      entityType: 'role',
+      entityId: id,
+      entityName: role.name,
+      severity: 'critical',
+      changes: { name: { from: role.name, to: null } },
+    });
     return { message: 'Role deleted' };
   }
 
@@ -136,6 +187,7 @@ export class RolesController {
   async setModulePermission(
     @Param('id', ParseIntPipe) roleId: number,
     @Body() body: { moduleId: number; canRead: boolean; canWrite: boolean; canDelete: boolean; canApprove?: boolean; canExport?: boolean },
+    @CurrentUser() actor: any,
   ) {
     // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2b) — module
     // grants on system roles ARE editable. The previous
@@ -163,18 +215,35 @@ export class RolesController {
       canExport: body.canExport ?? false,
     };
 
-    if (existing) {
-      return this.prisma.roleModule.update({
-        where: { id: existing.id },
-        data: permData,
-        include: { module: true },
+    const saved = existing
+      ? await this.prisma.roleModule.update({
+          where: { id: existing.id },
+          data: permData,
+          include: { module: true },
+        })
+      : await this.prisma.roleModule.create({
+          data: { roleId, moduleId: body.moduleId, ...permData },
+          include: { module: true },
+        });
+
+    const before = existing ? pickFlags(existing) : null;
+    const after = pickFlags(saved);
+    if (!before || FLAG_KEYS.some((k) => before[k] !== after[k])) {
+      const moduleLabel = saved.module?.route || saved.module?.name || `module #${body.moduleId}`;
+      await this.activityLog.logSecurityEvent({
+        action: existing ? 'role.module_change' : 'role.module_grant',
+        description: `${existing ? 'Changed' : 'Granted'} ${moduleLabel} on role "${role.name}": ${formatFlags(before)} → ${formatFlags(after)}`,
+        actorUserId: actor?.id ?? null,
+        entityType: 'role',
+        entityId: roleId,
+        entityName: role.name,
+        changes: {
+          module: { id: body.moduleId, route: saved.module?.route ?? null, name: saved.module?.name ?? null },
+          permissions: { from: before, to: after },
+        },
       });
     }
-
-    return this.prisma.roleModule.create({
-      data: { roleId, moduleId: body.moduleId, ...permData },
-      include: { module: true },
-    });
+    return saved;
   }
 
   @Delete(':id/modules/:moduleId')
@@ -183,6 +252,7 @@ export class RolesController {
   async removeModulePermission(
     @Param('id', ParseIntPipe) roleId: number,
     @Param('moduleId', ParseIntPipe) moduleId: number,
+    @CurrentUser() actor: any,
   ) {
     // Phase 1 RBAC Hardening (2026-10-20 WORKORDER — B2b) — removing
     // a module from a system role is now allowed. Note the seed will
@@ -199,10 +269,24 @@ export class RolesController {
 
     const existing = await this.prisma.roleModule.findFirst({
       where: { roleId, moduleId },
+      include: { module: true },
     });
 
     if (existing) {
       await this.prisma.roleModule.delete({ where: { id: existing.id } });
+      const moduleLabel = existing.module?.route || existing.module?.name || `module #${moduleId}`;
+      await this.activityLog.logSecurityEvent({
+        action: 'role.module_revoke',
+        description: `Revoked ${moduleLabel} from role "${role.name}": ${formatFlags(pickFlags(existing))} → none`,
+        actorUserId: actor?.id ?? null,
+        entityType: 'role',
+        entityId: roleId,
+        entityName: role.name,
+        changes: {
+          module: { id: moduleId, route: existing.module?.route ?? null, name: existing.module?.name ?? null },
+          permissions: { from: pickFlags(existing), to: null },
+        },
+      });
     }
 
     return { message: 'Module permission removed' };
@@ -288,4 +372,24 @@ export class RolesController {
   async removeOverride(@Param('id', ParseIntPipe) id: number) {
     return this.resourceOverrides.removeOverride(id);
   }
+}
+
+const FLAG_KEYS = ['canRead', 'canWrite', 'canDelete', 'canApprove', 'canExport'] as const;
+type Flags = Record<(typeof FLAG_KEYS)[number], boolean>;
+
+function pickFlags(rm: Partial<Record<(typeof FLAG_KEYS)[number], boolean | null>>): Flags {
+  return {
+    canRead: !!rm.canRead,
+    canWrite: !!rm.canWrite,
+    canDelete: !!rm.canDelete,
+    canApprove: !!rm.canApprove,
+    canExport: !!rm.canExport,
+  };
+}
+
+/** "RW--E"-style summary for the activity-log description. */
+function formatFlags(flags: Flags | null): string {
+  if (!flags) return 'none';
+  const letters = ['R', 'W', 'D', 'A', 'E'];
+  return FLAG_KEYS.map((k, i) => (flags[k] ? letters[i] : '-')).join('');
 }

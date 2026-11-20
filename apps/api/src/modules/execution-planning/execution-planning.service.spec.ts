@@ -199,7 +199,7 @@ describe('ExecutionPlanningService — deleted / cancelled predecessors', () => 
     const access: any = { getAccessibleProjectIds: jest.fn(async () => ({ all: true, projectIds: [] })) };
     const svc = new ExecutionPlanningService(prisma, access);
 
-    const out: any = await svc.getOperationsDashboard({ id: 42, roleId: 1 });
+    const out: any = await svc.getOperationsDashboard({ id: 42, isAdmin: true });
 
     expect(out.summary.totalBlocked).toBe(1);
     expect(prisma.task.findMany.mock.calls[0][0].include.dependencies.where).toEqual(LIVE_PREDECESSOR);

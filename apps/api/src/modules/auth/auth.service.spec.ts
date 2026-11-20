@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
+import { AuthController } from './auth.controller';
 import { PrismaService } from '../../prisma/prisma.service';
 
 describe('AuthService', () => {
@@ -198,6 +199,43 @@ describe('AuthService', () => {
       prisma.user.findFirst.mockResolvedValue({ id: 1, password: hashed });
 
       await expect(service.changePassword(1, 'wrong', 'new')).rejects.toThrow('Current password is incorrect');
+    });
+  });
+
+  // Permissions round 1 (2026-11-20) — P0-4: a user must not be able to
+  // move themselves into another org unit (that widens project access).
+  describe('updateProfile (PATCH /auth/me)', () => {
+    it('ignores orgUnitId and writes only the self-service fields', async () => {
+      prisma.user.update.mockResolvedValue({ id: 1 });
+
+      await service.updateProfile(1, {
+        firstName: 'Dana',
+        phone: '050',
+        orgUnitId: 77,
+        roleId: 1,
+        isActive: true,
+        email: 'other@x.com',
+      });
+
+      const call = prisma.user.update.mock.calls[0][0];
+      expect(call.where).toEqual({ id: 1 });
+      expect(call.data).toEqual({ firstName: 'Dana', phone: '050' });
+      expect(call.data).not.toHaveProperty('orgUnitId');
+    });
+  });
+
+  // Permissions round 1 (2026-11-20) — decision 4: impersonation removed.
+  describe('impersonation', () => {
+    it('has no POST /auth/impersonate route and no service method', () => {
+      expect((AuthController.prototype as any).impersonate).toBeUndefined();
+      expect((AuthService.prototype as any).impersonate).toBeUndefined();
+
+      const routePaths = Object.getOwnPropertyNames(AuthController.prototype)
+        .filter((name) => name !== 'constructor')
+        .map((name) => Reflect.getMetadata('path', (AuthController.prototype as any)[name]))
+        .filter((p) => p !== undefined);
+      expect(routePaths.length).toBeGreaterThan(0);
+      expect(routePaths).not.toContain('impersonate');
     });
   });
 });

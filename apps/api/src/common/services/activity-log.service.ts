@@ -82,6 +82,37 @@ export class ActivityLogService {
     }
   }
 
+  // ─── Security (permissions round 1, 2026-11-20) ──────────────────
+
+  /**
+   * Audit row for a permission / identity change: roles and their
+   * module grants, user role assignment, user create/delete, password /
+   * email / active changes, SSO config. Category `security` — only
+   * Admins can read these rows in GET /admin/activity-logs.
+   *
+   * `changes` carries before→after for NON-secret values only. Never
+   * put a password, hash, token or client secret in here; record that
+   * it changed (e.g. `{ password: 'changed' }`).
+   */
+  async logSecurityEvent(input: {
+    action: string;
+    description: string;
+    actorUserId?: number | null;
+    entityType: string;
+    entityId?: number | null;
+    entityName?: string | null;
+    changes?: Prisma.InputJsonValue | null;
+    metadata?: Prisma.InputJsonValue | null;
+    ipAddress?: string | null;
+    severity?: ActivitySeverity;
+  }): Promise<void> {
+    await this.write({
+      ...input,
+      category: 'security',
+      severity: input.severity ?? 'warn',
+    });
+  }
+
   // ─── Project ──────────────────────────────────────────────────────
 
   async logProjectCreated(input: LogCommonInput & { projectName: string }): Promise<void> {

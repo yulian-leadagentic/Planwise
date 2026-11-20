@@ -2,7 +2,6 @@ import {
   Injectable,
   UnauthorizedException,
   BadRequestException,
-  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -297,14 +296,16 @@ export class AuthService {
   }
 
   async updateProfile(userId: number, data: any) {
-    // Retire-User.department Step 1/3 (2026-09-28) — `department` (the
-    // free-text string) is retired in favor of `orgUnitId`. The
-    // allowlist now accepts `orgUnitId`; `department` is dropped so a
-    // client that still sends it gets no write (silently ignored — the
-    // request itself is not rejected because /auth/me uses `@Body() any`
-    // rather than a whitelisted DTO). Step 2/3 flips the FE writer;
-    // Step 3/3 drops the column.
-    const allowedFields = ['firstName', 'lastName', 'phone', 'position', 'orgUnitId'];
+    // Self-service profile fields only. Anything not listed here is
+    // silently ignored (the request is not rejected because /auth/me
+    // uses `@Body() any` rather than a whitelisted DTO).
+    //
+    // Permissions round 1 (2026-11-20) — `orgUnitId` is NOT
+    // self-writable: ProjectAccessService grants access to every project
+    // of the caller's home org unit, so letting a user pick their own
+    // unit let anyone open any department's projects. Home-unit
+    // assignment goes through `PATCH /users/:id/org-unit` (`org:write`).
+    const allowedFields = ['firstName', 'lastName', 'phone', 'position'];
     const updateData: Record<string, any> = {};
     for (const field of allowedFields) {
       if (data[field] !== undefined) {
@@ -370,59 +371,5 @@ export class AuthService {
       data: { avatarUrl },
       select: { id: true, avatarUrl: true },
     });
-  }
-
-  async impersonate(admin: any, userId: number) {
-    // Only super-admin (role id 1) can impersonate
-    if (admin.roleId !== 1) {
-      throw new ForbiddenException('Only administrators can impersonate users');
-    }
-
-    const targetUser = await this.prisma.user.findFirst({
-      where: { id: userId, isActive: true },
-      include: {
-        role: {
-          include: {
-            roleModules: { include: { module: true } },
-          },
-        },
-        // §14 RBAC multi-role (2026-10-18) — load the target's granted
-        // roles so the impersonation session reads the SAME union the
-        // target would see on a real login.
-        userRoles: {
-          include: {
-            role: {
-              include: {
-                roleModules: { include: { module: true } },
-              },
-            },
-          },
-        },
-      },
-    });
-
-    if (!targetUser) {
-      throw new NotFoundException('Target user not found');
-    }
-
-    const payload = { sub: targetUser.id, email: targetUser.email, roleId: targetUser.roleId, impersonatedBy: admin.id };
-    const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
-
-    const merged = attachMergedPermissions(targetUser);
-    return {
-      accessToken,
-      user: {
-        id: targetUser.id,
-        email: targetUser.email,
-        firstName: targetUser.firstName,
-        lastName: targetUser.lastName,
-        role: targetUser.role,
-        // §14 — expose the merged shape so an impersonation session
-        // renders the correct permission state in the FE immediately.
-        roles: merged.roles,
-        roleModules: merged.roleModules,
-        isAdmin: merged.isAdmin,
-      },
-    };
   }
 }

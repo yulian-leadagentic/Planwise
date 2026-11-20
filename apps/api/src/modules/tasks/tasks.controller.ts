@@ -16,7 +16,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { TasksService } from './tasks.service';
 import { TaskChecklistService } from './task-checklist.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
@@ -46,9 +46,9 @@ export class TasksController {
     //   • zoned task: zone access (which implies project access)
     //   • root task:  project access directly
     if (dto.zoneId != null) {
-      await this.access.assertZoneAccess(user.id, dto.zoneId, user.roleId);
+      await this.access.assertZoneAccess(user.id, dto.zoneId, isAdminUser(user));
     } else if (dto.projectId != null) {
-      await this.access.assertProjectAccess(user.id, dto.projectId, user.roleId);
+      await this.access.assertProjectAccess(user.id, dto.projectId, isAdminUser(user));
     } else {
       // The service will throw with a clearer message; bail before doing
       // a permission check on undefined.
@@ -62,10 +62,10 @@ export class TasksController {
   @ApiOperation({ summary: 'List tasks with filters' })
   async findAll(@CurrentUser() user: any, @Query() query: QueryTasksDto) {
     if (query.projectId) {
-      await this.access.assertProjectAccess(user.id, +query.projectId, user.roleId);
+      await this.access.assertProjectAccess(user.id, +query.projectId, isAdminUser(user));
       return this.tasksService.findAll(query);
     }
-    const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
+    const acc = await this.access.getAccessibleProjectIds(user.id, isAdminUser(user));
     if (acc.all) return this.tasksService.findAll(query);
     if (acc.projectIds.length === 0) {
       return { data: [], meta: { total: 0, page: 1, perPage: query.perPage ?? 20, totalPages: 0 } };
@@ -86,7 +86,7 @@ export class TasksController {
   @ApiOperation({ summary: 'Get allowed status transitions for the current user\'s role' })
   async getAllowedTransitions(@CurrentUser() user: any, @Query('fromStatus') fromStatus?: string) {
     if (fromStatus) {
-      const targets = await this.transitions.getAllowedTargets(user.roleId, fromStatus);
+      const targets = await this.transitions.getAllowedTargets(user, fromStatus);
       return { fromStatus, targets };
     }
     const matrix = await this.transitions.getMatrix(user.roleId);
@@ -97,7 +97,7 @@ export class TasksController {
   @RequirePermissions({ module: 'tasks', action: 'read' })
   @ApiOperation({ summary: 'Get task by ID' })
   async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
-    await this.access.assertTaskAccess(user.id, id, user.roleId);
+    await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
     return this.tasksService.findOne(id);
   }
 
@@ -105,12 +105,12 @@ export class TasksController {
   @RequirePermissions({ module: 'tasks', action: 'write' })
   @ApiOperation({ summary: 'Update a task' })
   async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTaskDto, @CurrentUser() user: any) {
-    await this.access.assertTaskAccess(user.id, id, user.roleId);
+    await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
     // If status is changing, enforce stage-transition rules
     if (dto.status) {
       const currentTask = await this.tasksService.findOne(id);
       if ((currentTask as any).status !== dto.status) {
-        await this.transitions.assertTransition(user.roleId, (currentTask as any).status, dto.status);
+        await this.transitions.assertTransition(user, (currentTask as any).status, dto.status);
       }
     }
     return this.tasksService.update(id, dto, user?.id);
@@ -120,7 +120,7 @@ export class TasksController {
   @RequirePermissions({ module: 'tasks', action: 'delete' })
   @ApiOperation({ summary: 'Soft delete a task' })
   async remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
-    await this.access.assertTaskAccess(user.id, id, user.roleId);
+    await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
     return this.tasksService.remove(id);
   }
 
@@ -154,7 +154,7 @@ export class TasksController {
     @Body() body: { action: 'submit' | 'approve' | 'return'; reason?: string },
     @CurrentUser() user: any,
   ) {
-    await this.access.assertTaskAccess(user.id, id, user.roleId);
+    await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
     return this.tasksService.recordReview(id, user.id, body.action, body.reason);
   }
 
@@ -165,7 +165,7 @@ export class TasksController {
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
   ) {
-    await this.access.assertTaskAccess(user.id, id, user.roleId);
+    await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
     return this.tasksService.listReviews(id);
   }
 
@@ -185,7 +185,7 @@ export class TasksController {
     @Body() body: { userId: number; role?: string; hourlyRate?: number },
     @CurrentUser() user: any,
   ) {
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.tasksService.addAssignee(taskId, body, user?.id);
   }
 
@@ -197,7 +197,7 @@ export class TasksController {
     @Param('id', ParseIntPipe) taskId: number,
     @Param('userId', ParseIntPipe) userId: number,
   ) {
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.tasksService.removeAssignee(taskId, userId, user?.id);
   }
 
@@ -208,7 +208,7 @@ export class TasksController {
   @RequirePermissions({ module: 'tasks', action: 'read' })
   @ApiOperation({ summary: 'List checklist items on a task' })
   async listChecklist(@CurrentUser() user: any, @Param('id', ParseIntPipe) taskId: number) {
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.checklist.list(taskId);
   }
 
@@ -220,7 +220,7 @@ export class TasksController {
     @Param('id', ParseIntPipe) taskId: number,
     @Body() body: { text: string },
   ) {
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     const text = (body?.text ?? '').trim();
     if (!text) throw new ForbiddenException('text is required');
     return this.checklist.create(taskId, user.id, text);
@@ -258,7 +258,7 @@ export class TasksController {
   @RequirePermissions({ module: 'tasks', action: 'read' })
   @ApiOperation({ summary: 'List task comments' })
   async getComments(@CurrentUser() user: any, @Param('id', ParseIntPipe) taskId: number) {
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.tasksService.getComments(taskId);
   }
 
@@ -270,7 +270,7 @@ export class TasksController {
     @CurrentUser() user: any,
     @Body() body: { content: string; parentId?: number; attachmentIds?: number[] },
   ) {
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.tasksService.addComment(taskId, user.id, body);
   }
 
@@ -284,7 +284,7 @@ export class TasksController {
       throw new ForbiddenException('items required');
     }
     for (const item of body.items) {
-      await this.access.assertTaskAccess(user.id, item.id, user.roleId);
+      await this.access.assertTaskAccess(user.id, item.id, isAdminUser(user));
     }
     return this.tasksService.batchReorder(body.items);
   }
@@ -294,7 +294,7 @@ export class TasksController {
   @RequirePermissions({ module: 'tasks', action: 'read' })
   @ApiOperation({ summary: 'List task attachments' })
   async getAttachments(@CurrentUser() user: any, @Param('id', ParseIntPipe) taskId: number) {
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.tasksService.getAttachments(taskId);
   }
 
@@ -306,7 +306,7 @@ export class TasksController {
     @CurrentUser() user: any,
     @Body() body: { fileName: string; fileUrl: string; fileSize?: number; mimeType?: string },
   ) {
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.tasksService.addAttachment(taskId, user.id, body);
   }
 
@@ -316,7 +316,7 @@ export class TasksController {
   async removeAttachment(@CurrentUser() user: any, @Param('attachmentId', ParseIntPipe) attachmentId: number) {
     // Resolve attachment → task → project, then assert access
     await this.tasksService.assertAttachmentAccess(attachmentId, async (taskId) => {
-      await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+      await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     });
     return this.tasksService.removeAttachment(attachmentId, user?.id);
   }

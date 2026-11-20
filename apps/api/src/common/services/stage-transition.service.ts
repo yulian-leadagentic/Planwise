@@ -1,5 +1,6 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isAdminUser } from '../guards/roles.guard';
 
 /**
  * Enforces per-role Kanban stage transition rules.
@@ -10,7 +11,10 @@ import { PrismaService } from '../../prisma/prisma.service';
  *   restrictions).
  * - Once ANY row exists for a role, ONLY the listed from→to pairs
  *   are allowed; everything else is blocked.
- * - Super-admin (roleId=1) always bypasses.
+ * - Admins (`isAdminUser`, the RolesGuard's multi-role definition)
+ *   always bypass. Permissions round 1 (2026-11-20) replaced the legacy
+ *   `roleId === 1` check; the per-role rows still key on the user's
+ *   legacy `roleId`.
  */
 @Injectable()
 export class StageTransitionService {
@@ -21,12 +25,13 @@ export class StageTransitionService {
    * role. Returns silently if the transition is permitted.
    */
   async assertTransition(
-    roleId: number | null | undefined,
+    user: { roleId?: number | null } | null | undefined,
     fromStatus: string,
     toStatus: string,
   ): Promise<void> {
     if (fromStatus === toStatus) return;
-    if (roleId === 1) return; // super-admin
+    if (isAdminUser(user)) return;
+    const roleId = user?.roleId;
 
     if (!roleId) {
       throw new ForbiddenException('Role required to change task status');
@@ -60,10 +65,12 @@ export class StageTransitionService {
    * Returns null = "all transitions allowed" (no config for this role).
    */
   async getAllowedTargets(
-    roleId: number,
+    user: { roleId?: number | null } | null | undefined,
     fromStatus: string,
   ): Promise<string[] | null> {
-    if (roleId === 1) return null; // super-admin: all
+    if (isAdminUser(user)) return null; // admin: all
+    const roleId = user?.roleId;
+    if (!roleId) return null;
 
     const count = await this.prisma.roleStageTransition.count({
       where: { roleId },

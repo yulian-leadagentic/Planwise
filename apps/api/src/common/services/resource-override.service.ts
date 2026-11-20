@@ -36,9 +36,13 @@ export class ResourceOverrideService {
     roleId: number | null,
     userId: number | null,
     modulePermission: EffectivePermission,
+    isAdmin = false,
   ): Promise<EffectivePermission> {
-    // Super-admin bypass
-    if (roleId === 1) return modulePermission;
+    // Admin bypass — callers pass `isAdminUser(request.user)` (the
+    // RolesGuard's multi-role definition). Permissions round 1
+    // (2026-11-20) replaced the legacy `roleId === 1` check; the strict
+    // `=== true` keeps a stale numeric argument from bypassing.
+    if (isAdmin === true) return modulePermission;
 
     // Find the most specific override: user > role > none
     const overrides = await this.prisma.resourceOverride.findMany({
@@ -81,8 +85,9 @@ export class ResourceOverrideService {
     userId: number | null,
     modulePermission: EffectivePermission,
     action: OverrideAction,
+    isAdmin = false,
   ): Promise<boolean> {
-    const eff = await this.getEffective(resourceType, resourceId, roleId, userId, modulePermission);
+    const eff = await this.getEffective(resourceType, resourceId, roleId, userId, modulePermission, isAdmin);
     return eff[action];
   }
 

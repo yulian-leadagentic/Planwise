@@ -5,12 +5,57 @@ import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../../../prisma/prisma.service';
 
-function requireSecret(config: ConfigService, key: string): string {
+export function requireSecret(config: ConfigService, key: string): string {
   const value = config.get<string>(key);
   if (!value || value.length < 32) {
     throw new Error(`${key} must be set and at least 32 characters long`);
   }
   return value;
+}
+
+/**
+ * Load the user an access token's `sub` points at, with the merged
+ * permission set the guards read. Returns null when the user does not
+ * exist, is inactive, or is soft-deleted.
+ *
+ * Shared by the HTTP JwtStrategy below and the WebSocket gateways
+ * (`common/services/ws-auth.service.ts`) so both channels apply the
+ * exact same checks and produce the same `request.user` shape.
+ */
+export async function loadAuthenticatedUser(prisma: PrismaService, userId: number) {
+  const user = await prisma.user.findFirst({
+    where: { id: userId, isActive: true, deletedAt: null },
+    select: {
+      id: true,
+      email: true,
+      firstName: true,
+      lastName: true,
+      roleId: true,
+      userType: true,
+      avatarUrl: true,
+      role: {
+        include: {
+          roleModules: { include: { module: true } },
+        },
+      },
+      // §14 RBAC multi-role (2026-10-18) — load every granted role +
+      // its role_modules so the request's effective permission set is
+      // the OR union across them. The guard falls back to the legacy
+      // `role.roleModules` list when `userRoles` is empty (zero-
+      // downtime handover window — the backfill endpoint seeds
+      // `user_roles` from `user.role_id`).
+      userRoles: {
+        include: {
+          role: {
+            include: {
+              roleModules: { include: { module: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  return user ? attachMergedPermissions(user) : null;
 }
 
 @Injectable()
@@ -27,44 +72,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   }
 
   async validate(payload: { sub: number; email: string; roleId: number }) {
-    const user = await this.prisma.user.findFirst({
-      where: { id: payload.sub, isActive: true },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        roleId: true,
-        userType: true,
-        avatarUrl: true,
-        role: {
-          include: {
-            roleModules: { include: { module: true } },
-          },
-        },
-        // §14 RBAC multi-role (2026-10-18) — load every granted role +
-        // its role_modules so the request's effective permission set is
-        // the OR union across them. The guard falls back to the legacy
-        // `role.roleModules` list when `userRoles` is empty (zero-
-        // downtime handover window — the backfill endpoint seeds
-        // `user_roles` from `user.role_id`).
-        userRoles: {
-          include: {
-            role: {
-              include: {
-                roleModules: { include: { module: true } },
-              },
-            },
-          },
-        },
-      },
-    });
-
+    const user = await loadAuthenticatedUser(this.prisma, payload.sub);
     if (!user) {
       throw new UnauthorizedException('User not found or inactive');
     }
-
-    return attachMergedPermissions(user);
+    return user;
   }
 }
 
@@ -84,10 +96,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
  *     'Admin'. Falls back to the legacy `role.name === 'Admin'` when
  *     `userRoles` is empty, same handover rule as above.
  *
- * Exported so `AuthService.login`, `getProfile`, and `impersonate` can
- * reuse the exact same merge logic — the three code paths that mint
- * `/auth/me`-shaped payloads MUST return the same `roleModules` array
- * the guard reads.
+ * Exported so `AuthService.login` and `getProfile` can reuse the exact
+ * same merge logic — the code paths that mint `/auth/me`-shaped
+ * payloads MUST return the same `roleModules` array the guard reads.
  */
 export function attachMergedPermissions<T extends {
   role?: { name: string; roleModules: any[] } | null;

@@ -64,20 +64,3 @@ export function useDeleteUser() {
     },
   });
 }
-
-export function useToggleUserActive() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ id, isActive }: { id: number; isActive: boolean }) =>
-      isActive ? usersApi.deactivate(id) : usersApi.activate(id),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['users'] });
-      queryClient.invalidateQueries({ queryKey: ['users', variables.id] });
-      notify.success(variables.isActive ? 'User deactivated' : 'User activated', { code: 'USER-UPDATE-200' });
-    },
-    onError: (err: any) => {
-      notify.apiError(err, 'Failed to update user status');
-    },
-  });
-}

@@ -48,19 +48,23 @@ export function usePermissions() {
   //   1. Prefer the server-computed flag (`user.isAdmin`), which is
   //      the OR union across granted roles.
   //   2. Fallback: any of the `roles` chip list is named Admin.
-  //   3. Fallback (pre-handover window): legacy role.name / role.id.
+  //   3. Fallback (pre-handover window): legacy role.name.
   // The order is `isAdmin` → `roles` → legacy so the moment the server
   // sends the new shape the client stops honouring the stale
   // single-role chip.
+  //
+  // Permissions round 1 (2026-11-20) — when the server sent the flag
+  // (always, from /auth/me), it is the ONLY answer: the server no longer
+  // treats `roleId === 1` as admin, so the UI must not either (otherwise
+  // it would offer Admin-only controls the API then rejects).
   const rolesList: Array<{ id: number; name: string }> = Array.isArray(user?.roles) ? user.roles : [];
   const roleName = String(user?.role?.name ?? user?.roleName ?? '').toLowerCase();
   const isAdmin =
-    user?.isAdmin === true ||
-    rolesList.some((r) => String(r.name).toLowerCase() === 'admin') ||
-    user?.roleId === 1 ||
-    user?.role?.id === 1 ||
-    roleName === 'admin' ||
-    roleName === 'administrator';
+    typeof user?.isAdmin === 'boolean'
+      ? user.isAdmin
+      : rolesList.some((r) => String(r.name).toLowerCase() === 'admin') ||
+        roleName === 'admin' ||
+        roleName === 'administrator';
 
   return { can, isAdmin, user };
 }

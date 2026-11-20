@@ -2,6 +2,8 @@ import { Test } from '@nestjs/testing';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ProjectAccessService } from './project-access.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { isAdminUser } from '../guards/roles.guard';
+import { attachMergedPermissions } from '../../modules/auth/strategies/jwt.strategy';
 
 /**
  * Security-critical tests — this service is the IDOR defense for every
@@ -47,67 +49,67 @@ describe('ProjectAccessService', () => {
   });
 
   describe('assertProjectAccess', () => {
-    it('bypasses all checks for super-admin (roleId=1)', async () => {
-      await expect(service.assertProjectAccess(99, 1, 1)).resolves.toBeUndefined();
+    it('bypasses all checks for an admin (isAdmin=true)', async () => {
+      await expect(service.assertProjectAccess(99, 1, true)).resolves.toBeUndefined();
       expect(prisma.project.findFirst).not.toHaveBeenCalled();
       expect(prisma.projectMember.findFirst).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when project does not exist', async () => {
       prisma.project.findFirst.mockResolvedValue(null);
-      await expect(service.assertProjectAccess(1, 42, 2)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.assertProjectAccess(1, 42, false)).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('throws NotFoundException when project is soft-deleted', async () => {
       // Service queries with deletedAt: null, so a deleted project simply returns null
       prisma.project.findFirst.mockResolvedValue(null);
-      await expect(service.assertProjectAccess(1, 42, 2)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.assertProjectAccess(1, 42, false)).rejects.toBeInstanceOf(NotFoundException);
       const call = prisma.project.findFirst.mock.calls[0][0];
       expect(call.where.deletedAt).toBeNull();
     });
 
     it('allows access when user is the project leader', async () => {
       prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 1, createdBy: 99 });
-      await expect(service.assertProjectAccess(1, 42, 2)).resolves.toBeUndefined();
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
       expect(prisma.projectMember.findFirst).not.toHaveBeenCalled(); // short-circuits
     });
 
     it('allows access when user is the project creator', async () => {
       prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 1 });
-      await expect(service.assertProjectAccess(1, 42, 2)).resolves.toBeUndefined();
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
     });
 
     it('allows access when user is a project member', async () => {
       prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88 });
       prisma.projectMember.findFirst.mockResolvedValue({ id: 7 });
-      await expect(service.assertProjectAccess(1, 42, 2)).resolves.toBeUndefined();
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
     });
 
     it('rejects when user is neither leader, creator, nor member', async () => {
       prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88 });
       prisma.projectMember.findFirst.mockResolvedValue(null);
-      await expect(service.assertProjectAccess(1, 42, 2)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.assertProjectAccess(1, 42, false)).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 
   describe('assertTaskAccess', () => {
-    it('returns projectId without membership check for super-admin', async () => {
+    it('returns projectId without membership check for an admin', async () => {
       prisma.task.findFirst.mockResolvedValue({ projectId: 42 });
-      const pid = await service.assertTaskAccess(99, 10, 1);
+      const pid = await service.assertTaskAccess(99, 10, true);
       expect(pid).toBe(42);
       expect(prisma.projectMember.findFirst).not.toHaveBeenCalled();
     });
 
     it('throws NotFoundException when task does not exist', async () => {
       prisma.task.findFirst.mockResolvedValue(null);
-      await expect(service.assertTaskAccess(1, 10, 2)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.assertTaskAccess(1, 10, false)).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('delegates to assertProjectAccess for the task\'s project', async () => {
       prisma.task.findFirst.mockResolvedValue({ projectId: 42 });
       prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 1, createdBy: 99 });
 
-      const pid = await service.assertTaskAccess(1, 10, 2);
+      const pid = await service.assertTaskAccess(1, 10, false);
       expect(pid).toBe(42);
       expect(prisma.project.findFirst).toHaveBeenCalled();
     });
@@ -117,28 +119,28 @@ describe('ProjectAccessService', () => {
       prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88 });
       prisma.projectMember.findFirst.mockResolvedValue(null);
 
-      await expect(service.assertTaskAccess(1, 10, 2)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.assertTaskAccess(1, 10, false)).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 
   describe('assertZoneAccess', () => {
     it('throws NotFoundException when zone does not exist', async () => {
       prisma.zone.findFirst.mockResolvedValue(null);
-      await expect(service.assertZoneAccess(1, 5, 2)).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.assertZoneAccess(1, 5, false)).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('resolves zone → projectId and returns it', async () => {
       prisma.zone.findFirst.mockResolvedValue({ projectId: 42 });
       prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 1, createdBy: 99 });
 
-      const pid = await service.assertZoneAccess(1, 5, 2);
+      const pid = await service.assertZoneAccess(1, 5, false);
       expect(pid).toBe(42);
     });
   });
 
   describe('getAccessibleProjectIds', () => {
-    it('returns { all: true } for super-admin', async () => {
-      const result = await service.getAccessibleProjectIds(1, 1);
+    it('returns { all: true } for an admin', async () => {
+      const result = await service.getAccessibleProjectIds(1, true);
       expect(result).toEqual({ all: true, projectIds: [] });
       expect(prisma.projectMember.findMany).not.toHaveBeenCalled();
     });
@@ -153,7 +155,7 @@ describe('ProjectAccessService', () => {
         { id: 30 },  // user is leader
       ]);
 
-      const result = await service.getAccessibleProjectIds(1, 2);
+      const result = await service.getAccessibleProjectIds(1, false);
       expect(result.all).toBe(false);
       expect([...result.projectIds].sort((a, b) => a - b)).toEqual([10, 20, 30]);
     });
@@ -162,7 +164,7 @@ describe('ProjectAccessService', () => {
       prisma.projectMember.findMany.mockResolvedValue([]);
       prisma.project.findMany.mockResolvedValue([]);
 
-      const result = await service.getAccessibleProjectIds(1, 2);
+      const result = await service.getAccessibleProjectIds(1, false);
       expect(result).toEqual({ all: false, projectIds: [] });
     });
   });
@@ -175,7 +177,7 @@ describe('ProjectAccessService', () => {
   //   2. Unit manager sees a subordinate's project (list + assert)
   //   3. PARENT-unit manager sees a grandchild's project (skip-level)
   //   4. Non-manager unaffected
-  //   5. Super-admin unaffected
+  //   5. Admin unaffected
   //
   // The `orgUnit.findMany` / `user.findMany` mocks use call-index to
   // distinguish the "managed units" query from the "subtree union" query
@@ -247,7 +249,7 @@ describe('ProjectAccessService', () => {
       prisma.projectMember.findMany.mockResolvedValue([{ projectId: 10 }]);
       prisma.project.findMany.mockResolvedValue([{ id: 20 }]);
 
-      const result = await service.getAccessibleProjectIds(1, 2);
+      const result = await service.getAccessibleProjectIds(1, false);
       expect(result.all).toBe(false);
       expect(result.projectIds.sort((a, b) => a - b)).toEqual([10, 20]);
       // Widen step never fired.
@@ -267,7 +269,7 @@ describe('ProjectAccessService', () => {
       prisma.projectMember.findMany.mockResolvedValueOnce([{ projectId: 42 }]);
       prisma.project.findMany.mockResolvedValueOnce([]); // user 5 leads/created nothing
 
-      const result = await service.getAccessibleProjectIds(1, 2);
+      const result = await service.getAccessibleProjectIds(1, false);
       expect(result.projectIds).toEqual([42]);
     });
 
@@ -285,7 +287,7 @@ describe('ProjectAccessService', () => {
       prisma.projectMember.findMany.mockResolvedValueOnce([{ projectId: 99 }]);
       prisma.project.findMany.mockResolvedValueOnce([]);
 
-      const result = await service.getAccessibleProjectIds(1, 2);
+      const result = await service.getAccessibleProjectIds(1, false);
       expect(result.projectIds).toEqual([99]);
     });
 
@@ -295,13 +297,13 @@ describe('ProjectAccessService', () => {
       // No managed units.
       prisma.orgUnit.findMany.mockResolvedValueOnce([]);
 
-      const result = await service.getAccessibleProjectIds(1, 2);
+      const result = await service.getAccessibleProjectIds(1, false);
       expect(result.projectIds).toEqual([3]);
       expect(prisma.user.findMany).not.toHaveBeenCalled();
     });
 
-    it('super-admin bypass is unaffected by org tree', async () => {
-      const result = await service.getAccessibleProjectIds(1, 1);
+    it('admin bypass is unaffected by org tree', async () => {
+      const result = await service.getAccessibleProjectIds(1, true);
       expect(result).toEqual({ all: true, projectIds: [] });
       expect(prisma.orgUnit.findMany).not.toHaveBeenCalled();
     });
@@ -320,7 +322,7 @@ describe('ProjectAccessService', () => {
       // Subordinate IS a member of the project.
       prisma.projectMember.findFirst.mockResolvedValueOnce({ id: 12 });
 
-      await expect(service.assertProjectAccess(1, 42, 2)).resolves.toBeUndefined();
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
     });
 
     it('lets a manager into a subordinate\'s project (subordinate is leader)', async () => {
@@ -334,7 +336,7 @@ describe('ProjectAccessService', () => {
       // Membership call for the subordinate widen is not expected —
       // the leader-in-subs check short-circuits before it.
 
-      await expect(service.assertProjectAccess(1, 42, 2)).resolves.toBeUndefined();
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
     });
 
     it('still rejects when neither the caller nor any subordinate touches the project', async () => {
@@ -346,7 +348,7 @@ describe('ProjectAccessService', () => {
       prisma.user.findMany.mockResolvedValue([{ id: 5 }]);
       prisma.projectMember.findFirst.mockResolvedValueOnce(null);
 
-      await expect(service.assertProjectAccess(1, 42, 2)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.assertProjectAccess(1, 42, false)).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('rejects with pre-feature behaviour when caller manages nothing', async () => {
@@ -355,8 +357,59 @@ describe('ProjectAccessService', () => {
       // No managed units — the widen step short-circuits.
       prisma.orgUnit.findMany.mockResolvedValueOnce([]);
 
-      await expect(service.assertProjectAccess(1, 42, 2)).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.assertProjectAccess(1, 42, false)).rejects.toBeInstanceOf(ForbiddenException);
       expect(prisma.user.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── One definition of "admin" (permissions round 1, 2026-11-20) ──
+  //
+  // Callers pass `isAdminUser(request.user)`; `request.user` comes from
+  // `attachMergedPermissions` (jwt.strategy). The legacy `roleId === 1`
+  // shortcut is gone: what counts is the Admin role in `user_roles`
+  // (or, with no grants at all, the legacy role's NAME).
+
+  describe('admin definition — isAdminUser(request.user)', () => {
+    const role = (id: number, name: string) => ({ id, name, roleModules: [] as any[] });
+
+    it('an Admin via user_roles with roleId != 1 bypasses project checks', async () => {
+      const user = attachMergedPermissions({
+        id: 7,
+        roleId: 5,
+        role: role(5, 'Employee'),
+        userRoles: [{ role: role(9, 'Admin') }],
+      });
+      expect(isAdminUser(user)).toBe(true);
+
+      await expect(service.assertProjectAccess(user.id, 42, isAdminUser(user))).resolves.toBeUndefined();
+      expect(prisma.project.findFirst).not.toHaveBeenCalled();
+      expect(await service.getAccessibleProjectIds(user.id, isAdminUser(user))).toEqual({ all: true, projectIds: [] });
+    });
+
+    it('roleId = 1 without the Admin role is NOT an admin', async () => {
+      const user = attachMergedPermissions({
+        id: 8,
+        roleId: 1,
+        role: role(1, 'Employee'),
+        userRoles: [{ role: role(1, 'Employee') }],
+      });
+      expect(isAdminUser(user)).toBe(false);
+
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88 });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+      await expect(service.assertProjectAccess(user.id, 42, isAdminUser(user))).rejects.toBeInstanceOf(ForbiddenException);
+
+      prisma.projectMember.findMany.mockResolvedValue([]);
+      prisma.project.findMany.mockResolvedValue([]);
+      expect(await service.getAccessibleProjectIds(user.id, isAdminUser(user))).toEqual({ all: false, projectIds: [] });
+    });
+
+    it('a stale caller passing the numeric roleId 1 does not bypass (fails closed)', async () => {
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88 });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+      await expect(service.assertProjectAccess(8, 42, 1 as any)).rejects.toBeInstanceOf(ForbiddenException);
+      prisma.zone.findFirst.mockResolvedValue({ projectId: 42 });
+      await expect(service.assertZoneAccess(8, 5, 1 as any)).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 });

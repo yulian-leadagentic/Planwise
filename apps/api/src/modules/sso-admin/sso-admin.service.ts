@@ -15,6 +15,10 @@
  *
  * Every mutation is audited via ActivityLog. The secret VALUE is
  * NEVER passed to the audit log — only booleans and metadata.
+ * Permissions round 1 (2026-11-20): config changes (create / update /
+ * enable / disable) are category `security` (Admin-only in the
+ * activity-log reader) and carry before → after for the non-secret
+ * fields; the connection test stays category `admin`.
  */
 
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
@@ -186,7 +190,7 @@ export class SsoAdminService {
         rotatedSecret: true,
         enabled: created.enabled,
         ssoOnly: created.ssoOnly,
-      });
+      }, diffSsoConfig(null, created));
       return this.toView(created);
     }
 
@@ -208,7 +212,7 @@ export class SsoAdminService {
       rotatedSecret: rotateSecret,
       enabled: updated.enabled,
       ssoOnly: updated.ssoOnly,
-    });
+    }, diffSsoConfig(existing, updated));
     return this.toView(updated);
   }
 
@@ -225,6 +229,7 @@ export class SsoAdminService {
       enabled ? 'sso.config.enabled' : 'sso.config.disabled',
       provider,
       { enabled },
+      diffSsoConfig(row, updated),
     );
     return this.toView(updated);
   }
@@ -326,9 +331,13 @@ export class SsoAdminService {
     action: 'sso.config.updated' | 'sso.config.enabled' | 'sso.config.disabled' | 'sso.config.tested',
     provider: string,
     metadata: Record<string, any>,
+    changes?: Record<string, { from: unknown; to: unknown }>,
   ): Promise<void> {
     await this.activity.write({
-      category: 'admin',
+      // Config changes are permission changes (who can sign in, with
+      // which default role) → `security`. The connection test is not.
+      category: action === 'sso.config.tested' ? 'admin' : 'security',
+      severity: action === 'sso.config.tested' ? 'info' : 'warn',
       action,
       entityType: 'org_auth_config',
       entityName: provider,
@@ -336,6 +345,25 @@ export class SsoAdminService {
       actorUserId,
       ipAddress,
       metadata,
+      ...(changes ? { changes: changes as any } : {}),
     });
   }
+}
+
+/**
+ * before → after for the NON-secret SSO config fields. The secret is
+ * represented only by `rotatedSecret` in the metadata — never here.
+ */
+const SSO_AUDITED_FIELDS = ['enabled', 'tenantId', 'clientId', 'allowedDomains', 'defaultRoleId', 'ssoOnly'] as const;
+function diffSsoConfig(
+  before: Partial<Record<(typeof SSO_AUDITED_FIELDS)[number], unknown>> | null,
+  after: Partial<Record<(typeof SSO_AUDITED_FIELDS)[number], unknown>>,
+): Record<string, { from: unknown; to: unknown }> {
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of SSO_AUDITED_FIELDS) {
+    const from = before ? (before[key] ?? null) : null;
+    const to = after[key] ?? null;
+    if (from !== to) changes[key] = { from, to };
+  }
+  return changes;
 }

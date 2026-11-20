@@ -151,6 +151,11 @@ enum ActivityCategory {
   system
   admin
   partner
+  // Permissions round 1 (2026-11-20) — permission / identity changes
+  // (roles, role grants, user role assignment, user create/delete,
+  // password / email / active changes, SSO config). Only Admins can
+  // read these rows in GET /admin/activity-logs.
+  security
 }
 
 enum ActivitySeverity {

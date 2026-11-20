@@ -638,23 +638,31 @@ async function main() {
     `  Seeded ${SYSTEM_ROLES.length} system role groups (isSystem=true, additive mode — ${additiveAdded} new rows added, ${additivePreserved} existing rows preserved, 0 deleted)`,
   );
 
-  // Admin User
+  // Admin User — permissions round 1 (2026-11-20): no hard-coded
+  // password. Created only when the row is missing AND
+  // SEED_ADMIN_PASSWORD (12+ chars) is set; otherwise skipped. The
+  // password is never printed. Mirrors seed-runner.js.
   const adminExists = await prisma.user.findUnique({ where: { email: 'admin@amec.com' } });
   if (!adminExists) {
-    const hashedPassword = await bcrypt.hash('Admin@123', 10);
-    await prisma.user.create({
-      data: {
-        email: 'admin@amec.com',
-        password: hashedPassword,
-        firstName: 'System',
-        lastName: 'Admin',
-        roleId: adminRole.id,
-        userType: 'employee',
-        position: 'System Administrator',
-        isActive: true,
-      },
-    });
-    console.log('  Created default admin user (admin@amec.com / Admin@123)');
+    const seedAdminPassword = process.env.SEED_ADMIN_PASSWORD ?? '';
+    if (seedAdminPassword.length >= 12) {
+      const hashedPassword = await bcrypt.hash(seedAdminPassword, 12);
+      await prisma.user.create({
+        data: {
+          email: 'admin@amec.com',
+          password: hashedPassword,
+          firstName: 'System',
+          lastName: 'Admin',
+          roleId: adminRole.id,
+          userType: 'employee',
+          position: 'System Administrator',
+          isActive: true,
+        },
+      });
+      console.log('  Created default admin user admin@amec.com (password from SEED_ADMIN_PASSWORD)');
+    } else {
+      console.log('  Skipped default admin user: SEED_ADMIN_PASSWORD is not set or shorter than 12 characters');
+    }
   }
 
   console.log('Seed completed!');

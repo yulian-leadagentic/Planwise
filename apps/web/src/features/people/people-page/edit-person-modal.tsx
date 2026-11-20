@@ -55,8 +55,20 @@ export function EditPersonModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { can } = usePermissions();
+  const { can, isAdmin, user: viewer } = usePermissions();
   const isPartner = user.userType === 'partner';
+  // Permissions round 1 (2026-11-20) — protected fields, mirrored from
+  // the server rules on PATCH /users/:id (the server is the authority):
+  //   • access role → Admin only;
+  //   • email, active → Admin or HR (hr:write);
+  //   • department (org unit — widens project access) → Admin, HR or
+  //     org:write;
+  //   • nobody but an Admin changes their own active state or department.
+  const isSelf = viewer?.id === user.id;
+  const canEditRole = isAdmin;
+  const canEditEmail = isAdmin || can('hr', 'write');
+  const canEditActive = isAdmin || (can('hr', 'write') && !isSelf);
+  const canEditOrgUnit = isAdmin || ((can('hr', 'write') || can('org', 'write')) && !isSelf);
   // QA3 round-3 item 3a — cost-rate override entry point.
   const showCostOverride = !isPartner && can('finance', 'read');
   const [showOverrideModal, setShowOverrideModal] = useState(false);
@@ -136,25 +148,33 @@ export function EditPersonModal({
     const errs = validateEdit(form);
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
+    // Protected fields (email / roleId / isActive) are sent only when
+    // they actually changed, so a viewer without the right can still
+    // save the rest of the form.
+    const emailChanged = form.email !== initialForm.email;
+    const roleChanged = form.roleId !== initialForm.roleId;
+    const activeChanged = form.isActive !== initialForm.isActive;
+    const orgUnitChanged = form.orgUnitId !== initialForm.orgUnitId;
     update.mutate({
-      email: form.email,
+      ...(emailChanged ? { email: form.email } : {}),
       firstName: form.firstName,
       lastName: form.lastName,
       firstNameHe: form.firstNameHe || undefined,
       lastNameHe: form.lastNameHe || undefined,
       phone: form.phone || undefined,
-      roleId: Number(form.roleId),
+      ...(roleChanged ? { roleId: Number(form.roleId) } : {}),
       position: form.position || undefined,
       // Phase 4 · Stage 2 follow-up — write `orgUnitId` (OrgUnit is the
       // single source of truth); the legacy `department` field is not
       // sent so we don't accidentally overwrite it. Empty selection
-      // sends null to clear the link.
-      orgUnitId: form.orgUnitId === '' ? null : Number(form.orgUnitId),
+      // sends null to clear the link. Protected field — sent only when
+      // it changed.
+      ...(orgUnitChanged ? { orgUnitId: form.orgUnitId === '' ? null : Number(form.orgUnitId) } : {}),
       companyName: form.companyName || undefined,
       employmentDate: form.employmentDate || undefined,
       employmentEndDate: form.employmentEndDate || undefined,
       dailyStandardHours: form.dailyStandardHours ? Number(form.dailyStandardHours) : undefined,
-      isActive: form.isActive,
+      ...(activeChanged ? { isActive: form.isActive } : {}),
     });
   };
 
@@ -298,10 +318,11 @@ export function EditPersonModal({
             name="email"
             type="email"
             required
+            disabled={!canEditEmail}
             value={form.email}
             error={errors.email}
-            hint={amecDomainWarning ?? undefined}
-            hintTone="warning"
+            hint={canEditEmail ? (amecDomainWarning ?? undefined) : 'Admin or HR only'}
+            hintTone={canEditEmail ? 'warning' : 'muted'}
             onChange={(e) => patch('email', e.target.value)}
           />
           <div className="grid grid-cols-2 gap-4">
@@ -309,6 +330,8 @@ export function EditPersonModal({
               label="Access Role (primary · legacy)"
               name="roleId"
               required
+              disabled={!canEditRole}
+              hint={canEditRole ? undefined : 'Admin only'}
               value={form.roleId}
               error={errors.roleId}
               onChange={(e) => patch('roleId', e.target.value)}
@@ -329,9 +352,10 @@ export function EditPersonModal({
               writes to `user_roles` via /admin/users/:id/roles. Runtime
               permissions = OR union across every chip. "Access Role
               (primary · legacy)" above is purely a display chip — it
-              never gates permissions on its own. Admin-only (admin:
-              write) — hidden entirely for other viewers. */}
-          {can('admin', 'write') && (
+              never gates permissions on its own. Admin-only — the
+              server requires an Admin (not just admin:write) since
+              permissions round 1; hidden entirely for other viewers. */}
+          {isAdmin && (
             <RolesChipsField
               userId={user.id}
               allRoles={roles}
@@ -366,6 +390,14 @@ export function EditPersonModal({
             <SelectField
               label="Department"
               name="orgUnitId"
+              disabled={!canEditOrgUnit}
+              hint={
+                canEditOrgUnit
+                  ? undefined
+                  : isSelf && !isAdmin && (can('hr', 'write') || can('org', 'write'))
+                    ? 'Admin only for your own account'
+                    : 'Admin, HR or org admin only'
+              }
               value={form.orgUnitId}
               onChange={(e) => patch('orgUnitId', e.target.value === '' ? '' : Number(e.target.value))}
             >
@@ -444,14 +476,25 @@ export function EditPersonModal({
               onChange={(e) => patch('companyName', e.target.value)}
             />
           )}
-          <label className="flex items-center gap-2 cursor-pointer pt-1">
+          <label
+            className={cn(
+              'flex items-center gap-2 pt-1',
+              canEditActive ? 'cursor-pointer' : 'cursor-not-allowed opacity-60',
+            )}
+          >
             <input
               type="checkbox"
               checked={form.isActive}
+              disabled={!canEditActive}
               onChange={(e) => patch('isActive', e.target.checked)}
               className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-blue-600"
             />
             <span className="text-sm text-slate-700 dark:text-slate-200">Active</span>
+            {!canEditActive && (
+              <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                {isSelf && !isAdmin && can('hr', 'write') ? 'Admin only for your own account' : 'Admin or HR only'}
+              </span>
+            )}
           </label>
         </form>
       </Modal>

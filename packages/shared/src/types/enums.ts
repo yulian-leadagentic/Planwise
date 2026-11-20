@@ -66,6 +66,7 @@ export const ACTIVITY_CATEGORIES = [
   'user',
   'system',
   'admin',
+  'security',
 ] as const;
 export type ActivityCategory = (typeof ACTIVITY_CATEGORIES)[number];
 

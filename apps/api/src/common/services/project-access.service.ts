@@ -4,7 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 /**
  * Centralizes project-scoped authorization. Use this in any service that
  * accepts a project/zone/task ID from a request to make sure the caller
- * is actually a member of that project (or a super-admin).
+ * is actually a member of that project (or an admin).
  *
  * Without this check, any authenticated user with `tasks:read` permission
  * could read another tenant's tasks by guessing IDs (IDOR).
@@ -54,15 +54,19 @@ export class ProjectAccessService {
   }
 
   /**
-   * Returns true for super-admins (roleId === 1) — they can see everything.
+   * Admins see everything. Permissions round 1 (2026-11-20): callers
+   * pass `isAdminUser(request.user)` (the same multi-role definition
+   * the RolesGuard uses) instead of the legacy `roleId === 1`. The
+   * strict `=== true` makes a stale caller that still passes a numeric
+   * roleId fail closed (no bypass) instead of failing open.
    */
-  private isSuperAdmin(roleId?: number | null): boolean {
-    return roleId === 1;
+  private adminBypass(isAdmin: boolean): boolean {
+    return isAdmin === true;
   }
 
   /**
    * Throws ForbiddenException if `userId` is not a member of `projectId`
-   * and is not a super-admin. Throws NotFoundException if the project
+   * and is not an admin. Throws NotFoundException if the project
    * does not exist (or is soft-deleted).
    *
    * If direct membership fails, before throwing we widen the check to
@@ -75,9 +79,9 @@ export class ProjectAccessService {
   async assertProjectAccess(
     userId: number,
     projectId: number,
-    roleId?: number | null,
+    isAdmin: boolean,
   ): Promise<void> {
-    if (this.isSuperAdmin(roleId)) return;
+    if (this.adminBypass(isAdmin)) return;
 
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
@@ -136,9 +140,9 @@ export class ProjectAccessService {
   async assertTaskAccess(
     userId: number,
     taskId: number,
-    roleId?: number | null,
+    isAdmin: boolean,
   ): Promise<number | null> {
-    if (this.isSuperAdmin(roleId)) {
+    if (this.adminBypass(isAdmin)) {
       const t = await this.prisma.task.findFirst({
         where: { id: taskId, deletedAt: null },
         select: { projectId: true },
@@ -163,7 +167,7 @@ export class ProjectAccessService {
       return null;
     }
 
-    await this.assertProjectAccess(userId, task.projectId, roleId);
+    await this.assertProjectAccess(userId, task.projectId, isAdmin);
     return task.projectId;
   }
 
@@ -173,9 +177,9 @@ export class ProjectAccessService {
   async assertZoneAccess(
     userId: number,
     zoneId: number,
-    roleId?: number | null,
+    isAdmin: boolean,
   ): Promise<number> {
-    if (this.isSuperAdmin(roleId)) {
+    if (this.adminBypass(isAdmin)) {
       const z = await this.prisma.zone.findFirst({
         where: { id: zoneId, deletedAt: null },
         select: { projectId: true },
@@ -190,13 +194,13 @@ export class ProjectAccessService {
     });
     if (!zone) throw new NotFoundException('Zone not found');
 
-    await this.assertProjectAccess(userId, zone.projectId, roleId);
+    await this.assertProjectAccess(userId, zone.projectId, isAdmin);
     return zone.projectId;
   }
 
   /**
-   * Returns the set of project IDs the user can access. Super-admins
-   * get an empty set (callers should treat empty + super-admin as "all").
+   * Returns the set of project IDs the user can access. Admins get
+   * `{ all: true, projectIds: [] }` (callers treat that as "all").
    * Used for filtering list endpoints (e.g. execution-board).
    *
    * Extended for hierarchical access: after the direct member/led
@@ -216,9 +220,9 @@ export class ProjectAccessService {
    */
   async getAccessibleProjectIds(
     userId: number,
-    roleId?: number | null,
+    isAdmin: boolean,
   ): Promise<{ all: boolean; projectIds: number[] }> {
-    if (this.isSuperAdmin(roleId)) return { all: true, projectIds: [] };
+    if (this.adminBypass(isAdmin)) return { all: true, projectIds: [] };
 
     const memberships = await this.prisma.projectMember.findMany({
       where: { userId },

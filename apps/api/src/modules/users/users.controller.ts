@@ -17,6 +17,7 @@ import { UserSenioritiesService, AddSeniorityEntryDto, UpdateSeniorityEntryDto }
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -32,11 +33,17 @@ export class UsersController {
     private readonly seniorityHistory: UserSenioritiesService,
   ) {}
 
+  /**
+   * Permissions round 1 (2026-11-20) — Admin or HR (`hr:write`) only;
+   * `partners:write` alone is no longer enough. A non-admin may only
+   * assign a non-admin role. The check lives in UsersService.create
+   * (manual, not `@RequirePermissions`: HR roles hold `hr` but not
+   * `partners`, and `hr` is not bypassable for Admins in the guard).
+   */
   @Post()
-  @RequirePermissions({ module: 'partners', action: 'write' })
-  @ApiOperation({ summary: 'Create a new user' })
-  create(@Body() dto: CreateUserDto) {
-    return this.usersService.create(dto);
+  @ApiOperation({ summary: 'Create a new user (Admin or HR only)' })
+  create(@Body() dto: CreateUserDto, @CurrentUser() actor: any) {
+    return this.usersService.create(dto, actor);
   }
 
   /**
@@ -76,18 +83,26 @@ export class UsersController {
     return this.usersService.findOne(id);
   }
 
+  /**
+   * Permissions round 1 (2026-11-20) — open to Admin, `partners:write`
+   * or `hr:write` (checked in UsersService.update, since decorator
+   * entries are ANDed). Protected fields, enforced there too:
+   * `password` / `roleId` → Admin only; `email` / `isActive` → Admin or
+   * HR; `orgUnitId` → Admin, HR or `org:write`; nobody changes their
+   * own role, active state or org unit unless Admin.
+   * Sending a protected field with its stored value is allowed.
+   */
   @Patch(':id')
-  @RequirePermissions({ module: 'partners', action: 'write' })
-  @ApiOperation({ summary: 'Update a user' })
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(id, dto);
+  @ApiOperation({ summary: 'Update a user (protected fields: password/roleId Admin only, email/isActive Admin or HR)' })
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto, @CurrentUser() actor: any) {
+    return this.usersService.update(id, dto, actor);
   }
 
+  /** Admin or HR only; nobody deletes their own account. Hard delete. */
   @Delete(':id')
-  @RequirePermissions({ module: 'partners', action: 'delete' })
-  @ApiOperation({ summary: 'Soft delete a user' })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.usersService.remove(id);
+  @ApiOperation({ summary: 'Delete a user (Admin or HR only)' })
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() actor: any) {
+    return this.usersService.remove(id, actor);
   }
 
   // ─── Seniority history (date-effective) ────────────────────────────

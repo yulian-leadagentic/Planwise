@@ -3,7 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiBody } from '@nestjs/swagger';
 
 import { ExecutionPlanningService } from './execution-planning.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
@@ -29,8 +29,8 @@ export class ExecutionPlanningController {
     @Query('from') from: string,
     @Query('to') to: string,
   ) {
-    // Only super-admins can see arbitrary users' workload; everyone else only their own
-    if (user.id !== userId && user.roleId !== 1) {
+    // Only admins can see arbitrary users' workload; everyone else only their own
+    if (user.id !== userId && !isAdminUser(user)) {
       throw new ForbiddenException('You can only view your own workload');
     }
     return this.eps.getUserWorkload(userId, from, to);
@@ -52,7 +52,7 @@ export class ExecutionPlanningController {
     @Query('from') from: string,
     @Query('to') to: string,
   ) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.eps.getProjectWorkload(projectId, from, to);
   }
 
@@ -66,7 +66,7 @@ export class ExecutionPlanningController {
     @Param('id', ParseIntPipe) projectId: number,
     @Query('targetDate') targetDate?: string,
   ) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.eps.calculateFeasibility(projectId, targetDate);
   }
 
@@ -74,7 +74,7 @@ export class ExecutionPlanningController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Calculate project estimated cost from employee rates × logged hours' })
   async getEstimatedCost(@CurrentUser() user: any, @Param('id', ParseIntPipe) projectId: number) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.eps.calculateEstimatedCost(projectId);
   }
 
@@ -84,7 +84,7 @@ export class ExecutionPlanningController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get project weighted progress' })
   async getProgress(@CurrentUser() user: any, @Param('id', ParseIntPipe) projectId: number) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.eps.getProjectProgress(projectId);
   }
 
@@ -178,7 +178,7 @@ export class ExecutionPlanningController {
     @Query('myDeptOnly') myDeptOnly?: string,
   ) {
     return this.eps.getOperationsDashboard(
-      { id: user.id, roleId: user.roleId ?? null },
+      { id: user.id, isAdmin: isAdminUser(user) },
       myDeptOnly,
     );
   }
@@ -196,7 +196,7 @@ export class ExecutionPlanningController {
     @Query('myDeptOnly') myDeptOnly?: string,
   ) {
     return this.eps.getBimLeaderDashboard(
-      { id: user.id, roleId: user.roleId ?? null },
+      { id: user.id, isAdmin: isAdminUser(user) },
       myDeptOnly,
     );
   }
@@ -212,7 +212,7 @@ export class ExecutionPlanningController {
     @Query('myDeptOnly') myDeptOnly?: string,
   ) {
     return this.eps.getActiveProjectsDashboard(
-      { id: user.id, roleId: user.roleId ?? null },
+      { id: user.id, isAdmin: isAdminUser(user) },
       myDeptOnly,
     );
   }
@@ -229,7 +229,7 @@ export class ExecutionPlanningController {
     @Query('take') take?: string,
   ) {
     return this.eps.getExecutiveReview(
-      { id: user.id, roleId: user.roleId ?? null },
+      { id: user.id, isAdmin: isAdminUser(user) },
       myDeptOnly,
       take,
     );
@@ -250,7 +250,7 @@ export class ExecutionPlanningController {
     @Body('content') content?: string,
   ) {
     return this.eps.upsertTaskOpsNote(
-      { id: user.id, roleId: user.roleId ?? null },
+      { id: user.id, isAdmin: isAdminUser(user) },
       taskId,
       content ?? '',
     );

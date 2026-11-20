@@ -2,7 +2,7 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ExecutionBoardService } from './execution-board.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 
@@ -23,7 +23,7 @@ export class ExecutionBoardController {
   ) {
     return this.service.getData(
       user.id,
-      user.roleId,
+      isAdminUser(user),
       projectId ? +projectId : undefined,
       serviceId ? +serviceId : undefined,
     );

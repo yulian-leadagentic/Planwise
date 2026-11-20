@@ -24,7 +24,10 @@ import * as Sentry from '@sentry/node';
  */
 function callerCanReadFinance(user: any): boolean {
   if (!user) return false;
-  if (user.roleId === 1) return true;
+  // Permissions round 1 (2026-11-20) — decision 2: `finance:read` is the
+  // ONLY thing that grants seeing money. No admin shortcut here (the
+  // legacy `roleId === 1` bypass is gone); an Admin who needs finance
+  // data holds the explicit grant like everyone else.
   const mods: any[] = user.roleModules ?? [];
   return mods.some((rm) => {
     const route = rm.module?.route ?? '';
@@ -383,10 +386,10 @@ export class ProjectsService {
     return project;
   }
 
-  async findAll(query: QueryProjectsDto, userId?: number, roleId?: number | null, caller?: any) {
+  async findAll(query: QueryProjectsDto, userId?: number, isAdmin = false, caller?: any) {
     const where: Prisma.ProjectWhereInput = {};
 
-    // Project visibility scope. Admins (roleId=1) see everything; everyone
+    // Project visibility scope. Admins (isAdminUser) see everything; everyone
     // else only sees projects they're a member/leader/creator of. Same
     // accessor the execution board uses, so the two views agree. Falling
     // back to "show all" when userId isn't passed keeps backwards-compat
@@ -394,7 +397,7 @@ export class ProjectsService {
     const hasFinance = callerCanReadFinance(caller);
 
     if (userId != null) {
-      const accessible = await this.access.getAccessibleProjectIds(userId, roleId);
+      const accessible = await this.access.getAccessibleProjectIds(userId, isAdmin);
       if (!accessible.all) {
         // No accessible projects → return empty result immediately rather
         // than passing `{ in: [] }` which Prisma treats as "match nothing"
@@ -1577,7 +1580,7 @@ export class ProjectsService {
    */
   async getAttachedContacts(
     userId?: number,
-    roleId?: number | null,
+    isAdmin = false,
     _caller?: any,
   ): Promise<
     Array<{
@@ -1610,7 +1613,7 @@ export class ProjectsService {
     // have access to — same accessor used by findAll and getTeam.
     let projectIdFilter: number[] | 'all' = 'all';
     if (userId != null) {
-      const accessible = await this.access.getAccessibleProjectIds(userId, roleId);
+      const accessible = await this.access.getAccessibleProjectIds(userId, isAdmin);
       if (!accessible.all) {
         if (accessible.projectIds.length === 0) return [];
         projectIdFilter = accessible.projectIds;

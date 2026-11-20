@@ -644,16 +644,16 @@ export class ExecutionPlanningService {
   // and optionally narrows to the caller's department when
   // myDeptOnly=true.
 
-  private resolveOpsScope(user: { id: number; roleId?: number | null }, myDeptOnlyRaw?: string) {
+  private resolveOpsScope(user: { id: number; isAdmin: boolean }, myDeptOnlyRaw?: string) {
     const scopeToMyDept = String(myDeptOnlyRaw ?? '').toLowerCase() === 'true';
-    return { scopeToMyDept, userId: user.id, roleId: user.roleId ?? null };
+    return { scopeToMyDept, userId: user.id, isAdmin: user.isAdmin };
   }
 
-  async getOperationsDashboard(user: { id: number; roleId?: number | null }, myDeptOnlyRaw?: string) {
+  async getOperationsDashboard(user: { id: number; isAdmin: boolean }, myDeptOnlyRaw?: string) {
     const { scopeToMyDept } = this.resolveOpsScope(user, myDeptOnlyRaw);
     const now = new Date();
 
-    const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
+    const acc = await this.access.getAccessibleProjectIds(user.id, user.isAdmin);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
 
     // Retire-User.department Step 3/3 (2026-09-28) — free-text
@@ -993,11 +993,11 @@ export class ExecutionPlanningService {
   //
   // myDeptOnly narrows to projects with departmentId matching the
   // caller's Department. Same shape as the ops dashboard's dept filter.
-  async getBimLeaderDashboard(user: { id: number; roleId?: number | null }, myDeptOnlyRaw?: string) {
+  async getBimLeaderDashboard(user: { id: number; isAdmin: boolean }, myDeptOnlyRaw?: string) {
     const { scopeToMyDept } = this.resolveOpsScope(user, myDeptOnlyRaw);
     const now = new Date();
 
-    const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
+    const acc = await this.access.getAccessibleProjectIds(user.id, user.isAdmin);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
 
     // Retire-User.department Step 3/3 (2026-09-28) — with the string
@@ -1169,13 +1169,13 @@ export class ExecutionPlanningService {
   //   • flag — ACTIVE / DORMANT
   //
   // myDeptOnly narrows scope to projects with a matching department.
-  async getActiveProjectsDashboard(user: { id: number; roleId?: number | null }, myDeptOnlyRaw?: string) {
+  async getActiveProjectsDashboard(user: { id: number; isAdmin: boolean }, myDeptOnlyRaw?: string) {
     const { scopeToMyDept } = this.resolveOpsScope(user, myDeptOnlyRaw);
     const now = new Date();
     const in30 = new Date(now.getTime() + 30 * 86400000);
     const back14 = new Date(now.getTime() - 14 * 86400000);
 
-    const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
+    const acc = await this.access.getAccessibleProjectIds(user.id, user.isAdmin);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
 
     // See getBimLeaderDashboard's note on the Step 3/3 simplification.
@@ -1349,11 +1349,11 @@ export class ExecutionPlanningService {
   // Pagination is applied server-side: capped at `take` rows (default
   // 200), the total available count is returned so the UI can show a
   // "showing first N of M" affordance rather than silently truncating.
-  async getExecutiveReview(user: { id: number; roleId?: number | null }, myDeptOnlyRaw?: string, takeRaw?: string) {
+  async getExecutiveReview(user: { id: number; isAdmin: boolean }, myDeptOnlyRaw?: string, takeRaw?: string) {
     const { scopeToMyDept } = this.resolveOpsScope(user, myDeptOnlyRaw);
     const take = Math.min(500, Math.max(50, Number(takeRaw ?? 200) || 200));
 
-    const acc = await this.access.getAccessibleProjectIds(user.id, user.roleId);
+    const acc = await this.access.getAccessibleProjectIds(user.id, user.isAdmin);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
 
     // See getBimLeaderDashboard — Step 3/3 orgUnitId-only scope.
@@ -1467,9 +1467,9 @@ export class ExecutionPlanningService {
   // exists yet — POST { content } → row created or updated in place.
   // Empty content deletes the row.
 
-  async upsertTaskOpsNote(user: { id: number; roleId?: number | null }, taskId: number, content: string) {
+  async upsertTaskOpsNote(user: { id: number; isAdmin: boolean }, taskId: number, content: string) {
     // Access check — reuse ProjectAccessService for task/project scope.
-    await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    await this.access.assertTaskAccess(user.id, taskId, user.isAdmin);
     const trimmed = (content ?? '').trim();
     if (!trimmed) {
       // Empty = clear the note.

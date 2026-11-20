@@ -16,7 +16,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { ProjectsService } from './projects.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
@@ -51,7 +51,7 @@ export class ProjectsController {
   @ApiPaginated()
   @ApiOperation({ summary: 'List projects with filters and pagination' })
   findAll(@CurrentUser() user: any, @Query() query: QueryProjectsDto) {
-    return this.projectsService.findAll(query, user.id, user.roleId, user);
+    return this.projectsService.findAll(query, user.id, isAdminUser(user), user);
   }
 
   // Static route MUST precede `:id` so it isn't swallowed by the param route.
@@ -71,7 +71,7 @@ export class ProjectsController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Projects with their attached contacts, grouped for the By-Project view' })
   async getAttachedContacts(@CurrentUser() user: any) {
-    return this.projectsService.getAttachedContacts(user.id, user.roleId, user);
+    return this.projectsService.getAttachedContacts(user.id, isAdminUser(user), user);
   }
 
   @Get(':id')
@@ -184,7 +184,7 @@ export class ProjectsController {
     // below so both project-scoped participation reads apply the same
     // access gate. `getTeam` previously relied on findOne's 404-only
     // check and would leak team composition to any authenticated user.
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.projectsService.getTeam(projectId);
   }
 
@@ -209,7 +209,7 @@ export class ProjectsController {
     // creates the participation row as a side effect).
     @Query('roleCode') roleCode?: string,
   ) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.projectsService.getAssigneeCandidates(projectId, roleCode);
   }
 

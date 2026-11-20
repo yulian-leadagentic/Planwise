@@ -367,8 +367,16 @@ export function PeoplePage() {
   // inconsistent — the backend is the authority anyway and will reject
   // an unauthorized PATCH. So we always show the row actions and let
   // the server decide. (T-fix, 2026-06-29.)
-  void isAdmin; void can; // permissions hook retained for future use
   const canEditPeople = true;
+  // Permissions round 1 (2026-11-20) — owner decision 6: only Admin and
+  // HR add (and remove) employees; access role and password are Admin
+  // only; active state is Admin or HR. These mirror the server rules on
+  // POST / PATCH /users (the server is the authority).
+  const canManageEmployees = isAdmin || can('hr', 'write');
+  const canChangeActive = isAdmin || can('hr', 'write');
+  // Department = home org unit, which widens project access → Admin,
+  // HR or org:write (the server also blocks changing your own).
+  const canChangeOrgUnit = isAdmin || can('hr', 'write') || can('org', 'write');
   // QA3 round-3 item 7b — finance gate for the effective ₪/h column.
   // Non-finance users don't see the rate at all (column hidden).
   const showEffectiveRate = can('finance', 'read');
@@ -443,7 +451,7 @@ export function PeoplePage() {
       // the cell when the row hasn't been migrated yet.
       isPartners ? [] : orgUnits,
       isPartners ? [] : seniorityLevels,
-      isPartners
+      isPartners || !canChangeOrgUnit
         ? undefined
         : (userId: number, orgUnitId: number | null) => updateDepartment.mutate({ userId, orgUnitId }),
       isPartners
@@ -452,7 +460,7 @@ export function PeoplePage() {
       // People UX U2 — deactivate is destructive (blocks login), so it
       // pops a red danger confirm naming the person. Reactivate has no
       // destructive effect and stays a one-click toggle.
-      isPartners
+      isPartners || !canChangeActive
         ? undefined
         : async (userId: number, isActive: boolean) => {
             if (!isActive) {
@@ -472,8 +480,11 @@ export function PeoplePage() {
           },
       // QA3 round-3 item 7b — finance-gated ₪/h column.
       showEffectiveRate,
+      // Permissions round 1 — inline role select + reset password are
+      // Admin only.
+      { canChangeRole: isAdmin, canResetPassword: isAdmin },
     ),
-    [isPartners, roles, canEditPeople, savingUserId, orgUnits, seniorityLevels, showEffectiveRate, users, confirm],
+    [isPartners, roles, canEditPeople, savingUserId, orgUnits, seniorityLevels, showEffectiveRate, users, confirm, isAdmin, canChangeActive, canChangeOrgUnit],
   );
 
   // Status filter: this is the ONLY page in the app that legitimately
@@ -497,10 +508,12 @@ export function PeoplePage() {
         title="Employees"
         description="Employees with login accounts — manage details, roles and access"
         actions={
-          <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white">
-            <Plus className="h-4 w-4" />
-            Add Person
-          </button>
+          canManageEmployees ? (
+            <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white">
+              <Plus className="h-4 w-4" />
+              Add Person
+            </button>
+          ) : undefined
         }
       />
 
@@ -600,7 +613,7 @@ export function PeoplePage() {
       </div>
 
       {/* Create Person Modal — People UX M1: on the shared Modal shell. */}
-      {showCreate && (
+      {showCreate && canManageEmployees && (
         <Modal
           open
           onClose={() => setShowCreate(false)}

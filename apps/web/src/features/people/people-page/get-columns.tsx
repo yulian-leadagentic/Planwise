@@ -37,6 +37,10 @@ export function getColumns(
   // column. Falsy hides the column entirely (default). Also hidden on
   // the Partners tab regardless.
   showEffectiveRate = false,
+  // Permissions round 1 (2026-11-20) — Admin-only row affordances. The
+  // role cell falls back to plain text and the reset-password icon is
+  // hidden when false (the server rejects those writes anyway).
+  access: { canChangeRole: boolean; canResetPassword: boolean } = { canChangeRole: true, canResetPassword: true },
 ): ColumnDef<UserListItem, unknown>[] {
   const cols: ColumnDef<UserListItem, unknown>[] = [
     {
@@ -266,7 +270,7 @@ export function getColumns(
       cell: ({ row }) => {
         const user = row.original;
         const currentRoleId = (user as any).roleId;
-        if (!canEdit) {
+        if (!canEdit || !access.canChangeRole) {
           return <span className="text-sm">{user.roleName ?? '—'}</span>;
         }
         const isSaving = savingUserId === user.id;
@@ -380,14 +384,16 @@ export function getColumns(
               <Coins className="h-3.5 w-3.5" />
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => onResetPassword(row.original)}
-            className="p-1.5 rounded hover:bg-amber-50 text-slate-400 dark:text-slate-500 hover:text-amber-600"
-            title="Reset password"
-          >
-            <KeyRound className="h-3.5 w-3.5" />
-          </button>
+          {access.canResetPassword && (
+            <button
+              type="button"
+              onClick={() => onResetPassword(row.original)}
+              className="p-1.5 rounded hover:bg-amber-50 text-slate-400 dark:text-slate-500 hover:text-amber-600"
+              title="Reset password"
+            >
+              <KeyRound className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
       ),
     });

@@ -15,7 +15,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { ZonesService } from './zones.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { CreateZoneDto } from './dto/create-zone.dto';
@@ -36,7 +36,7 @@ export class ZonesController {
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Create a new zone' })
   async create(@CurrentUser() user: any, @Body() dto: CreateZoneDto) {
-    await this.access.assertProjectAccess(user.id, dto.projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, dto.projectId, isAdminUser(user));
     return this.zonesService.create(dto);
   }
 
@@ -44,7 +44,7 @@ export class ZonesController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'List zones for a project (flat list)' })
   async findAll(@CurrentUser() user: any, @Query('projectId', ParseIntPipe) projectId: number) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.zonesService.findAll(projectId);
   }
 
@@ -52,7 +52,7 @@ export class ZonesController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get zone tree for a project (nested)' })
   async findTree(@CurrentUser() user: any, @Param('projectId', ParseIntPipe) projectId: number) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.zonesService.findTree(projectId);
   }
 
@@ -60,7 +60,7 @@ export class ZonesController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get a single zone' })
   async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
-    await this.access.assertZoneAccess(user.id, id, user.roleId);
+    await this.access.assertZoneAccess(user.id, id, isAdminUser(user));
     return this.zonesService.findOne(id);
   }
 
@@ -68,7 +68,7 @@ export class ZonesController {
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Update a zone' })
   async update(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateZoneDto) {
-    await this.access.assertZoneAccess(user.id, id, user.roleId);
+    await this.access.assertZoneAccess(user.id, id, isAdminUser(user));
     return this.zonesService.update(id, dto);
   }
 
@@ -76,7 +76,7 @@ export class ZonesController {
   @RequirePermissions({ module: 'projects', action: 'delete' })
   @ApiOperation({ summary: 'Soft delete a zone' })
   async remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
-    await this.access.assertZoneAccess(user.id, id, user.roleId);
+    await this.access.assertZoneAccess(user.id, id, isAdminUser(user));
     return this.zonesService.remove(id);
   }
 
@@ -88,8 +88,8 @@ export class ZonesController {
     @Param('id', ParseIntPipe) id: number,
     @Body('newParentId', ParseIntPipe) newParentId: number,
   ) {
-    await this.access.assertZoneAccess(user.id, id, user.roleId);
-    await this.access.assertZoneAccess(user.id, newParentId, user.roleId);
+    await this.access.assertZoneAccess(user.id, id, isAdminUser(user));
+    await this.access.assertZoneAccess(user.id, newParentId, isAdminUser(user));
     return this.zonesService.copyStructure(id, newParentId);
   }
 
@@ -97,7 +97,7 @@ export class ZonesController {
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Explode typical zone into individual zones' })
   async explodeTypical(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
-    await this.access.assertZoneAccess(user.id, id, user.roleId);
+    await this.access.assertZoneAccess(user.id, id, isAdminUser(user));
     return this.zonesService.explodeTypical(id);
   }
 
@@ -111,9 +111,9 @@ export class ZonesController {
     // refuses a zone that belongs to another project than dto.projectId.
     // Project-root target: project access directly.
     if (dto.zoneId != null) {
-      await this.access.assertZoneAccess(user.id, dto.zoneId, user.roleId);
+      await this.access.assertZoneAccess(user.id, dto.zoneId, isAdminUser(user));
     } else {
-      await this.access.assertProjectAccess(user.id, dto.projectId, user.roleId);
+      await this.access.assertProjectAccess(user.id, dto.projectId, isAdminUser(user));
     }
     return this.zonesService.applyTaskTemplateToTarget(
       { projectId: dto.projectId, zoneId: dto.zoneId ?? null },
@@ -136,7 +136,7 @@ export class ZonesController {
     @Body('templateId', ParseIntPipe) templateId: number,
     @CurrentUser() user: any,
   ) {
-    await this.access.assertZoneAccess(user.id, id, user.roleId);
+    await this.access.assertZoneAccess(user.id, id, isAdminUser(user));
     return this.zonesService.applyTaskTemplate(id, templateId, user.id);
   }
 
@@ -148,7 +148,7 @@ export class ZonesController {
     @Body('newName') newName: string,
     @CurrentUser() user: any,
   ) {
-    await this.access.assertZoneAccess(user.id, id, user.roleId);
+    await this.access.assertZoneAccess(user.id, id, isAdminUser(user));
     return this.zonesService.duplicateZone(id, newName, user.id);
   }
 
@@ -159,7 +159,7 @@ export class ZonesController {
     @Body() body: { projectId: number; templateId: number; zoneName?: string },
     @CurrentUser() user: any,
   ) {
-    await this.access.assertProjectAccess(user.id, body.projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, body.projectId, isAdminUser(user));
     return this.zonesService.applyProjectTemplate(body.projectId, body.templateId, user.id, body.zoneName);
   }
 
@@ -172,7 +172,7 @@ export class ZonesController {
   ) {
     if (!Array.isArray(body?.items)) return { message: 'no items' };
     for (const item of body.items) {
-      await this.access.assertZoneAccess(user.id, item.id, user.roleId);
+      await this.access.assertZoneAccess(user.id, item.id, isAdminUser(user));
     }
     return this.zonesService.batchReorder(body.items);
   }

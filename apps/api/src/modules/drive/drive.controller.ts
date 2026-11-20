@@ -26,7 +26,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
@@ -78,7 +78,7 @@ export class DriveController {
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
   ) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.drive.ensureProjectFolder(projectId);
   }
 
@@ -91,7 +91,7 @@ export class DriveController {
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) zoneId: number,
   ) {
-    await this.access.assertZoneAccess(user.id, zoneId, user.roleId);
+    await this.access.assertZoneAccess(user.id, zoneId, isAdminUser(user));
     return this.drive.ensureZoneFolder(zoneId);
   }
 
@@ -109,7 +109,7 @@ export class DriveController {
       select: { projectId: true },
     });
     if (!del) throw new NotFoundException('Deliverable not found');
-    await this.access.assertProjectAccess(user.id, del.projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, del.projectId, isAdminUser(user));
     return this.drive.ensureDeliverableFolder(deliverableId);
   }
 
@@ -123,7 +123,7 @@ export class DriveController {
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
   ) {
-    await this.access.assertProjectAccess(user.id, projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return (await this.drive.getFolderLink('project', projectId)) ?? null;
   }
 
@@ -145,7 +145,7 @@ export class DriveController {
     if (!dto?.driveUrl || dto.driveUrl.trim().length === 0) {
       throw new BadRequestException('driveUrl is required');
     }
-    const projectId = await this.access.assertTaskAccess(user.id, taskId, user.roleId);
+    const projectId = await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     if (projectId == null) {
       // Personal task (no projectId). We don't support Drive attach on
       // personal tasks yet — needs a per-user Drive config we haven't
@@ -184,7 +184,7 @@ export class DriveController {
       select: { projectId: true },
     });
     if (!del) throw new NotFoundException('Deliverable not found');
-    await this.access.assertProjectAccess(user.id, del.projectId, user.roleId);
+    await this.access.assertProjectAccess(user.id, del.projectId, isAdminUser(user));
     return this.drive.attachDriveFile({
       projectId: del.projectId,
       taskId: null,
