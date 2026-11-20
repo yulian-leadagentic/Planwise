@@ -5,6 +5,7 @@ import { withQueryTimeout } from '../../common/query-timeout';
 import { LIVE_PREDECESSOR_EDGE } from '../../common/task-dependency-filters';
 import { extractServiceMarker, resolvePhasesByMarkerNames } from './marker-phase-resolver';
 import { createGoverningTargetDateLookup } from '../scheduling/target-scope.util';
+import { omitKeys, PLANNING_BUDGET_SUMMARY_MONEY_KEYS } from '../../common/finance/finance-access';
 
 /**
  * QA5 UI-15 — identity key for the typical-rank cache. Tasks don't
@@ -20,6 +21,34 @@ export function taskIdentityKey(name: string | null | undefined): string {
     .toLowerCase()
     .replace(/\s+/g, ' ');
   return `name:${normalized}`;
+}
+
+const PLANNING_TASK_MONEY_KEYS = ['budgetAmount', 'actualCost', 'actualCostCurrency'] as const;
+
+/**
+ * Permissions round 2 (B-07) — the planning-data payload for a caller
+ * without `finance:read`. Strips the money that uses ambiguous names
+ * (`project.budget`, `budgetSummary.totalAmount/projectBudget/remaining/
+ * remainingPct`) plus the per-task money (`budgetAmount`, `actualCost`,
+ * `actualCostCurrency`, assignee `hourlyRate`) so the endpoint is safe
+ * on its own, not only behind the global interceptor. Hours
+ * (`budgetHours`, `loggedMinutes`, `budgetSummary.totalHours`, …) stay.
+ * Pure — never mutates.
+ */
+export function redactPlanningMoney<T extends Record<string, any>>(data: T): T {
+  if (!data || typeof data !== 'object') return data;
+  const out: Record<string, any> = { ...data };
+  if (out.project) out.project = omitKeys(out.project, ['budget']);
+  if (out.budgetSummary) out.budgetSummary = omitKeys(out.budgetSummary, PLANNING_BUDGET_SUMMARY_MONEY_KEYS);
+  if (Array.isArray(out.tasks)) {
+    out.tasks = out.tasks.map((t: any) => {
+      const task = omitKeys(t, PLANNING_TASK_MONEY_KEYS);
+      return Array.isArray(task?.assignees)
+        ? { ...task, assignees: omitKeys(task.assignees, ['hourlyRate']) }
+        : task;
+    });
+  }
+  return out as T;
 }
 
 @Injectable()

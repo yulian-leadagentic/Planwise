@@ -13,6 +13,7 @@ import { TimeoutInterceptor } from './common/interceptors/timeout.interceptor';
 import { SlowRequestInterceptor } from './common/interceptors/slow-request.interceptor';
 import { RequestLifecycleInterceptor } from './common/interceptors/request-lifecycle.interceptor';
 import { SentryContextInterceptor } from './common/interceptors/sentry-context.interceptor';
+import { FinanceRedactionInterceptor } from './common/interceptors/finance-redaction.interceptor';
 import { startWatchdog } from './common/watchdog';
 import { startWedgeKillswitch } from './common/wedge-killswitch';
 import { startVitalsLogger } from './common/vitals';
@@ -94,10 +95,15 @@ async function bootstrap() {
   // isolation scope — placed early so anything captured downstream (by a
   // service's Sentry.captureException or by HttpExceptionFilter) has the
   // request context already pinned.
+  // FinanceRedactionInterceptor (permissions round 2) sits OUTSIDE
+  // ResponseInterceptor: interceptors unwind inner-first, so its map runs
+  // on the final `{ success, data }` payload and strips every money key
+  // for callers without finance:read (see common/finance/finance-access.ts).
   app.useGlobalInterceptors(
     new RequestLifecycleInterceptor(app.get(Logger)),
     new SlowRequestInterceptor(app.get(Logger)),
     new SentryContextInterceptor(),
+    new FinanceRedactionInterceptor(),
     new ResponseInterceptor(),
     new TimeoutInterceptor(),
   );

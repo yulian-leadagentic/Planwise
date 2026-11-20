@@ -25,6 +25,25 @@ import { StageTransitionService } from '../../common/services/stage-transition.s
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
+import {
+  assertFinanceFieldWrites,
+  canSeeFinance,
+  omitKeys,
+} from '../../common/finance/finance-access';
+
+/**
+ * Permissions round 2 (B-08) — `GET /tasks/:id` includes the whole
+ * project row; `project.budget` is an ambiguous name the global
+ * interceptor does not strip, so it goes here (with the task's own
+ * money, so the endpoint is safe on its own).
+ */
+export function redactTaskMoney<T extends Record<string, any>>(task: T): T {
+  if (!task || typeof task !== 'object') return task;
+  const out: Record<string, any> = omitKeys(task, ['budgetAmount']);
+  if (out.project) out.project = omitKeys(out.project, ['budget', 'estimatedValue']);
+  if (Array.isArray(out.assignees)) out.assignees = omitKeys(out.assignees, ['hourlyRate']);
+  return out as T;
+}
 
 @ApiTags('Tasks')
 @ApiBearerAuth()
@@ -53,6 +72,8 @@ export class TasksController {
       // The service will throw with a clearer message; bail before doing
       // a permission check on undefined.
     }
+    // Permissions round 2 (B-13) — a budget amount on create needs finance:write.
+    await assertFinanceFieldWrites(user, dto, ['budgetAmount'], null);
     return this.tasksService.create(user.id, dto);
   }
 
@@ -98,7 +119,8 @@ export class TasksController {
   @ApiOperation({ summary: 'Get task by ID' })
   async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
     await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
-    return this.tasksService.findOne(id);
+    const task = await this.tasksService.findOne(id);
+    return canSeeFinance(user) ? task : redactTaskMoney(task);
   }
 
   @Patch(':id')
@@ -106,6 +128,11 @@ export class TasksController {
   @ApiOperation({ summary: 'Update a task' })
   async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTaskDto, @CurrentUser() user: any) {
     await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
+    // Permissions round 2 (B-13) — changing budgetAmount needs
+    // finance:write; sending the stored value back unchanged passes.
+    await assertFinanceFieldWrites(user, dto, ['budgetAmount'], () =>
+      this.tasksService.getMoneySnapshot(id),
+    );
     // If status is changing, enforce stage-transition rules
     if (dto.status) {
       const currentTask = await this.tasksService.findOne(id);
@@ -186,6 +213,9 @@ export class TasksController {
     @CurrentUser() user: any,
   ) {
     await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
+    // Permissions round 2 (B-13) — the untyped body can carry the legacy
+    // per-assignment `hourlyRate`; setting one needs finance:write.
+    await assertFinanceFieldWrites(user, body, ['hourlyRate'], null);
     return this.tasksService.addAssignee(taskId, body, user?.id);
   }
 

@@ -22,6 +22,7 @@ import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
+import { assertFinanceAccess } from '../../common/finance/finance-access';
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -110,6 +111,13 @@ export class UsersController {
   // of [startDate, endDate] intervals so the project cost calculation
   // can resolve the seniority that was active when each TimeEntry
   // was logged. The legacy column is auto-synced via the service.
+  //
+  // Permissions round 2 (B-14) — adding / editing / removing an entry
+  // moves the employee's cost tier, so it also needs finance:write
+  // (checked by hand so the Admin bypass on `partners` still applies;
+  // finance itself is never bypassed). The read keeps partners:read —
+  // `seniorityLevel.defaultHourlyCost` in it is removed by the global
+  // finance interceptor for callers without finance:read.
 
   @Get(':id/seniorities')
   @RequirePermissions({ module: 'partners', action: 'read' })
@@ -121,7 +129,12 @@ export class UsersController {
   @Post(':id/seniorities')
   @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: "Add a seniority entry. Open-ended adds auto-close the prior open row at startDate-1." })
-  addSeniority(@Param('id', ParseIntPipe) id: number, @Body() dto: AddSeniorityEntryDto) {
+  addSeniority(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AddSeniorityEntryDto,
+  ) {
+    assertFinanceAccess(user, 'write');
     return this.seniorityHistory.addEntry(id, dto);
   }
 
@@ -129,10 +142,12 @@ export class UsersController {
   @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: 'Update a seniority entry (overlap-checked)' })
   updateSeniority(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) _userId: number,
     @Param('entryId', ParseIntPipe) entryId: number,
     @Body() dto: UpdateSeniorityEntryDto,
   ) {
+    assertFinanceAccess(user, 'write');
     return this.seniorityHistory.updateEntry(entryId, dto);
   }
 
@@ -140,9 +155,11 @@ export class UsersController {
   @RequirePermissions({ module: 'partners', action: 'delete' })
   @ApiOperation({ summary: 'Remove a seniority entry. Auto-syncs the user.seniority_level_id column.' })
   removeSeniority(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) _userId: number,
     @Param('entryId', ParseIntPipe) entryId: number,
   ) {
+    assertFinanceAccess(user, 'write');
     return this.seniorityHistory.removeEntry(entryId);
   }
 }

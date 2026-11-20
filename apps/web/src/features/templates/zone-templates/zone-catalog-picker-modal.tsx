@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { usePermissions } from '@/hooks/use-permissions';
 import { Modal } from '@/components/shared/modal';
 import { inputClass, btnPrimary, btnSecondary } from './constants';
 
@@ -22,6 +23,12 @@ export function ZoneCatalogPickerModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  // Permissions round 2 (B-16 / B-17) — catalog price shown only with
+  // finance:read, copied as a snapshot only with finance:write (the zone
+  // task links to the catalog row, which supplies the live price).
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
+  const canEditFinance = can('finance', 'write');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
@@ -93,7 +100,7 @@ export function ZoneCatalogPickerModal({
           code: ct.code,
           name: ct.name,
           defaultBudgetHours: ct.defaultBudgetHours,
-          defaultBudgetAmount: ct.defaultBudgetAmount,
+          ...(canEditFinance ? { defaultBudgetAmount: ct.defaultBudgetAmount } : {}),
           // DN-ext (2026-10-22) — same catalog-link write as the
           // Deliverable Template picker: store the source catalog
           // TemplateTask id on the new TemplateZoneTask so the Zone
@@ -166,7 +173,9 @@ export function ZoneCatalogPickerModal({
                 <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
                 <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('name')}>Name{sortIcon('name')}</th>
                 <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
-                <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                {showFinance && (
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                )}
                 <th className="px-3 py-2 text-left font-medium">Status</th>
               </tr>
             </thead>
@@ -192,7 +201,9 @@ export function ZoneCatalogPickerModal({
                     <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{task.code || '-'}</td>
                     <td className="px-3 py-2 font-medium">{task.name}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(0) : '-'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                    {showFinance && (
+                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                    )}
                     <td className="px-3 py-2">
                       {alreadyExists && (
                         <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">already added</span>

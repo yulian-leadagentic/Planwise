@@ -4,6 +4,7 @@ import { Trash2, ChevronRight, ChevronDown, X, Copy } from 'lucide-react';
 import { ConfirmDialog } from '@/components/shared/confirm-dialog';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { usePermissions } from '@/hooks/use-permissions';
 
 // ---------------------------------------------------------------------------
 // Service Group Item (expandable, view-only tasks)
@@ -21,6 +22,9 @@ export function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, 
   // Pending per-task delete — drives the ConfirmDialog. null = no dialog open.
   const [pendingDelete, setPendingDelete] = useState<{ id: number; name: string } | null>(null);
   const queryClient = useQueryClient();
+  // Permissions round 2 (B-17) — price total / column only with finance:read.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
   // Per-task delete inside a deliverable-derived service group. The tasks in
   // these groups are root-level template tasks (`template_tasks`), so the
   // correct endpoint is `/templates/tasks/:id` — NOT `/templates/zone-tasks/:id`,
@@ -61,7 +65,8 @@ export function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, 
           </span>
         )}
         <span className="text-xs text-muted-foreground">
-          {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; {totalHours}h &middot; {'\u20AA'}{totalAmount.toLocaleString()}
+          {tasks.length} task{tasks.length !== 1 ? 's' : ''} &middot; {totalHours}h
+          {showFinance && <> &middot; {'\u20AA'}{totalAmount.toLocaleString()}</>}
         </span>
         {!readOnly && <button
           onClick={(e) => { e.stopPropagation(); onDeleteAll(); }}
@@ -79,7 +84,7 @@ export function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, 
                 <th className="px-2 py-1 text-left font-medium">Code</th>
                 <th className="px-2 py-1 text-left font-medium">Name</th>
                 <th className="px-2 py-1 text-right font-medium">Hours</th>
-                <th className="px-2 py-1 text-right font-medium">Amount</th>
+                {showFinance && <th className="px-2 py-1 text-right font-medium">Amount</th>}
                 {/* Action column always present so the per-task delete works
                     on every task row — including tasks shown inside a zone
                     via a referenced template. The delete targets the
@@ -94,7 +99,9 @@ export function ServiceGroupItem({ serviceName, tasks, templateId, onDeleteAll, 
                   <td className="px-2 py-1 font-mono text-muted-foreground">{task.code || '-'}</td>
                   <td className="px-2 py-1">{task.name}</td>
                   <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours)}` : '-'}</td>
-                  <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetAmount != null ? `${'\u20AA'}${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}</td>
+                  {showFinance && (
+                    <td className="px-2 py-1 text-right tabular-nums">{task.defaultBudgetAmount != null ? `${'\u20AA'}${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}</td>
+                  )}
                   <td className="px-2 py-1 text-center">
                     {/* Red at rest (not muted) so the per-task delete reads
                         as an action button instead of disappearing into the

@@ -839,6 +839,14 @@ export class TemplatesService {
     });
   }
 
+  /** Stored price — the write-side finance check compares against it. */
+  async getTaskMoneySnapshot(taskId: number): Promise<{ defaultBudgetAmount: unknown } | null> {
+    return this.prisma.templateTask.findUnique({
+      where: { id: taskId },
+      select: { defaultBudgetAmount: true },
+    });
+  }
+
   async updateTask(taskId: number, body: any) {
     // DN-ext (2026-10-22) — name + default budget are READ-ONLY on
     // template tasks that are linked to a catalog TemplateTask

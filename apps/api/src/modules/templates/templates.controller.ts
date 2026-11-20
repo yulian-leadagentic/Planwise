@@ -8,6 +8,16 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { assertFinanceFieldWrites } from '../../common/finance/finance-access';
+
+/**
+ * Permissions round 2 (B-16) — `defaultBudgetAmount` is the price list:
+ * setting it on a new template task / zone task, or changing it on an
+ * existing one, needs finance:write (an unchanged echo passes). The
+ * read side is the global finance interceptor. `duplicate` copies the
+ * source rows server-side and is not user input, so it is not checked.
+ */
+const TEMPLATE_MONEY_FIELDS = ['defaultBudgetAmount'] as const;
 
 // Map TemplateType → permission sub-module key.
 const TYPE_TO_MODULE: Record<string, string> = {
@@ -87,10 +97,13 @@ export class TemplatesController {
   @Post()
   @RequirePermissions({ module: 'templates', action: 'read' })
   @ApiOperation({ summary: 'Create a template' })
-  create(@CurrentUser() user: any, @Body() body: any) {
+  async create(@CurrentUser() user: any, @Body() body: any) {
     const mod = TYPE_TO_MODULE[body.type ?? 'task_list'] ?? 'templates';
     if (!hasPerm(user, mod, 'write')) {
       throw new ForbiddenException(`Insufficient permissions for ${mod}`);
+    }
+    for (const t of Array.isArray(body?.tasks) ? body.tasks : []) {
+      await assertFinanceFieldWrites(user, t, TEMPLATE_MONEY_FIELDS, null);
     }
     return this.templatesService.create(user.id, body);
   }
@@ -125,13 +138,21 @@ export class TemplatesController {
   @ApiOperation({ summary: 'Add a task to a template' })
   async addTask(@CurrentUser() user: any, @Param('id', ParseIntPipe) templateId: number, @Body() body: any) {
     await this.assertByTemplateId(user, templateId, 'write');
+    await assertFinanceFieldWrites(user, body, TEMPLATE_MONEY_FIELDS, null);
     return this.templatesService.addTask(templateId, body);
   }
 
   @Patch('tasks/:taskId')
   @RequirePermissions({ module: 'templates', action: 'write' })
   @ApiOperation({ summary: 'Update a template task' })
-  updateTask(@Param('taskId', ParseIntPipe) taskId: number, @Body() body: any) {
+  async updateTask(
+    @CurrentUser() user: any,
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Body() body: any,
+  ) {
+    await assertFinanceFieldWrites(user, body, TEMPLATE_MONEY_FIELDS, () =>
+      this.templatesService.getTaskMoneySnapshot(taskId),
+    );
     return this.templatesService.updateTask(taskId, body);
   }
 
@@ -260,7 +281,12 @@ export class TemplatesController {
   @Post('zones/:zoneId/tasks')
   @RequirePermissions({ module: 'templates/zone', action: 'write' })
   @ApiOperation({ summary: 'Add a task to a template zone' })
-  addZoneTask(@Param('zoneId', ParseIntPipe) zoneId: number, @Body() body: any) {
+  async addZoneTask(
+    @CurrentUser() user: any,
+    @Param('zoneId', ParseIntPipe) zoneId: number,
+    @Body() body: any,
+  ) {
+    await assertFinanceFieldWrites(user, body, TEMPLATE_MONEY_FIELDS, null);
     return this.templatesService.addZoneTask(zoneId, body);
   }
 

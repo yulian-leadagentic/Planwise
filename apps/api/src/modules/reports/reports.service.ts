@@ -1,8 +1,32 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { startOfDay, endOfDay, parseISO } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ReportQueryDto } from './dto/report-query.dto';
+import { redactFinanceFields } from '../../common/finance/finance-access';
+
+/**
+ * `/reports/export` types that are cost reports (finance:read only).
+ * Matches every `cost-...` spelling, including ones that would fall
+ * through to the default case.
+ */
+export function isCostExportType(type: string | null | undefined): boolean {
+  return String(type ?? '').trim().toLowerCase().startsWith('cost');
+}
+
+/**
+ * The detailed timesheet for a caller without finance:read: per-row
+ * `cost` / `currency` nulled and the per-currency cost totals emptied
+ * (cost / hours would give each person's hourly rate). Used by the JSON
+ * route and the Excel export alike. Pure, never mutates.
+ */
+export function scrubTimesheetCost<T extends { rows: any[]; totals: Record<string, any> }>(result: T): T {
+  return {
+    ...result,
+    rows: result.rows.map((r: any) => ({ ...r, cost: null, currency: null })),
+    totals: { ...result.totals, byCurrency: [] },
+  };
+}
 
 @Injectable()
 export class ReportsService {
@@ -565,14 +589,33 @@ export class ReportsService {
     });
   }
 
-  async exportReport(type: string, format: 'excel' | 'pdf', query: ReportQueryDto): Promise<Buffer> {
+  /**
+   * `opts.canSeeFinance` (permissions round 2): false drops every money
+   * value from the file: no Cost / Currency columns or cost totals on the
+   * detailed timesheet, finance keys removed from the generic dumps. It
+   * defaults to false so a new caller can't leak money by omission. The
+   * controller refuses cost-* types to non-finance callers before this
+   * runs; the check is repeated here so the service is safe on its own.
+   */
+  async exportReport(
+    type: string,
+    format: 'excel' | 'pdf',
+    query: ReportQueryDto,
+    opts: { canSeeFinance: boolean } = { canSeeFinance: false },
+  ): Promise<Buffer> {
+    if (isCostExportType(type) && !opts.canSeeFinance) {
+      throw new ForbiddenException('Cost reports require finance:read permission.');
+    }
     // The detailed timesheet is the customer-facing export — it gets
     // a purpose-built Excel layout with proper columns, currency
     // formatting, and a totals footer. Other types fall through to
     // the generic "dump every scalar field" path below.
     if (type === 'timesheet-detailed') {
-      const data = await this.timesheetDetailed(query);
-      if (format === 'excel') return this.generateTimesheetDetailedExcel(data);
+      const raw = await this.timesheetDetailed(query);
+      const data = opts.canSeeFinance ? raw : scrubTimesheetCost(raw);
+      if (format === 'excel') {
+        return this.generateTimesheetDetailedExcel(data, { includeCost: opts.canSeeFinance });
+      }
       // PDF is intentionally not implemented server-side for this
       // type — the frontend uses window.print() so the browser handles
       // Hebrew/RTL natively. Reaching this branch is a misuse.
@@ -601,6 +644,10 @@ export class ReportsService {
         data = await this.timesheetByProject(query);
     }
 
+    // Defence in depth for the generic dumps: no money key reaches the
+    // file of a caller without finance:read.
+    if (!opts.canSeeFinance) data = redactFinanceFields(data);
+
     if (format === 'excel') {
       return this.generateExcel(type, data);
     } else {
@@ -617,6 +664,7 @@ export class ReportsService {
    */
   private async generateTimesheetDetailedExcel(
     data: Awaited<ReturnType<typeof this.timesheetDetailed>>,
+    opts: { includeCost: boolean },
   ): Promise<Buffer> {
     const ExcelJS = await import('exceljs');
     const workbook = new ExcelJS.Workbook();
@@ -640,8 +688,13 @@ export class ReportsService {
       { header: 'Deliverable', key: 'deliverable', width: 26 },
       { header: 'Assignment Name', key: 'assignment', width: 30 },
       { header: 'Description', key: 'description', width: 30 },
-      { header: 'Cost', key: 'cost', width: 12 },
-      { header: 'Currency', key: 'currency', width: 10 },
+      // Cost / Currency only for finance:read (permissions round 2, B-02).
+      ...(opts.includeCost
+        ? [
+            { header: 'Cost', key: 'cost', width: 12 },
+            { header: 'Currency', key: 'currency', width: 10 },
+          ]
+        : []),
     ];
 
     // Bold blue header row matching the in-app summary bar color.
@@ -667,15 +720,14 @@ export class ReportsService {
         deliverable: r.deliverable?.name ?? '',
         assignment: r.assignmentName ?? '',
         description: r.description ?? '',
-        cost: r.cost ?? '',
-        currency: r.currency ?? '',
+        ...(opts.includeCost ? { cost: r.cost ?? '', currency: r.currency ?? '' } : {}),
       });
     }
 
     // Number format on the cost + hours columns so the workbook
     // sums correctly when the user adds their own totals.
     sheet.getColumn('hours').numFmt = '0.00';
-    sheet.getColumn('cost').numFmt = '#,##0.00';
+    if (opts.includeCost) sheet.getColumn('cost').numFmt = '#,##0.00';
 
     // Totals footer — one row per currency for the cost; one
     // grand-total row for hours. Bold + light grey background so
@@ -692,7 +744,7 @@ export class ReportsService {
         pattern: 'solid',
         fgColor: { argb: 'FFE2E8F0' }, // slate-200
       };
-      for (const c of data.totals.byCurrency) {
+      for (const c of opts.includeCost ? data.totals.byCurrency : []) {
         const r = sheet.addRow({
           employee: `Total (${c.currency})`,
           hours: c.totalHours,

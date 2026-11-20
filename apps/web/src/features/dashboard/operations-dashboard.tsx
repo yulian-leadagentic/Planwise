@@ -10,6 +10,7 @@ import { TaskDrawer } from '@/features/tasks/task-drawer';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { useNavigateWithReturn } from '@/components/nav/return-route';
 import { cn } from '@/lib/utils';
+import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
 import { WorkloadPanel } from './workload-dashboard';
 import { OpsAvatar, OpsChevron, OpsLoadBar, OpsErrorBanner, opsErrorMessage, OPS_STATUS_CFG, OPS_PRI_COLORS } from './parts/ops-shared';
@@ -52,6 +53,10 @@ type CardFilter = 'overdue' | 'blocked' | 'review' | 'overloaded' | 'available';
 
 export function OperationsDashboardPage() {
   const navWithReturn = useNavigateWithReturn();
+  // Permissions round 2 (B-11) — the API sends budgetPct only to
+  // finance:read callers; render the chip only then (never "NaN%").
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
 
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTab = (searchParams.get('tab') as OpsTab) ?? 'risk';
@@ -440,7 +445,9 @@ export function OperationsDashboardPage() {
                               tasks. Actual labor cost lives on the project
                               detail top row (Cost + Utilization%), which
                               is the surface the QA item asked for. */}
-                          <span className={cn('font-mono tabular-nums font-semibold', project.budgetPct > 85 ? 'text-red-600' : 'text-slate-500 dark:text-slate-400')}>Budget allocated {project.budgetPct}%</span>
+                          {showFinance && project.budgetPct != null && (
+                            <span className={cn('font-mono tabular-nums font-semibold', project.budgetPct > 85 ? 'text-red-600' : 'text-slate-500 dark:text-slate-400')}>Budget allocated {project.budgetPct}%</span>
+                          )}
                           <span className={cn('font-mono tabular-nums font-semibold', project.daysLeft < 0 ? 'text-red-600' : project.daysLeft < 30 ? 'text-amber-600' : 'text-slate-500 dark:text-slate-400')}>
                             {project.daysLeft < 0 ? `${Math.abs(project.daysLeft)}d overdue` : project.daysLeft != null ? `${project.daysLeft}d left` : '—'}
                           </span>

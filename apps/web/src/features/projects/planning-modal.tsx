@@ -991,6 +991,10 @@ export const PLANNING_COLUMNS = [
   { key: 'status',       label: 'Status',       width: '96px' },
 ] as const;
 
+/** Money columns — hidden (header, cells, grid slot, picker) without
+ *  finance:read (permissions round 2; the API strips the values). */
+const FINANCE_PLANNING_COLUMNS: ReadonlySet<string> = new Set(['estCost', 'actualCost']);
+
 interface PlanningColumnsCtx {
   isVisible: (key: string) => boolean;
   /** Inline style with gridTemplateColumns + minWidth, computed
@@ -1060,6 +1064,8 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
   // can deny themselves cost visibility just by unchecking the row.
   const { can } = usePermissions();
   const showFinance = can('finance', 'read');
+  // Permissions round 2 — changing a budget amount needs finance:write.
+  const canEditFinance = can('finance', 'write');
 
   // Project's first-class deliverables (for the inline Deliverable picker).
   const deliverableLookups = useContext(ProjectDeliverablesContext);
@@ -1374,7 +1380,13 @@ function SortableTaskRow({ task, idx, projectId, members, selectedTaskIds, onTog
           without revealing budget or computed cost. */}
       {cols.isVisible('estCost') && (
         showFinance ? (
-          <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
+          canEditFinance ? (
+            <InlineEditCell value={task.budgetAmount} prefix="₪" width="w-16" onSave={(v) => saveField('budgetAmount', v)} />
+          ) : (
+            <span className="text-right font-mono text-[11px] tabular-nums text-slate-700 dark:text-slate-200">
+              {task.budgetAmount != null && Number(task.budgetAmount) !== 0 ? `₪${Number(task.budgetAmount).toLocaleString()}` : '-'}
+            </span>
+          )
         ) : (
           <span className="text-right text-[11px] font-mono text-slate-300 dark:text-slate-600">—</span>
         )
@@ -1624,6 +1636,7 @@ type TaskAddContext = {
 // treats an undefined requiresReview as missing — see bm2 Branch 3).
 function buildTaskAddPayload(
   tplTask: {
+    id?: number;
     code: string; name: string; description?: string | null;
     defaultBudgetHours?: number | string | null;
     defaultBudgetAmount?: number | string | null;
@@ -1638,7 +1651,10 @@ function buildTaskAddPayload(
     name: tplTask.name,
     description: tplTask.description ?? undefined,
     budgetHours: tplTask.defaultBudgetHours != null ? Number(tplTask.defaultBudgetHours) : undefined,
-    budgetAmount: tplTask.defaultBudgetAmount != null ? Number(tplTask.defaultBudgetAmount) : undefined,
+    // Permissions round 2 — the price-list amount is copied by the server
+    // from `sourceTemplateTaskId` (it is hidden from callers without
+    // finance:read, and setting a budget needs finance:write).
+    sourceTemplateTaskId: tplTask.id ?? undefined,
     // Prefer the template task's own service; fall back to the group's.
     serviceTypeId: tplTask.serviceTypeId ?? ctx.serviceTypeId ?? undefined,
     // Same for phase.
@@ -1663,6 +1679,8 @@ function buildTaskAddPayload(
 function CatalogPickerForZone({ context, projectId, onClose, onDone }: {
   context: TaskAddContext; projectId: number; onClose: () => void; onDone: () => void;
 }) {
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
@@ -1739,7 +1757,7 @@ function CatalogPickerForZone({ context, projectId, onClose, onDone }: {
                 <th className="px-3 py-2 text-left font-medium">Code</th>
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-right font-medium">Hours</th>
-                <th className="px-3 py-2 text-right font-medium">Amount</th>
+                {showFinance && <th className="px-3 py-2 text-right font-medium">Amount</th>}
               </tr></thead>
               <tbody>
                 {filtered.map((t: any) => (
@@ -1748,7 +1766,7 @@ function CatalogPickerForZone({ context, projectId, onClose, onDone }: {
                     <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400">{t.code || '-'}</td>
                     <td className="px-3 py-2 font-medium">{t.name}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetHours ? Number(t.defaultBudgetHours) : '-'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                    {showFinance && <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -3250,6 +3268,11 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
   //              CatalogPickerForZone, just without a zoneId so they
   //              land at the project root.
   const [mode, setMode] = useState<'manual' | 'catalog'>('manual');
+  // Permissions round 2 — Amount (money) input / column only with the
+  // finance grant; the catalog price is copied server-side.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
+  const canEditFinance = can('finance', 'write');
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [budgetHours, setBudgetHours] = useState('');
@@ -3292,7 +3315,7 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
       code: code.trim(),
       name: name.trim(),
       budgetHours: budgetHours ? Number(budgetHours) : undefined,
-      budgetAmount: budgetAmount ? Number(budgetAmount) : undefined,
+      budgetAmount: canEditFinance && budgetAmount ? Number(budgetAmount) : undefined,
       serviceTypeId: serviceTypeId ?? undefined,
       phaseId: phaseId ?? undefined,
     } as any),
@@ -3312,7 +3335,8 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
           name: t.name,
           description: t.description,
           budgetHours: t.defaultBudgetHours ? Number(t.defaultBudgetHours) : undefined,
-          budgetAmount: t.defaultBudgetAmount ? Number(t.defaultBudgetAmount) : undefined,
+          // Price-list amount: copied by the server (permissions round 2).
+          sourceTemplateTaskId: t.id,
           // Carry over the catalog's task-level service / phase if any —
           // this keeps the deliverable badge consistent with the zone
           // catalog flow.
@@ -3384,15 +3408,17 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
 
       {mode === 'manual' ? (
         <>
-          <div className="grid grid-cols-[120px_1fr_120px_120px] gap-2">
+          <div className={cn('grid gap-2', canEditFinance ? 'grid-cols-[120px_1fr_120px_120px]' : 'grid-cols-[120px_1fr_120px]')}>
             <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code *" autoFocus
               className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Task name *"
               className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
             <input value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)} placeholder="Hours" type="number"
               className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
-            <input value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} placeholder="Amount" type="number"
-              className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+            {canEditFinance && (
+              <input value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} placeholder="Amount" type="number"
+                className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+            )}
           </div>
           {/* Deliverable + Service pickers — project-scoped lists, with
               an inline "Create new" that POSTs to the matching catalog
@@ -3449,7 +3475,7 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
                   <th className="px-3 py-2 text-left font-medium">Code</th>
                   <th className="px-3 py-2 text-left font-medium">Name</th>
                   <th className="px-3 py-2 text-right font-medium">Hours</th>
-                  <th className="px-3 py-2 text-right font-medium">Amount</th>
+                  {showFinance && <th className="px-3 py-2 text-right font-medium">Amount</th>}
                 </tr></thead>
                 <tbody>
                   {filtered.map((t: any) => (
@@ -3458,7 +3484,7 @@ function AddRootTaskDialog({ projectId, projectTasks, onClose, onCreated }: { pr
                       <td className="px-3 py-2 font-mono text-xs text-slate-500 dark:text-slate-400">{t.code || '-'}</td>
                       <td className="px-3 py-2 font-medium">{t.name}</td>
                       <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetHours ? Number(t.defaultBudgetHours) : '-'}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                      {showFinance && <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -3758,6 +3784,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
   // a column is safe — no layout artifacts). No admin short-circuit.
   const { can: canPerm } = usePermissions();
   const showFinance = canPerm('finance', 'read');
+  const canEditFinance = canPerm('finance', 'write');
   const [showAddTask, setShowAddTask] = useState(false);
   const [showTaskMenu, setShowTaskMenu] = useState(false);
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
@@ -3785,7 +3812,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
           <span className={cn('ml-1 font-semibold', loggedHours === 0 ? 'text-slate-400 dark:text-slate-500' : loggedHours > hours && hours > 0 ? 'text-red-500' : 'text-blue-500')}>
             · {loggedHours}h logged
           </span>
-          <span> · ₪{amount.toLocaleString()}</span>
+          {showFinance && <span> · ₪{amount.toLocaleString()}</span>}
         </span>
         <div className="relative" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
@@ -3811,7 +3838,9 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
               <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
               <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
               <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hours" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
-              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+              {canEditFinance && (
+                <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amount" type="number" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+              )}
               <button onClick={() => {
                 if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; }
                 // PR-019: legacy ZoneGroup — route the payload through
@@ -3827,7 +3856,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
                   code: newTask.code.trim(),
                   name: newTask.name.trim(),
                   budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined,
-                  budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined,
+                  budgetAmount: canEditFinance && newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined,
                   requiresReview: true,
                 });
               }}
@@ -4031,6 +4060,10 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const [collapsed, setCollapsed] = usePersistedCollapse(`hzone:${zone.id}`, false);
   useBulkCollapseSync(setCollapsed);
   const cols = usePlanningColumns();
+  // Permissions round 2 — money totals / inputs need the finance grant.
+  const { can: canPerm } = usePermissions();
+  const showFinance = canPerm('finance', 'read');
+  const canEditFinance = canPerm('finance', 'write');
   // Multi-level group-by — when a sub-dimension is selected (Deliverable
   // or Service), the zone's direct tasks render as nested deliverable
   // cards instead of a flat task table. Sub-zones still render as zones
@@ -4188,7 +4221,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
             <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400 dark:text-slate-500' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
               · {totalLoggedHours}h logged
             </span>
-            <span> · ₪{totalAmount.toLocaleString()}</span>
+            {showFinance && <span> · ₪{totalAmount.toLocaleString()}</span>}
           </span>
         </div>
 
@@ -4231,10 +4264,12 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
               <input value={newTask.code} onChange={(e) => setNewTask(f => ({ ...f, code: e.target.value }))} placeholder="Code *" className="w-20 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" autoFocus />
               <input value={newTask.name} onChange={(e) => setNewTask(f => ({ ...f, name: e.target.value }))} placeholder="Task name *" className="flex-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
               <input value={newTask.budgetHours} onChange={(e) => setNewTask(f => ({ ...f, budgetHours: e.target.value }))} placeholder="Hrs" type="number" className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
-              <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amt" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+              {canEditFinance && (
+                <input value={newTask.budgetAmount} onChange={(e) => setNewTask(f => ({ ...f, budgetAmount: e.target.value }))} placeholder="Amt" type="number" className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none" />
+              )}
               <button onClick={async () => {
                 if (!newTask.code.trim() || !newTask.name.trim()) { notify.warning('Code and Name required'); return; }
-                const payload = { code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined };
+                const payload = { code: newTask.code.trim(), name: newTask.name.trim(), budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined, budgetAmount: canEditFinance && newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined };
                 if (saveToCatalog) { try { const cats = await client.get('/templates?type=task_list').then(r => r.data.data ?? r.data); const cat = (Array.isArray(cats) ? cats : []).find((t: any) => t.code === '__TASK_CATALOG__'); if (cat) await client.post(`/templates/${cat.id}/tasks`, { ...payload, defaultBudgetHours: payload.budgetHours, defaultBudgetAmount: payload.budgetAmount }); } catch { /* best-effort catalog sync — task create below still runs */ } }
                 // PR-019: Zone-header inline add. Zone doesn't inherently
                 // carry a Deliverable/Service, so if a sub-dim is active
@@ -4490,6 +4525,10 @@ function ProjectRootDeliverableGroup({
   contextServiceTypeId?: number | null;
 }) {
   const subCtx = useContext(PlanningSubGroupContext);
+  // Permissions round 2 — money total / Amount input need the finance grant.
+  const { can: canPerm } = usePermissions();
+  const showFinance = canPerm('finance', 'read');
+  const canEditFinance = canPerm('finance', 'write');
   // Consult the group-by stack for the dim ONE level below us. When it
   // exists, this card renders nested sub-cards for that dim instead of
   // the leaf task table. `nestedDim` is null when we're the deepest level
@@ -4616,7 +4655,7 @@ function ProjectRootDeliverableGroup({
       code: newTask.code.trim(),
       name: newTask.name.trim(),
       budgetHours: newTask.budgetHours ? Number(newTask.budgetHours) : undefined,
-      budgetAmount: newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined,
+      budgetAmount: canEditFinance && newTask.budgetAmount ? Number(newTask.budgetAmount) : undefined,
       // Zone context — group's own zone bucket wins, then any parent
       // Zone primary threaded through contextZoneId. Undefined ⇒ root.
       zoneId: contextZoneId ?? undefined,
@@ -4781,7 +4820,7 @@ function ProjectRootDeliverableGroup({
           <span className={cn('ml-1 font-semibold', totalLoggedHours === 0 ? 'text-slate-400 dark:text-slate-500' : totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-blue-500')}>
             · {totalLoggedHours}h logged
           </span>
-          <span> · ₪{totalAmount.toLocaleString()}</span>
+          {showFinance && <span> · ₪{totalAmount.toLocaleString()}</span>}
         </span>
         {/* Add-task affordance — bm2 fix #4 + PR-013. The button opens a
             small menu with "Create New Task" (inline form, unchanged) and
@@ -4851,13 +4890,15 @@ function ProjectRootDeliverableGroup({
             type="number"
             className="w-14 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
           />
-          <input
-            value={newTask.budgetAmount}
-            onChange={(e) => setNewTask((f) => ({ ...f, budgetAmount: e.target.value }))}
-            placeholder="Amt"
-            type="number"
-            className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
-          />
+          {canEditFinance && (
+            <input
+              value={newTask.budgetAmount}
+              onChange={(e) => setNewTask((f) => ({ ...f, budgetAmount: e.target.value }))}
+              placeholder="Amt"
+              type="number"
+              className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm focus:border-blue-500 focus:outline-none"
+            />
+          )}
           <button
             onClick={submitAddTask}
             disabled={createTask.isPending}
@@ -5490,6 +5531,15 @@ function PlanningView({ projectId }: { projectId: number }) {
   // remaining columns close ranks.
   const planningColumns = PLANNING_COLUMNS;
   const columnVis = useColumnVisibility('planning-grid', planningColumns as any);
+  // Permissions round 2 — Amount / Actual ₪ columns (and the footer ₪
+  // total) only with finance:read. Hidden from the grid AND the picker;
+  // the user's stored visibility choice is left untouched.
+  const { can: canPerm } = usePermissions();
+  const showFinance = canPerm('finance', 'read');
+  const pickerColumns = useMemo(
+    () => (showFinance ? planningColumns : planningColumns.filter((c) => !FINANCE_PLANNING_COLUMNS.has(c.key))),
+    [planningColumns, showFinance],
+  );
   // Auto-hide any column that duplicates the current grouping
   // dimension (client meeting 2026-08-04): when grouping by
   // Deliverable, the "Deliverable" column repeats what the group
@@ -5514,12 +5564,13 @@ function PlanningView({ projectId }: { projectId: number }) {
   }, [groupOrder]);
   const planningColumnsCtx = useMemo<PlanningColumnsCtx>(() => {
     const isVisibleWithGrouping = (k: string) =>
+      (showFinance || !FINANCE_PLANNING_COLUMNS.has(k)) &&
       !hiddenByGrouping.has(k) && columnVis.isVisible(k);
     return {
       isVisible: isVisibleWithGrouping,
       gridStyle: computePlanningGridStyle(isVisibleWithGrouping),
     };
-  }, [columnVis.visible, columnVis.isVisible, hiddenByGrouping]);
+  }, [columnVis.visible, columnVis.isVisible, hiddenByGrouping, showFinance]);
 
   // Toolbar popovers — the old action bar had 4 add-buttons + 6 filter
   // controls on screen at once, which collapsed into a chaotic 3-row
@@ -6850,7 +6901,7 @@ function PlanningView({ projectId }: { projectId: number }) {
               can shape both the row set and the column set from the
               same spot. Persists per-browser via localStorage. */}
           <ColumnVisibilityPicker
-            columns={planningColumns as any}
+            columns={pickerColumns as any}
             visible={columnVis.visible}
             onToggle={columnVis.toggle}
             onShowAll={columnVis.showAll}
@@ -7066,7 +7117,7 @@ function PlanningView({ projectId }: { projectId: number }) {
             <div>
               <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Project Tasks</h3>
               <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                {sorted.length} tasks · {totalHours}h budget · <span className={cn('font-semibold', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-slate-500 dark:text-slate-400')}>{totalLoggedHours}h logged</span> · ₪{totalAmount.toLocaleString()}
+                {sorted.length} tasks · {totalHours}h budget · <span className={cn('font-semibold', totalLoggedHours > totalHours && totalHours > 0 ? 'text-red-500' : 'text-slate-500 dark:text-slate-400')}>{totalLoggedHours}h logged</span>{showFinance && <> · ₪{totalAmount.toLocaleString()}</>}
               </span>
             </div>
             {/* QA5 UI-12: removed the <FeasibilityBadge /> cluster

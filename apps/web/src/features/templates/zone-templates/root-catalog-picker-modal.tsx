@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Search } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { usePermissions } from '@/hooks/use-permissions';
 import { Modal } from '@/components/shared/modal';
 import { inputClass, btnPrimary, btnSecondary } from './constants';
 
@@ -18,6 +19,11 @@ export function RootCatalogPickerModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  // Permissions round 2 (B-16 / B-17) — catalog price shown only with
+  // finance:read, copied as a snapshot only with finance:write.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
+  const canEditFinance = can('finance', 'write');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
@@ -52,7 +58,7 @@ export function RootCatalogPickerModal({
           code: t.code,
           name: t.name,
           defaultBudgetHours: t.defaultBudgetHours,
-          defaultBudgetAmount: t.defaultBudgetAmount,
+          ...(canEditFinance ? { defaultBudgetAmount: t.defaultBudgetAmount } : {}),
         });
       }
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
@@ -102,7 +108,7 @@ export function RootCatalogPickerModal({
                 <th className="px-3 py-2 text-left font-medium">Code</th>
                 <th className="px-3 py-2 text-left font-medium">Name</th>
                 <th className="px-3 py-2 text-right font-medium">Hours</th>
-                <th className="px-3 py-2 text-right font-medium">Amount</th>
+                {showFinance && <th className="px-3 py-2 text-right font-medium">Amount</th>}
               </tr>
             </thead>
             <tbody>
@@ -112,7 +118,7 @@ export function RootCatalogPickerModal({
                   <td className="px-3 py-2 font-mono text-xs">{t.code || '-'}</td>
                   <td className="px-3 py-2">{t.name}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetHours ? `${Number(t.defaultBudgetHours)}` : '-'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                  {showFinance && <td className="px-3 py-2 text-right tabular-nums">{t.defaultBudgetAmount ? Number(t.defaultBudgetAmount).toLocaleString() : '-'}</td>}
                 </tr>
               ))}
             </tbody>

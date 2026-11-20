@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
+import { usePermissions } from '@/hooks/use-permissions';
 import { inputClass } from './constants';
 
 // ---------------------------------------------------------------------------
@@ -19,6 +20,10 @@ export function AddZoneTaskForm({
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
+  // Permissions round 2 (B-16) — the price-list Amount input only with
+  // finance:write (the API rejects a price from anyone else).
+  const { can } = usePermissions();
+  const canEditFinance = can('finance', 'write');
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [hours, setHours] = useState('');
@@ -46,7 +51,7 @@ export function AddZoneTaskForm({
       code: code.trim(),
       name: name.trim(),
       defaultBudgetHours: hours ? Number(hours) : undefined,
-      defaultBudgetAmount: amount ? Number(amount) : undefined,
+      defaultBudgetAmount: canEditFinance && amount ? Number(amount) : undefined,
     };
     // Also save to catalog if checked
     if (saveToCatalog) {
@@ -68,7 +73,7 @@ export function AddZoneTaskForm({
 
   return (
     <form onSubmit={handleSubmit} className="mt-1 rounded-md border border-border bg-muted/30 p-2 space-y-2">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className={`grid grid-cols-2 gap-2 ${canEditFinance ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
         <div>
           <label className="block text-xs font-medium mb-0.5">Code *</label>
           <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. BIM-CD" className={inputClass} autoFocus />
@@ -81,10 +86,12 @@ export function AddZoneTaskForm({
           <label className="block text-xs font-medium mb-0.5">Hours</label>
           <input type="number" min="0" step="0.5" value={hours} onChange={(e) => setHours(e.target.value)} placeholder="0" className={inputClass} />
         </div>
-        <div>
-          <label className="block text-xs font-medium mb-0.5">Amount</label>
-          <input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputClass} />
-        </div>
+        {canEditFinance && (
+          <div>
+            <label className="block text-xs font-medium mb-0.5">Amount</label>
+            <input type="number" min="0" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" className={inputClass} />
+          </div>
+        )}
       </div>
       <div className="flex items-center gap-3">
         <div className="flex gap-2">

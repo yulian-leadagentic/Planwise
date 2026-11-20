@@ -25,6 +25,11 @@ export function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field
   // working with no migration needed.
   const { can, isAdmin } = usePermissions();
   const canEditDueDate = isAdmin || can('tasks', 'write') || can('tasks/edit-due-date', 'write');
+  // Permissions round 2 (B-17) — Budget Amount is money: shown only with
+  // finance:read (the API strips it otherwise), editable only with
+  // finance:write (the API rejects a change otherwise).
+  const showFinance = can('finance', 'read');
+  const canEditFinance = can('finance', 'write');
   return (
     <div className="space-y-4">
       {/* Project Info leads the tab — the parent project's metadata is the
@@ -142,13 +147,25 @@ export function TaskDetailsTab({ task, onUpdate }: { task: any; onUpdate: (field
             suffix="h"
           />
         </FieldRow>
-        <FieldRow label="Budget Amount">
-          <EditableNumber
-            value={task.budgetAmount}
-            onSave={(v) => onUpdate('budgetAmount', v)}
-            min={0}
-          />
-        </FieldRow>
+        {showFinance && (
+          <FieldRow label="Budget Amount">
+            {canEditFinance ? (
+              <EditableNumber
+                value={task.budgetAmount}
+                onSave={(v) => onUpdate('budgetAmount', v)}
+                min={0}
+              />
+            ) : (
+              <span className="font-mono tabular-nums">
+                {task.budgetAmount != null ? (
+                  Number(task.budgetAmount).toLocaleString()
+                ) : (
+                  <span className="italic text-slate-400 dark:text-slate-500">—</span>
+                )}
+              </span>
+            )}
+          </FieldRow>
+        )}
         <FieldRow label="Est. Start">
           <EditableDate
             value={task.estimatedStartDate}

@@ -7,7 +7,6 @@ import type {
   LabelMilestone,
   Contact,
   Expense,
-  Term,
   PaginationQuery,
 } from '@/types';
 
@@ -71,15 +70,6 @@ export interface ExpensePayload {
   date: string;
   description?: string;
   receiptUrl?: string;
-}
-
-export interface TermPayload {
-  userId: number;
-  title: string;
-  monthlySalary?: number;
-  hourlyRate?: number;
-  startDate: string;
-  endDate?: string;
 }
 
 export const contractsApi = {
@@ -152,10 +142,6 @@ export const contractsApi = {
   createExpense: (payload: ExpensePayload) =>
     client.post<ApiResponse<Expense>>('/contracts/expenses', payload).then((r) => r.data.data),
 
-  // Terms — backend: /contracts/terms
-  listTerms: (userId: number) =>
-    client.get<ApiResponse<Term[]>>(`/contracts/terms/${userId}`).then((r) => r.data.data),
-
-  createTerm: (payload: TermPayload) =>
-    client.post<ApiResponse<Term>>('/contracts/terms', payload).then((r) => r.data.data),
+  // Terms (/contracts/terms) were removed in permissions round 2 — the
+  // API routes exposed salaries behind contracts:* and nothing used them.
 };

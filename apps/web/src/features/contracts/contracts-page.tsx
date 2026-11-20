@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Plus, FileText } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { FilterBar } from '@/components/shared/filter-bar';
@@ -9,6 +10,7 @@ import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
 import { formatDate } from '@/lib/date-utils';
 import { formatCurrency } from '@/lib/utils';
+import { usePermissions } from '@/hooks/use-permissions';
 import type { Contract } from '@/types';
 import type { ColumnDef } from '@tanstack/react-table';
 
@@ -81,6 +83,14 @@ const columns: ColumnDef<Contract, unknown>[] = [
 ];
 
 export function ContractsPage() {
+  // Permissions round 2 (B-12 / B-17) — contract amounts are money: only
+  // for finance:read (the API strips totalAmount for everyone else).
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
+  const visibleColumns = useMemo(
+    () => (showFinance ? columns : columns.filter((c) => (c as { accessorKey?: string }).accessorKey !== 'totalAmount')),
+    [showFinance],
+  );
   const { contractSearch, contractStatus, setContractFilters } = useFilterStore();
   const debouncedSearch = useDebounce(contractSearch, 300);
 
@@ -139,7 +149,7 @@ export function ContractsPage() {
         />
       ) : (
         <DataTable
-          columns={columns}
+          columns={visibleColumns}
           data={contracts}
           isLoading={isLoading}
           renderCard={(contract) => {
@@ -161,7 +171,7 @@ export function ContractsPage() {
                   </div>
                   <StatusBadge status={contract.status} />
                 </div>
-                {contract.totalAmount != null && (
+                {showFinance && contract.totalAmount != null && (
                   <p className="mt-2 text-sm font-medium">{formatCurrency(contract.totalAmount)}</p>
                 )}
               </div>

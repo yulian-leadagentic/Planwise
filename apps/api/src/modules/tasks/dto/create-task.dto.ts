@@ -69,6 +69,18 @@ export class CreateTaskDto {
   @IsInt()
   projectDeliverableId?: number | null;
 
+  /** Permissions round 2 (2026-11-20) — the catalog / template task this
+   *  task was picked from. When `budgetAmount` is not sent, the server
+   *  copies the price list amount (`defaultBudgetAmount`, live from the
+   *  linked catalog row first) itself. The price is not visible to
+   *  callers without finance:read and setting a budget needs
+   *  finance:write, so the copy must not travel through the client.
+   *  Create-only (UpdateTaskDto omits it). */
+  @ApiPropertyOptional({ description: 'TemplateTask id to copy the price-list amount from (create only).' })
+  @IsOptional()
+  @IsInt()
+  sourceTemplateTaskId?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

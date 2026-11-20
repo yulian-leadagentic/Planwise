@@ -18,6 +18,8 @@ import { Prisma } from '@prisma/client';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { assertFinanceAccess } from '../../common/finance/finance-access';
 import { PrismaService } from '../../prisma/prisma.service';
 
 // QA3 item 1 helpers — accept an ISO-date (YYYY-MM-DD) and return a
@@ -463,9 +465,16 @@ export class ConfigController {
   // `defaultHourlyCost` as the legacy fallback. Rendered as the "Hourly
   // Cost" column on the admin list so admins see the number cost
   // calculations actually pull, not the stale default.
+  //
+  // Permissions round 2 (B-06 / B-14) — every labor-category and rate
+  // route below also needs the finance grant: reads `finance:read`,
+  // changes `finance:write`. Checked by hand (`assertFinanceAccess`)
+  // rather than in @RequirePermissions so the Admin bypass on the
+  // `admin` half keeps working (finance itself is never bypassed).
   @Get('seniority-levels')
   @RequirePermissions({ module: 'admin', action: 'read' })
-  async getSeniorityLevels() {
+  async getSeniorityLevels(@CurrentUser() user: any) {
+    assertFinanceAccess(user, 'read');
     const levels = await this.prisma.seniorityLevel.findMany({
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
@@ -509,6 +518,7 @@ export class ConfigController {
   @Post('seniority-levels')
   @RequirePermissions({ module: 'admin', action: 'write' })
   async createSeniorityLevel(
+    @CurrentUser() user: any,
     @Body() body: {
       code: string;
       name: string;
@@ -517,6 +527,7 @@ export class ConfigController {
       currency?: string | null;
     },
   ) {
+    assertFinanceAccess(user, 'write');
     const count = await this.prisma.seniorityLevel.count();
     return this.prisma.seniorityLevel.create({
       data: {
@@ -535,6 +546,7 @@ export class ConfigController {
   @Patch('seniority-levels/:id')
   @RequirePermissions({ module: 'admin', action: 'write' })
   async updateSeniorityLevel(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: {
       code?: string;
@@ -545,6 +557,7 @@ export class ConfigController {
       currency?: string | null;
     },
   ) {
+    assertFinanceAccess(user, 'write');
     return this.prisma.seniorityLevel.update({
       where: { id },
       data: {
@@ -566,7 +579,8 @@ export class ConfigController {
 
   @Delete('seniority-levels/:id')
   @RequirePermissions({ module: 'admin', action: 'delete' })
-  async deleteSeniorityLevel(@Param('id', ParseIntPipe) id: number) {
+  async deleteSeniorityLevel(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    assertFinanceAccess(user, 'write');
     await this.prisma.seniorityLevel.delete({ where: { id } });
     return { message: 'Labor category deleted' };
   }
@@ -588,7 +602,8 @@ export class ConfigController {
   @Get('seniority-levels/:id/rates')
   @RequirePermissions({ module: 'admin', action: 'read' })
   @ApiOperation({ summary: 'List rate history for a seniority level' })
-  async getSeniorityRates(@Param('id', ParseIntPipe) id: number) {
+  async getSeniorityRates(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    assertFinanceAccess(user, 'read');
     return this.prisma.seniorityRate.findMany({
       where: { seniorityLevelId: id },
       orderBy: { startDate: 'desc' },
@@ -599,9 +614,11 @@ export class ConfigController {
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({ summary: 'Change level rate — close current + open new open-ended row' })
   async changeSeniorityRate(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { hourlyCost: number | string; currency?: string | null; effectiveFrom: string },
   ) {
+    assertFinanceAccess(user, 'write');
     const start = parseIsoDate(body.effectiveFrom, 'effectiveFrom');
     if (body.hourlyCost == null || body.hourlyCost === '') {
       throw new BadRequestException('hourlyCost is required');
@@ -631,7 +648,8 @@ export class ConfigController {
   @Get('user-rates/:userId')
   @RequirePermissions({ module: 'admin', action: 'read' })
   @ApiOperation({ summary: 'List per-employee rate override history' })
-  async getUserRates(@Param('userId', ParseIntPipe) userId: number) {
+  async getUserRates(@CurrentUser() user: any, @Param('userId', ParseIntPipe) userId: number) {
+    assertFinanceAccess(user, 'read');
     return this.prisma.userRate.findMany({
       where: { userId },
       orderBy: { startDate: 'desc' },
@@ -642,6 +660,7 @@ export class ConfigController {
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({ summary: 'Set / change per-employee override — close current + open new (or bounded window)' })
   async changeUserRate(
+    @CurrentUser() user: any,
     @Param('userId', ParseIntPipe) userId: number,
     @Body() body: {
       hourlyCost: number | string;
@@ -655,6 +674,7 @@ export class ConfigController {
       effectiveTo?: string | null;
     },
   ) {
+    assertFinanceAccess(user, 'write');
     const start = parseIsoDate(body.effectiveFrom, 'effectiveFrom');
     const end = body.effectiveTo
       ? parseIsoDate(body.effectiveTo, 'effectiveTo')
@@ -693,9 +713,11 @@ export class ConfigController {
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({ summary: 'Remove per-employee override — close current with no new row' })
   async removeUserRate(
+    @CurrentUser() user: any,
     @Param('userId', ParseIntPipe) userId: number,
     @Body() body: { effectiveFrom: string },
   ) {
+    assertFinanceAccess(user, 'write');
     const cutoff = parseIsoDate(body.effectiveFrom, 'effectiveFrom');
     const closed = await this.prisma.userRate.updateMany({
       where: { userId, endDate: null },

@@ -23,6 +23,10 @@ export interface CreateTaskPayload {
   description?: string;
   budgetHours?: number;
   budgetAmount?: number;
+  /** Catalog / template task the task was picked from — the server copies
+   *  its price-list amount when `budgetAmount` is not sent (permissions
+   *  round 2: the price never travels through the client). */
+  sourceTemplateTaskId?: number;
   phaseId?: number;
   priority?: string;
 }

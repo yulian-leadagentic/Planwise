@@ -24,6 +24,15 @@ import { ProjectAccessService } from '../../common/services/project-access.servi
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
+import {
+  assertFinanceFieldWrites,
+  canSeeFinance,
+  omitKeys,
+  PROJECT_MONEY_KEYS,
+} from '../../common/finance/finance-access';
+
+/** Project money a write may carry — changing it needs finance:write. */
+const PROJECT_MONEY_WRITE_FIELDS = ['budget', 'estimatedValue'] as const;
 
 @ApiTags('Projects')
 @ApiBearerAuth()
@@ -42,8 +51,12 @@ export class ProjectsController {
   @Post()
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Create a new project' })
-  create(@CurrentUser() user: any, @Body() dto: CreateProjectDto) {
-    return this.projectsService.create(user.id, dto);
+  async create(@CurrentUser() user: any, @Body() dto: CreateProjectDto) {
+    // Permissions round 2 — a budget / estimated value on create needs
+    // finance:write; the echoed row drops project money for non-finance.
+    await assertFinanceFieldWrites(user, dto, PROJECT_MONEY_WRITE_FIELDS, null);
+    const project = await this.projectsService.create(user.id, dto);
+    return canSeeFinance(user) ? project : omitKeys(project, PROJECT_MONEY_KEYS);
   }
 
   @Get()
@@ -106,8 +119,15 @@ export class ProjectsController {
   @Patch(':id')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Update a project' })
-  update(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProjectDto) {
-    return this.projectsService.update(id, dto, user?.id);
+  async update(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProjectDto) {
+    // Permissions round 2 (B-13 / B-15) — changing budget / estimated
+    // value needs finance:write (an unchanged echo passes); the response
+    // drops project money for callers without finance:read.
+    await assertFinanceFieldWrites(user, dto, PROJECT_MONEY_WRITE_FIELDS, () =>
+      this.projectsService.getMoneySnapshot(id),
+    );
+    const project = await this.projectsService.update(id, dto, user?.id);
+    return canSeeFinance(user) ? project : omitKeys(project, PROJECT_MONEY_KEYS);
   }
 
   @Delete(':id')
@@ -221,10 +241,18 @@ export class ProjectsController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Export every task on the project as a flat Excel file' })
   async exportProjectTasks(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
     @Res() res: Response,
   ) {
-    const { buffer, filename } = await this.projectsService.exportTasksExcel(projectId);
+    // Permissions round 2 (B-10) — same access check as every other
+    // project read (was missing: any projects:read holder could export
+    // any project by id), and the file drops the money column for
+    // callers without finance:read (files bypass the interceptor).
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
+    const { buffer, filename } = await this.projectsService.exportTasksExcel(projectId, {
+      includeMoney: canSeeFinance(user),
+    });
     // RFC 5987 encoded `filename*` alongside the ASCII fallback so
     // browsers correctly render Hebrew (and other non-ASCII)
     // project names in the download prompt. The ASCII `filename`
@@ -251,8 +279,13 @@ export class ProjectsController {
   @Patch(':id/leader')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Set project leader' })
-  setLeader(@Param('id', ParseIntPipe) id: number, @Body('userId', ParseIntPipe) userId: number) {
-    return this.projectsService.setLeader(id, userId);
+  async setLeader(
+    @CurrentUser() user: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body('userId', ParseIntPipe) userId: number,
+  ) {
+    const project = await this.projectsService.setLeader(id, userId);
+    return canSeeFinance(user) ? project : omitKeys(project, PROJECT_MONEY_KEYS);
   }
 
   // Task Dependencies

@@ -14,6 +14,7 @@ import {
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { usePermissions } from '@/hooks/use-permissions';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -72,6 +73,13 @@ function compareTasks(a: any, b: any, field: SortField, dir: SortDir): number {
 
 export function TaskCatalogPage() {
   const confirm = useConfirm();
+  // Permissions round 2 (B-16 / B-17) — the catalog Amount is the price
+  // list: the column (and totals cell) only with finance:read, the input
+  // only with finance:write. The API strips / rejects it otherwise.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
+  const canEditFinance = can('finance', 'write');
+  const colCount = showFinance ? 5 : 4;
   const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -199,7 +207,9 @@ export function TaskCatalogPage() {
     name: form.name.trim(),
     description: form.description.trim() || undefined,
     defaultBudgetHours: form.defaultBudgetHours ? Number(form.defaultBudgetHours) : undefined,
-    defaultBudgetAmount: form.defaultBudgetAmount ? Number(form.defaultBudgetAmount) : undefined,
+    ...(canEditFinance
+      ? { defaultBudgetAmount: form.defaultBudgetAmount ? Number(form.defaultBudgetAmount) : undefined }
+      : {}),
   });
 
   const handleAddTask = (e: React.FormEvent) => {
@@ -256,9 +266,15 @@ export function TaskCatalogPage() {
       <td className="px-3 py-2">
         <input type="number" step="any" min="0" value={form.defaultBudgetHours} onChange={(e) => setForm((p) => ({ ...p, defaultBudgetHours: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
       </td>
-      <td className="px-3 py-2">
-        <input type="number" step="any" min="0" value={form.defaultBudgetAmount} onChange={(e) => setForm((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
-      </td>
+      {showFinance && (
+        <td className="px-3 py-2">
+          {canEditFinance ? (
+            <input type="number" step="any" min="0" value={form.defaultBudgetAmount} onChange={(e) => setForm((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
+          ) : (
+            <span className="block text-right tabular-nums text-muted-foreground">{form.defaultBudgetAmount ? Number(form.defaultBudgetAmount).toLocaleString() : '-'}</span>
+          )}
+        </td>
+      )}
       <td className="px-3 py-2 text-center">
         <div className="flex items-center justify-center gap-1">
           <button onClick={onSubmit} disabled={isPending} className="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50">
@@ -328,16 +344,18 @@ export function TaskCatalogPage() {
                 <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('defaultBudgetHours')}>
                   Hours{sortIcon('defaultBudgetHours')}
                 </th>
-                <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('defaultBudgetAmount')}>
-                  Amount{sortIcon('defaultBudgetAmount')}
-                </th>
+                {showFinance && (
+                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('defaultBudgetAmount')}>
+                    Amount{sortIcon('defaultBudgetAmount')}
+                  </th>
+                )}
                 <th className="px-3 py-2 text-center font-medium">Actions</th>
               </tr>
               <tr className="border-b border-border bg-white dark:bg-slate-900/60">
                 <th className="px-2 py-1.5"><ColumnFilter config={catalogFilterConfig[0]} value={catalogFilters.code ?? ''} onChange={(v) => setCatalogFilter('code', v)} label="Code" /></th>
                 <th className="px-2 py-1.5"><ColumnFilter config={catalogFilterConfig[1]} value={catalogFilters.name ?? ''} onChange={(v) => setCatalogFilter('name', v)} label="Name" /></th>
                 <th className="px-2 py-1.5" />
-                <th className="px-2 py-1.5" />
+                {showFinance && <th className="px-2 py-1.5" />}
                 <th className="px-2 py-1.5" />
               </tr>
             </thead>
@@ -357,7 +375,7 @@ export function TaskCatalogPage() {
               {/* Empty state */}
               {filteredTasks.length === 0 && !showAddTask && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={colCount} className="px-3 py-8 text-center text-muted-foreground">
                     <BookOpen className="mx-auto h-10 w-10 text-muted-foreground/50" />
                     <p className="mt-2">
                       {search ? 'No tasks match your search.' : 'No tasks in the catalog yet. Click "Add Task" to get started.'}
@@ -388,7 +406,9 @@ export function TaskCatalogPage() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(1) : '-'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                    {showFinance && (
+                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-'}</td>
+                    )}
                     <td className="px-3 py-2 text-center">
                       <div className="flex items-center justify-center gap-1">
                         <button
@@ -417,7 +437,9 @@ export function TaskCatalogPage() {
                   <td className="px-3 py-2">{totals.count} task{totals.count !== 1 ? 's' : ''}</td>
                   <td className="px-3 py-2 text-right">Totals</td>
                   <td className="px-3 py-2 text-right tabular-nums">{totals.hours.toFixed(1)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  {showFinance && (
+                    <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  )}
                   <td className="px-3 py-2" />
                 </tr>
               )}

@@ -1,6 +1,6 @@
 import { useSearchParams } from 'react-router-dom';
 import { Plus } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { notify } from '@/lib/notify';
 import { PageHeader } from '@/components/shared/page-header';
@@ -18,6 +18,7 @@ import client from '@/api/client';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
+import { usePermissions } from '@/hooks/use-permissions';
 import type { ColumnDef } from '@tanstack/react-table';
 
 type Tab = 'mine' | 'all' | 'archived';
@@ -29,7 +30,8 @@ interface TaskRow {
   status: string;
   priority: string;
   budgetHours: string | null;
-  budgetAmount: string | null;
+  // Absent for callers without finance:read — the API strips it.
+  budgetAmount?: string | null;
   completionPct: number;
   zone: { id: number; name: string } | null;
   project: { id: number; name: string } | null;
@@ -190,6 +192,17 @@ const columns: ColumnDef<TaskRow, unknown>[] = [
 ];
 
 export function TasksPage() {
+  // Permissions round 2 (B-17) — the Amount column is a money value:
+  // only for finance:read (the API strips budgetAmount for everyone else).
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
+  const visibleColumns = useMemo(
+    () =>
+      showFinance
+        ? columns
+        : columns.filter((c) => (c as { accessorKey?: string }).accessorKey !== 'budgetAmount'),
+    [showFinance],
+  );
   const [searchParams] = useSearchParams();
   // Deep-link support: ?tab=archived lands the user directly on the
   // Archived tab so the "Archived" button on the planning toolbar can
@@ -413,7 +426,7 @@ export function TasksPage() {
           />
 
           <DataTable
-            columns={columns}
+            columns={visibleColumns}
             data={allTasks}
             isLoading={allLoading}
             onRowClick={(task) => openTaskDrawer(task.id as number)}

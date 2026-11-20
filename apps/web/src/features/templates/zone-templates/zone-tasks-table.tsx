@@ -3,6 +3,7 @@ import { X, Lock } from 'lucide-react';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { usePermissions } from '@/hooks/use-permissions';
 
 // ---------------------------------------------------------------------------
 // Zone Tasks Table (compact, displayed under zone node)
@@ -17,6 +18,9 @@ export function ZoneTasksTable({
 }) {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
+  // Permissions round 2 (B-17) — price column only with finance:read.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) => client.delete(`/templates/zone-tasks/${id}`).then((r) => r.data),
@@ -38,7 +42,7 @@ export function ZoneTasksTable({
             <th className="px-2 py-1 text-left font-medium">Code</th>
             <th className="px-2 py-1 text-left font-medium">Name</th>
             <th className="px-2 py-1 text-right font-medium">Hours</th>
-            <th className="px-2 py-1 text-right font-medium">Amount</th>
+            {showFinance && <th className="px-2 py-1 text-right font-medium">Amount</th>}
             <th className="px-2 py-1 text-center font-medium w-8"></th>
           </tr>
         </thead>
@@ -70,9 +74,11 @@ export function ZoneTasksTable({
               <td className="px-2 py-1 text-right tabular-nums">
                 {task.defaultBudgetHours != null ? `${Number(task.defaultBudgetHours).toFixed(0)}h` : '-'}
               </td>
-              <td className="px-2 py-1 text-right tabular-nums">
-                {task.defaultBudgetAmount != null ? `\u20AA${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}
-              </td>
+              {showFinance && (
+                <td className="px-2 py-1 text-right tabular-nums">
+                  {task.defaultBudgetAmount != null ? `\u20AA${Number(task.defaultBudgetAmount).toLocaleString()}` : '-'}
+                </td>
+              )}
               <td className="px-2 py-1 text-center">
                 <button
                   onClick={async () => { if (await confirm(`Remove task "${task.name}"?`)) deleteMutation.mutate(task.id); }}

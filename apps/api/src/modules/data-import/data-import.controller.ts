@@ -25,6 +25,7 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import { canSeeFinance as callerCanSeeFinance } from '../../common/finance/finance-access';
 
 import { ExcelParserService } from './excel-parser.service';
 import { UsersImporterService } from './importers/users-importer.service';
@@ -129,11 +130,9 @@ export class DataImportController {
     const parsed = await this.parser.parse(file.buffer);
     const importer = this.getImporter(target);
 
-    // Finance gate — the same NO_ADMIN_BYPASS rule we use elsewhere.
-    const canSeeFinance = (user.roleModules ?? []).some((rm: any) => {
-      const r = rm.module?.route ?? '';
-      return (r === 'finance' || r === '/finance') && rm.canRead;
-    });
+    // Finance gate — the same NO_ADMIN_BYPASS rule we use elsewhere
+    // (shared helper since permissions round 2).
+    const canSeeFinance = callerCanSeeFinance(user);
 
     const results = await importer.validateRows(parsed.rows, { canSeeFinance });
 
@@ -202,10 +201,7 @@ export class DataImportController {
       );
     }
 
-    const canSeeFinance = (user.roleModules ?? []).some((rm: any) => {
-      const r = rm.module?.route ?? '';
-      return (r === 'finance' || r === '/finance') && rm.canRead;
-    });
+    const canSeeFinance = callerCanSeeFinance(user);
 
     // Pre-validate every row before opening the import record so the
     // count we save is correct even when committing.

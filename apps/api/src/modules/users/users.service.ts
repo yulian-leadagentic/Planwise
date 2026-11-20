@@ -19,7 +19,8 @@ import { QueryUsersDto } from './dto/query-users.dto';
 import { buildCostRateResolver, isRateableOutcome } from '../projects/cost-rate-resolver';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { isAdminUser, userHasModulePermission } from '../../common/guards/roles.guard';
-import { canEditPeople, canManageEmployees, isAdminLevelRole } from './user-write-policy';
+import { canEditPeople, canManageEmployees, isAdminLevelRole, USER_FINANCE_FIELDS } from './user-write-policy';
+import { assertFinanceFieldWrites } from '../../common/finance/finance-access';
 import * as Sentry from '@sentry/node';
 
 /** What a PATCH /users/:id actually changes among the protected fields. */
@@ -277,6 +278,9 @@ export class UsersService implements OnModuleInit {
         `"roleId": only an Admin can assign the admin-level role "${assignedRole.name}".`,
       );
     }
+    // Permissions round 2 — a pay rate or a labor category (cost tier)
+    // on create needs finance:write.
+    await assertFinanceFieldWrites(actor, dto, USER_FINANCE_FIELDS, null);
 
     const existing = await this.prisma.user.findFirst({ where: { email: dto.email } });
     if (existing) {
@@ -674,6 +678,15 @@ export class UsersService implements OnModuleInit {
     }
     const existing = await this.findOne(id);
     const protectedChanges = await this.assertProtectedFieldWrites(existing, dto, actor);
+    // Permissions round 2 — changing the pay rate (`salaryHourly`) or
+    // the labor category (`seniorityLevelId`, the cost tier) needs
+    // finance:write; sending the stored value back passes.
+    await assertFinanceFieldWrites(actor, dto, USER_FINANCE_FIELDS, () =>
+      this.prisma.user.findFirst({
+        where: { id },
+        select: { salaryHourly: true, seniorityLevelId: true },
+      }),
+    );
 
     const data: any = { ...dto };
 

@@ -16,6 +16,8 @@ import { LabelsService } from './labels.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { AMOUNT_KEYS, canSeeFinance, omitKeys } from '../../common/finance/finance-access';
 import { CreateLabelDto } from './dto/create-label.dto';
 import { UpdateLabelDto } from './dto/update-label.dto';
 
@@ -43,8 +45,13 @@ export class LabelsController {
   @Get(':id')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get a label by ID' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.labelsService.findOne(id);
+  async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    const label = await this.labelsService.findOne(id);
+    // Permissions round 2 — the label carries its LabelMilestone rows;
+    // `amount` (a milestone payment) is stripped for callers without
+    // finance:read (ambiguous name, so per endpoint).
+    if (canSeeFinance(user) || !Array.isArray((label as any)?.milestones)) return label;
+    return { ...label, milestones: omitKeys((label as any).milestones, AMOUNT_KEYS) };
   }
 
   @Get()

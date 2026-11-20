@@ -10,6 +10,7 @@ import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useCreateProject, useUpdateProject, useProjectTypes } from '@/hooks/use-projects';
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
+import { cn } from '@/lib/utils';
 import { PeopleMultiSelect, type Person } from '@/components/shared/people-multi-select';
 import { Field, SelectField } from '@/components/shared/field';
 import { buildTree } from '@/features/admin/organization-page/build-tree';
@@ -110,6 +111,9 @@ export function ProjectFormPage() {
   // column, project detail header). Non-finance users can't see or set the
   // project budget — the input is hidden entirely.
   const showFinance = can('finance', 'read');
+  // Permissions round 2 — changing the budget needs finance:write (the
+  // API rejects it otherwise); a finance reader sees it read-only.
+  const canEditFinance = can('finance', 'write');
 
   const { data: project, isLoading: projectLoading } = useProject(isEdit ? projectId : 0);
   const { data: projectTypes } = useProjectTypes();
@@ -913,7 +917,12 @@ export function ProjectFormPage() {
                         type="number"
                         step="0.01"
                         placeholder="0.00"
-                        className="w-full pl-7 pr-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                        readOnly={!canEditFinance}
+                        title={canEditFinance ? undefined : 'Changing the budget requires finance:write'}
+                        className={cn(
+                          'w-full pl-7 pr-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none',
+                          !canEditFinance && 'bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 cursor-not-allowed',
+                        )}
                       />
                     </div>
                   </div>

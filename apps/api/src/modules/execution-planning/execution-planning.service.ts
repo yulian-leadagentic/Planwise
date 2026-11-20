@@ -538,52 +538,9 @@ export class ExecutionPlanningService {
     this.logger.log(`Found ${overdueTasks.length} overdue tasks`);
   }
 
-  // ─── ESTIMATED COST (employee rate × actual hours) ────────────────────
-
-  async calculateEstimatedCost(projectId: number) {
-    // Get all time entries for the project with user salary
-    const entries = await this.prisma.timeEntry.findMany({
-      where: { projectId, deletedAt: null },
-      select: {
-        userId: true,
-        minutes: true,
-        isBillable: true,
-        user: { select: { id: true, firstName: true, lastName: true, salaryHourly: true } },
-      },
-    });
-
-    // Group by user
-    const userCosts = new Map<number, { name: string; hours: number; rate: number; cost: number; billableHours: number }>();
-
-    for (const e of entries) {
-      const uid = e.userId;
-      if (!userCosts.has(uid)) {
-        const rate = e.user.salaryHourly ? Number(e.user.salaryHourly) : 0;
-        userCosts.set(uid, {
-          name: `${e.user.firstName} ${e.user.lastName}`,
-          hours: 0, rate, cost: 0, billableHours: 0,
-        });
-      }
-      const uc = userCosts.get(uid)!;
-      const hours = e.minutes / 60;
-      uc.hours += hours;
-      uc.cost += hours * uc.rate;
-      if (e.isBillable) uc.billableHours += hours;
-    }
-
-    const breakdown = [...userCosts.values()].map((uc) => ({
-      ...uc,
-      hours: Math.round(uc.hours * 100) / 100,
-      cost: Math.round(uc.cost * 100) / 100,
-      billableHours: Math.round(uc.billableHours * 100) / 100,
-    }));
-
-    const totalCost = Math.round(breakdown.reduce((s, b) => s + b.cost, 0) * 100) / 100;
-    const totalHours = Math.round(breakdown.reduce((s, b) => s + b.hours, 0) * 100) / 100;
-    const billableHours = Math.round(breakdown.reduce((s, b) => s + b.billableHours, 0) * 100) / 100;
-
-    return { totalCost, totalHours, billableHours, breakdown };
-  }
+  // `calculateEstimatedCost` (salaryHourly × logged hours, backing
+  // `GET /projects/:id/estimated-cost`) was removed in permissions
+  // round 2 (B-04) — see the controller note.
 
   @Cron(CronExpression.EVERY_DAY_AT_10AM)
   async checkMissingTimeReports() {
@@ -649,7 +606,19 @@ export class ExecutionPlanningService {
     return { scopeToMyDept, userId: user.id, isAdmin: user.isAdmin };
   }
 
-  async getOperationsDashboard(user: { id: number; isAdmin: boolean }, myDeptOnlyRaw?: string) {
+  /**
+   * `user.canSeeFinance` (permissions round 2, B-11): without it the
+   * at-risk rows carry no `budget` / `budgetUsed` / `budgetPct`, no
+   * "Budget X% used" risk factor, and the row status is computed from
+   * schedule signals only — otherwise a "critical" with no visible reason
+   * would still tell the reader the budget is over 85% used. Missing =
+   * no finance (fail closed).
+   */
+  async getOperationsDashboard(
+    user: { id: number; isAdmin: boolean; canSeeFinance?: boolean },
+    myDeptOnlyRaw?: string,
+  ) {
+    const showFinance = user.canSeeFinance === true;
     const { scopeToMyDept } = this.resolveOpsScope(user, myDeptOnlyRaw);
     const now = new Date();
 
@@ -728,18 +697,23 @@ export class ExecutionPlanningService {
       const progressPct = budgetHours > 0 ? Math.min(100, Math.round(loggedHours / budgetHours * 100)) : 0;
 
       const riskFactors: { text: string; severity: string }[] = [];
-      if (budgetPct > 85 && progressPct < 60) riskFactors.push({ text: `Budget ${budgetPct}% used with only ${progressPct}% progress`, severity: 'critical' });
+      if (showFinance && budgetPct > 85 && progressPct < 60) riskFactors.push({ text: `Budget ${budgetPct}% used with only ${progressPct}% progress`, severity: 'critical' });
       if (daysLeft !== null && daysLeft < 0) riskFactors.push({ text: `Deadline passed ${Math.abs(daysLeft)} days ago`, severity: 'critical' });
       if (projectOverdue.length > 3) riskFactors.push({ text: `${projectOverdue.length} overdue tasks`, severity: 'high' });
 
+      const budgetMediumRisk = showFinance && budgetPct > 70;
       const status = riskFactors.some((r) => r.severity === 'critical') ? 'critical'
         : (riskFactors.length > 0 || projectOverdue.length > 0) ? 'high'
-        : (budgetPct > 70 || (daysLeft !== null && daysLeft < 30)) ? 'medium' : 'ok';
+        : (budgetMediumRisk || (daysLeft !== null && daysLeft < 30)) ? 'medium' : 'ok';
 
       return {
         id: p.id, name: p.name, number: p.number, status,
         leader: p.leader, department: p.department,
-        progress: progressPct, budget, budgetUsed, budgetPct, daysLeft, riskFactors,
+        progress: progressPct,
+        // B-11 — budget, budgetUsed and budgetPct go together (any two
+        // give the third away).
+        ...(showFinance ? { budget, budgetUsed, budgetPct } : {}),
+        daysLeft, riskFactors,
         overdueTasks: projectOverdue.map((t) => ({
           id: t.id, code: t.code, name: t.name,
           zone: t.zone?.name ?? 'Project Root',

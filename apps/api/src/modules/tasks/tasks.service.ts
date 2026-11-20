@@ -209,6 +209,15 @@ export class TasksService {
       estimatedStartDate,
     });
 
+    // Permissions round 2 — a task picked from the catalog / a template
+    // gets its price-list amount copied HERE (server-internal, not user
+    // input), so callers without finance:read / finance:write still get
+    // the planned amount on the task without ever seeing or sending it.
+    const budgetAmount =
+      dto.budgetAmount === undefined && dto.sourceTemplateTaskId != null
+        ? await this.resolveTemplatePrice(dto.sourceTemplateTaskId)
+        : dto.budgetAmount;
+
     const task = await this.prisma.task.create({
       data: {
         zoneId: dto.zoneId ?? null,
@@ -223,7 +232,7 @@ export class TasksService {
         name: dto.name,
         description: dto.description,
         budgetHours: dto.budgetHours,
-        budgetAmount: dto.budgetAmount,
+        budgetAmount,
         phaseId: dto.phaseId,
         priority: dto.priority as any,
         // Planning forecast — distinct from `startDate` (actual start).
@@ -530,6 +539,24 @@ export class TasksService {
         commentCount,
       };
     });
+  }
+
+  /**
+   * Price-list amount of a catalog / template task: the linked catalog
+   * row's live value first (DN-ext), else the row's own snapshot. Null
+   * when the row is gone or has no price.
+   */
+  private async resolveTemplatePrice(templateTaskId: number): Promise<Prisma.Decimal | null> {
+    const row = await this.prisma.templateTask.findUnique({
+      where: { id: templateTaskId },
+      select: { defaultBudgetAmount: true, catalogTask: { select: { defaultBudgetAmount: true } } },
+    });
+    return row?.catalogTask?.defaultBudgetAmount ?? row?.defaultBudgetAmount ?? null;
+  }
+
+  /** Stored money column — the write-side finance check compares against it. */
+  async getMoneySnapshot(id: number): Promise<{ budgetAmount: unknown } | null> {
+    return this.prisma.task.findFirst({ where: { id }, select: { budgetAmount: true } });
   }
 
   async findOne(id: number) {
@@ -1006,7 +1033,15 @@ export class TasksService {
     const result = await this.prisma.taskAssignee.upsert({
       where: { taskId_userId: { taskId, userId: data.userId } },
       create: { taskId, userId: data.userId, role: data.role, hourlyRate: data.hourlyRate },
-      update: { deletedAt: null, role: data.role ?? null, hourlyRate: data.hourlyRate ?? null },
+      // Permissions round 2 — re-adding a removed assignee keeps their
+      // stored legacy `hourlyRate` unless a new one is sent (it used to
+      // be reset to null, which let a caller without finance:write wipe
+      // a money value just by removing + re-adding someone).
+      update: {
+        deletedAt: null,
+        role: data.role ?? null,
+        ...(data.hourlyRate !== undefined ? { hourlyRate: data.hourlyRate } : {}),
+      },
       include: {
         user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
       },

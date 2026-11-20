@@ -22,6 +22,7 @@ import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { Modal } from '@/components/shared/modal';
 import client from '@/api/client';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
@@ -44,6 +45,13 @@ function CatalogPickerModal({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  // Permissions round 2 (B-16 / B-17) — catalog price only with
+  // finance:read; it is only sent along (as the row's snapshot) with
+  // finance:write. The row links to the catalog (`catalogTaskId`), which
+  // supplies the live price either way.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
+  const canEditFinance = can('finance', 'write');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [adding, setAdding] = useState(false);
@@ -115,7 +123,7 @@ function CatalogPickerModal({
           code: ct.code,
           name: ct.name,
           defaultBudgetHours: ct.defaultBudgetHours,
-          defaultBudgetAmount: ct.defaultBudgetAmount,
+          ...(canEditFinance ? { defaultBudgetAmount: ct.defaultBudgetAmount } : {}),
           // DN-ext (2026-10-22) — store the source catalog TemplateTask
           // id so the editor can resolve name + hours LIVE from the
           // catalog on subsequent reads. Local scalars above still
@@ -188,7 +196,9 @@ function CatalogPickerModal({
                   <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('code')}>Code{sortIcon('code')}</th>
                   <th className="px-3 py-2 text-left font-medium cursor-pointer select-none" onClick={() => handleSort('name')}>Name{sortIcon('name')}</th>
                   <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('hours')}>Hours{sortIcon('hours')}</th>
-                  <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                  {showFinance && (
+                    <th className="px-3 py-2 text-right font-medium cursor-pointer select-none" onClick={() => handleSort('amount')}>Amount{sortIcon('amount')}</th>
+                  )}
                   <th className="px-3 py-2 text-left font-medium">Status</th>
                 </tr>
               </thead>
@@ -214,7 +224,9 @@ function CatalogPickerModal({
                     <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{task.code || '-'}</td>
                     <td className="px-3 py-2 font-medium">{task.name}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(0) : '-'}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                    {showFinance && (
+                      <td className="px-3 py-2 text-right tabular-nums">{task.defaultBudgetAmount != null ? Number(task.defaultBudgetAmount).toLocaleString() : '-'}</td>
+                    )}
                     <td className="px-3 py-2">
                       {alreadyExists && (
                         <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">already added</span>
@@ -460,6 +472,8 @@ function SortableTaskRow({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
   });
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -888,14 +902,16 @@ function SortableTaskRow({
       <td className="px-3 py-2 text-right tabular-nums">
         {task.defaultBudgetHours != null ? Number(task.defaultBudgetHours).toFixed(1) : '-'}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">
-        {task.defaultBudgetAmount != null
-          ? Number(task.defaultBudgetAmount).toLocaleString(undefined, {
-              minimumFractionDigits: 2,
-              maximumFractionDigits: 2,
-            })
-          : '-'}
-      </td>
+      {showFinance && (
+        <td className="px-3 py-2 text-right tabular-nums">
+          {task.defaultBudgetAmount != null
+            ? Number(task.defaultBudgetAmount).toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })
+            : '-'}
+        </td>
+      )}
       <td className="px-3 py-2 text-center">
         <button
           onClick={() => onDeleteTask(task)}
@@ -918,6 +934,11 @@ function EditorView({
 }) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
+  // Permissions round 2 (B-16 / B-17) — Amount column / totals only with
+  // finance:read; the Amount input only with finance:write.
+  const { can } = usePermissions();
+  const showFinance = can('finance', 'read');
+  const canEditFinance = can('finance', 'write');
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
   // Sticky horizontal scrollbar for the wide catalog table. Was
   // referenced without being declared — the parent DeliverableTemplatesPage
@@ -1191,7 +1212,8 @@ function EditorView({
       code: newTask.code.trim(),
       name: newTask.name.trim(),
       defaultBudgetHours: newTask.defaultBudgetHours ? Number(newTask.defaultBudgetHours) : undefined,
-      defaultBudgetAmount: newTask.defaultBudgetAmount ? Number(newTask.defaultBudgetAmount) : undefined,
+      defaultBudgetAmount:
+        canEditFinance && newTask.defaultBudgetAmount ? Number(newTask.defaultBudgetAmount) : undefined,
     };
     // DN-ext (2026-10-22) — when "Also add to catalog" is on, create
     // the catalog TemplateTask FIRST so we can read its id back and
@@ -1427,7 +1449,7 @@ function EditorView({
                     <span className="ml-1 text-[10px] text-muted-foreground">משימה מקדימה</span>
                   </th>
                   <th className="px-3 py-2 text-right font-medium">Hours</th>
-                  <th className="px-3 py-2 text-right font-medium">Amount</th>
+                  {showFinance && <th className="px-3 py-2 text-right font-medium">Amount</th>}
                   <th className="px-3 py-2 text-center font-medium">Actions</th>
                 </tr>
               </thead>
@@ -1475,9 +1497,13 @@ function EditorView({
                     <td className="px-3 py-2 align-top">
                       <input type="number" step="any" min="0" value={newTask.defaultBudgetHours} onChange={(e) => setNewTask((p) => ({ ...p, defaultBudgetHours: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
                     </td>
-                    <td className="px-3 py-2 align-top">
-                      <input type="number" step="any" min="0" value={newTask.defaultBudgetAmount} onChange={(e) => setNewTask((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
-                    </td>
+                    {showFinance && (
+                      <td className="px-3 py-2 align-top">
+                        {canEditFinance && (
+                          <input type="number" step="any" min="0" value={newTask.defaultBudgetAmount} onChange={(e) => setNewTask((p) => ({ ...p, defaultBudgetAmount: e.target.value }))} placeholder="0" className={`${inputClass} text-right`} />
+                        )}
+                      </td>
+                    )}
                     <td className="px-3 py-2 text-center align-top">
                       <div className="flex flex-col items-center gap-1.5">
                         <div className="flex items-center gap-1">
@@ -1509,7 +1535,7 @@ function EditorView({
                 {/* Existing tasks */}
                 {tasks.length === 0 && !showAddTask && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">
+                    <td colSpan={showFinance ? 8 : 7} className="px-3 py-8 text-center text-muted-foreground">
                       No tasks yet. Click "Add Task" or "Pick from Catalog" to get started.
                     </td>
                   </tr>
@@ -1550,7 +1576,9 @@ function EditorView({
                     <td className="px-3 py-2 text-right">Totals</td>
                     <td className="px-3 py-2" />
                     <td className="px-3 py-2 text-right tabular-nums">{totals.hours.toFixed(1)}</td>
-                    <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    {showFinance && (
+                      <td className="px-3 py-2 text-right tabular-nums">{totals.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    )}
                     <td className="px-3 py-2" />
                   </tr>
                 )}

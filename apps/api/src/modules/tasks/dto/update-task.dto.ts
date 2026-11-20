@@ -1,10 +1,11 @@
-import { PartialType } from '@nestjs/mapped-types';
+import { OmitType, PartialType } from '@nestjs/mapped-types';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsBoolean, IsInt, IsString, IsDateString, Min, Max, ValidateIf } from 'class-validator';
 
 import { CreateTaskDto } from './create-task.dto';
 
-export class UpdateTaskDto extends PartialType(CreateTaskDto) {
+// `sourceTemplateTaskId` is create-only (price-list copy on create).
+export class UpdateTaskDto extends PartialType(OmitType(CreateTaskDto, ['sourceTemplateTaskId'] as const)) {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

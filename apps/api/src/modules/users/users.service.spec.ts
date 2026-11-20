@@ -305,3 +305,49 @@ describe('UsersService — DELETE /users/:id', () => {
     expect(other.prisma.user.delete).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Permissions round 2 (2026-11-20) — B-14: a person's pay rate
+ * (`salaryHourly`) and labor category (`seniorityLevelId`, the cost
+ * tier) change only with finance:write. Unchanged values pass (the edit
+ * modal sends the whole form).
+ */
+describe('UsersService — money on a person needs finance:write', () => {
+  const FINANCE_PARTNERS_WRITER = {
+    ...PARTNERS_WRITER,
+    roleModules: [...PARTNERS_WRITER.roleModules, perm('/finance', { canRead: true, canWrite: true })],
+  };
+  const stored = () => existingUser({ salaryHourly: '85.00', seniorityLevelId: 2 });
+
+  it.each([
+    ['salaryHourly', { salaryHourly: 120 }],
+    ['salaryHourly (cleared)', { salaryHourly: null }],
+    ['seniorityLevelId', { seniorityLevelId: 3 }],
+  ])('PATCH changing %s without finance:write → 403, nothing written', async (_f, dto) => {
+    const { svc, prisma } = makeService({ target: stored() });
+    await expect(svc.update(50, dto as any, PARTNERS_WRITER)).rejects.toThrow(/requires finance:write/);
+    await expect(svc.update(50, dto as any, ADMIN)).rejects.toThrow(/requires finance:write/);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+  });
+
+  it('PATCH echoing the stored rate / level passes', async () => {
+    const { svc, prisma } = makeService({ target: stored() });
+    // the M17 routing sees the same open level and records nothing
+    prisma.userSeniority = { findFirst: jest.fn(async () => ({ id: 1, seniorityLevelId: 2 })) };
+    await svc.update(50, { firstName: 'Dana R.', salaryHourly: 85, seniorityLevelId: 2 } as any, PARTNERS_WRITER);
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('a finance writer changes the rate', async () => {
+    const { svc, prisma } = makeService({ target: stored() });
+    await svc.update(50, { salaryHourly: 120 } as any, FINANCE_PARTNERS_WRITER);
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('POST with a pay rate or a labor category needs finance:write', async () => {
+    const { svc, prisma } = makeService();
+    await expect(svc.create({ ...createDto(5), salaryHourly: 90 } as any, HR)).rejects.toThrow(/salaryHourly requires finance:write/);
+    await expect(svc.create({ ...createDto(5), seniorityLevelId: 2 } as any, HR)).rejects.toThrow(/seniorityLevelId/);
+    expect(prisma.user.create).not.toHaveBeenCalled();
+  });
+});

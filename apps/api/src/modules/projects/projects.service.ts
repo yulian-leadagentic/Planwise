@@ -14,6 +14,7 @@ import { rollupTaskCompletion } from '../../common/task-completion';
 import { LIVE_EDGE } from '../../common/task-dependency-filters';
 import { buildCostRateResolver, isRateableOutcome } from './cost-rate-resolver';
 import { buildEligibleWhere, extractEligibilityRule } from './role-eligibility';
+import { canSeeFinance, omitKeys, PROJECT_MONEY_KEYS } from '../../common/finance/finance-access';
 import * as Sentry from '@sentry/node';
 
 /**
@@ -21,20 +22,12 @@ import * as Sentry from '@sentry/node';
  * finance:read gate so the same user sees the same surfaces top-to-bottom
  * (no "I can't see budget on the row but I can scrape it from
  * /projects/:id directly via DevTools" gap).
+ *
+ * Permissions round 1 (2026-11-20) — decision 2: `finance:read` is the
+ * ONLY thing that grants seeing money; no admin shortcut. Round 2 moved
+ * the check into the shared `canSeeFinance` (common/finance).
  */
-function callerCanReadFinance(user: any): boolean {
-  if (!user) return false;
-  // Permissions round 1 (2026-11-20) — decision 2: `finance:read` is the
-  // ONLY thing that grants seeing money. No admin shortcut here (the
-  // legacy `roleId === 1` bypass is gone); an Admin who needs finance
-  // data holds the explicit grant like everyone else.
-  const mods: any[] = user.roleModules ?? [];
-  return mods.some((rm) => {
-    const route = rm.module?.route ?? '';
-    const name = (rm.module?.name ?? '').toLowerCase();
-    return (route === 'finance' || route === '/finance' || name === 'finance') && !!rm.canRead;
-  });
-}
+const callerCanReadFinance = canSeeFinance;
 
 /**
  * Strip finance-sensitive fields from a project payload. Pure — never mutates.
@@ -43,11 +36,12 @@ function callerCanReadFinance(user: any): boolean {
  * cost) added by `findAll` for the projects list. It's the same shape of data
  * as `budget` / `estimatedValue`, so it rides on the same finance gate. Hours
  * and completion % are NOT stripped — the list header shows them regardless.
+ * (`estimatedValue` / `actualCost` are also on the global interceptor list;
+ * `budget` is an ambiguous name and is only stripped here.)
  */
-function omitBudget<T extends Record<string, any>>(p: T): Omit<T, 'budget' | 'estimatedValue' | 'actualCost'> {
+export function omitBudget<T extends Record<string, any>>(p: T): Omit<T, 'budget' | 'estimatedValue' | 'actualCost'> {
   if (!p) return p as any;
-  const { budget: _b, estimatedValue: _e, actualCost: _c, ...rest } = p;
-  return rest as any;
+  return omitKeys(p, PROJECT_MONEY_KEYS) as any;
 }
 
 @Injectable()
@@ -800,6 +794,14 @@ export class ProjectsService {
     return +total.toFixed(2);
   }
 
+  /** Stored money columns — the write-side finance check compares against these. */
+  async getMoneySnapshot(id: number): Promise<{ budget: unknown; estimatedValue: unknown } | null> {
+    return this.prisma.project.findFirst({
+      where: { id },
+      select: { budget: true, estimatedValue: true },
+    });
+  }
+
   async update(id: number, dto: UpdateProjectDto, actorUserId?: number) {
     await this.findOne(id);
     const { memberIds, projectTypeIds, ...rest } = dto;
@@ -1117,7 +1119,10 @@ export class ProjectsService {
    *  client-side filters — one row per task, in a shape that's easy to
    *  slice in Excel/Sheets. Called by GET /projects/:id/tasks/export.
    *  (Tier B #5, 2026-06-30.) */
-  async exportTasksExcel(projectId: number): Promise<{ buffer: Buffer; filename: string }> {
+  async exportTasksExcel(
+    projectId: number,
+    opts: { includeMoney: boolean } = { includeMoney: false },
+  ): Promise<{ buffer: Buffer; filename: string }> {
     await this.findOne(projectId);
     const [project, tasks] = await Promise.all([
       this.prisma.project.findUnique({
@@ -1144,6 +1149,13 @@ export class ProjectsService {
     wb.creator = 'Planwise';
     wb.created = new Date();
     const ws = wb.addWorksheet('Tasks');
+    // Permissions round 2 (B-10) — a file export bypasses the response
+    // interceptor, so the money column is dropped here for callers
+    // without finance:read (the controller passes `includeMoney`).
+    // Defaults to no money so a new caller can't leak it by omission.
+    const amountColumn = opts.includeMoney
+      ? [{ header: 'Amount (₪)', key: 'budgetAmount', width: 14 }]
+      : [];
     ws.columns = [
       { header: 'Code', key: 'code', width: 14 },
       { header: 'Task', key: 'name', width: 42 },
@@ -1160,7 +1172,7 @@ export class ProjectsService {
       { header: 'Requires Review', key: 'requiresReview', width: 16 },
       { header: 'Est. Hours', key: 'budgetHours', width: 12 },
       { header: 'Logged (min)', key: 'loggedMinutes', width: 14 },
-      { header: 'Amount (₪)', key: 'budgetAmount', width: 14 },
+      ...amountColumn,
       { header: 'Start Date', key: 'startDate', width: 12 },
       { header: 'Due Date', key: 'endDate', width: 12 },
       { header: 'Completion %', key: 'completionPct', width: 14 },
@@ -1193,7 +1205,7 @@ export class ProjectsService {
         requiresReview: t.requiresReview ? 'Yes' : 'No',
         budgetHours: Number(t.budgetHours ?? 0),
         loggedMinutes: 0, // fill from time-entry aggregation if we ever want the roll-up on export
-        budgetAmount: Number(t.budgetAmount ?? 0),
+        ...(opts.includeMoney ? { budgetAmount: Number(t.budgetAmount ?? 0) } : {}),
         startDate: fmtDate(t.startDate),
         endDate: fmtDate(t.endDate),
         completionPct: t.completionPct ?? 0,

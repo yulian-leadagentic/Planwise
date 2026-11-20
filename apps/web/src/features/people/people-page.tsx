@@ -132,9 +132,13 @@ export function PeoplePage() {
   });
 
   // M5a — seniority catalog for the Employee form's level dropdown.
+  // Permissions round 2 — the labor-category catalog (rate card) is a
+  // finance:read route now; don't fire it (and 403) without the grant.
+  const canReadRateCard = usePermissions().can('finance', 'read');
   const { data: seniorityLevels = [] } = useQuery<any[]>({
     queryKey: ['admin', 'seniority-levels'],
     staleTime: 5 * 60 * 1000,
+    enabled: canReadRateCard,
     queryFn: () =>
       client.get('/admin/config/seniority-levels').then((r) => {
         const d = r.data?.data ?? r.data;
@@ -380,6 +384,10 @@ export function PeoplePage() {
   // QA3 round-3 item 7b — finance gate for the effective ₪/h column.
   // Non-finance users don't see the rate at all (column hidden).
   const showEffectiveRate = can('finance', 'read');
+  // Permissions round 2 (B-14) — the labor category is the cost tier the
+  // cost engine prices hours at: changing it needs finance:write (the API
+  // rejects it otherwise). Everyone else sees the category name only.
+  const canChangeLaborCategory = can('finance', 'write');
   // People UX U2 — confirm any Access Role change that either raises the
   // target to an admin-level role or lowers it from one. The heuristic
   // "role name contains 'Admin'" covers the seeded Admin / HR Admin
@@ -404,6 +412,18 @@ export function PeoplePage() {
     isActive: isActiveParam,
   });
   const users = data?.data ?? [];
+  // Labor-category options for the column filter: the catalog when the
+  // viewer may read it (finance:read), else the distinct categories on
+  // the loaded rows (names only — the API strips their cost).
+  const seniorityOptions = useMemo<any[]>(() => {
+    if (seniorityLevels.length > 0) return seniorityLevels;
+    const byId = new Map<number, any>();
+    for (const u of users as any[]) {
+      const sl = u?.seniorityLevel;
+      if (sl?.id != null && !byId.has(sl.id)) byId.set(sl.id, { id: sl.id, name: sl.name });
+    }
+    return Array.from(byId.values());
+  }, [seniorityLevels, users]);
 
   const columns = useMemo(
     () => getColumns(
@@ -450,11 +470,11 @@ export function PeoplePage() {
       // Legacy free-text `User.department` shows as a disabled hint in
       // the cell when the row hasn't been migrated yet.
       isPartners ? [] : orgUnits,
-      isPartners ? [] : seniorityLevels,
+      isPartners ? [] : seniorityOptions,
       isPartners || !canChangeOrgUnit
         ? undefined
         : (userId: number, orgUnitId: number | null) => updateDepartment.mutate({ userId, orgUnitId }),
-      isPartners
+      isPartners || !canChangeLaborCategory
         ? undefined
         : (userId: number, seniorityLevelId: number | null) => updateSeniority.mutate({ userId, seniorityLevelId }),
       // People UX U2 — deactivate is destructive (blocks login), so it
@@ -484,7 +504,7 @@ export function PeoplePage() {
       // Admin only.
       { canChangeRole: isAdmin, canResetPassword: isAdmin },
     ),
-    [isPartners, roles, canEditPeople, savingUserId, orgUnits, seniorityLevels, showEffectiveRate, users, confirm, isAdmin, canChangeActive, canChangeOrgUnit],
+    [isPartners, roles, canEditPeople, savingUserId, orgUnits, seniorityOptions, showEffectiveRate, users, confirm, isAdmin, canChangeActive, canChangeOrgUnit, canChangeLaborCategory],
   );
 
   // Status filter: this is the ONLY page in the app that legitimately
@@ -910,7 +930,9 @@ export function PeoplePage() {
               {/* M5a — Labor Category (drives default hourly cost).
                   Cost preview + price tags on each option are gated
                   by finance:read so non-finance users see only the
-                  category name. */}
+                  category name. Permissions round 2 — setting it at all
+                  needs finance:write (the cost tier). */}
+              {canChangeLaborCategory && (<>
               <SelectField
                 label={
                   <>
@@ -946,6 +968,7 @@ export function PeoplePage() {
                   No labor categories defined yet. Add some in <a className="text-blue-600 dark:text-blue-400 hover:underline" href="/admin/seniority-levels" target="_blank" rel="noreferrer">/admin/seniority-levels</a>.
                 </p>
               )}
+              </>)}
 
               {/* M4a.4 — Employment fields */}
               <div className="grid grid-cols-3 gap-4">

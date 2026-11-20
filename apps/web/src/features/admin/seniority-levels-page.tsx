@@ -74,6 +74,9 @@ export function SeniorityLevelsPage() {
   // `showEffectiveRate`) so we mirror that check here.
   const { can } = usePermissions();
   const showRates = can('finance', 'read');
+  // Permissions round 2 (B-06 / B-14) — the labor-category routes need
+  // finance:read to list and finance:write to change (on top of admin).
+  const canEditRates = can('finance', 'write');
   // scrollRef was for the hand-rolled table; DataTable owns its own.
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -83,6 +86,7 @@ export function SeniorityLevelsPage() {
 
   const { data, isLoading } = useQuery<SeniorityRow[]>({
     queryKey: ['admin', 'seniority-levels'],
+    enabled: showRates,
     queryFn: () =>
       client.get('/admin/config/seniority-levels').then((r) => {
         const d = r.data?.data ?? r.data;
@@ -217,7 +221,7 @@ export function SeniorityLevelsPage() {
         cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'inactive'} /> },
       { id: 'actions', header: 'Actions', enableSorting: false, enableColumnFilter: false, size: 200,
         cell: ({ row }) => (
-          <div className="flex items-center justify-end gap-2">
+          canEditRates ? <div className="flex items-center justify-end gap-2">
             {showRates && (
               <button
                 onClick={() => setRateModalFor(row.original)}
@@ -255,12 +259,25 @@ export function SeniorityLevelsPage() {
             >
               <Trash2 className="h-3 w-3" aria-hidden="true" /> Delete
             </button>
-          </div>
+          </div> : null
         ),
       },
     );
     return base;
-  }, [showRates, confirm, deleteMutation]);
+  }, [showRates, canEditRates, confirm, deleteMutation]);
+
+  if (!showRates) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Labor Categories" description="Labor categories carry the hourly cost rates used by project costing." />
+        <EmptyState
+          icon={GraduationCap}
+          title="Finance permission required"
+          description="Labor categories and their rates are visible only with the Finance permission (finance:read)."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -268,7 +285,7 @@ export function SeniorityLevelsPage() {
         title="Labor Categories"
         description="Define the labor-category ladder used by employee roles and cost rates. Each category is a row; order them from junior to senior using the sort order."
         actions={
-          !showCreate && editingId == null ? (
+          canEditRates && !showCreate && editingId == null ? (
             <button
               onClick={() => {
                 setShowCreate(true);

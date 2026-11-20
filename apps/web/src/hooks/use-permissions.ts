@@ -21,7 +21,11 @@ export function usePermissions() {
   };
 
   const can = (module: string, action: PermAction): boolean => {
-    if (!roleModules.length) return true;
+    // Empty list (stale cache / partial login) = fail OPEN for ordinary
+    // modules (the API still decides), but fail CLOSED for finance
+    // (permissions round 2, B-20): no money surface is ever shown
+    // without an explicit finance grant.
+    if (!roleModules.length) return !isFinanceModule(module);
 
     // Most-specific match first; for nested routes like "/admin/roles" try the
     // exact entry, then walk up to parent ("/admin") so a role with parent
@@ -67,6 +71,11 @@ export function usePermissions() {
         roleName === 'administrator';
 
   return { can, isAdmin, user };
+}
+
+function isFinanceModule(module: string): boolean {
+  const key = module.replace(/^\//, '').toLowerCase();
+  return key === 'finance' || key.startsWith('finance/');
 }
 
 function expand(module: string): string[] {

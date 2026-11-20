@@ -7,6 +7,7 @@ import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
+import { canSeeFinance } from '../../common/finance/finance-access';
 
 @ApiTags('Execution Planning')
 @ApiBearerAuth()
@@ -70,13 +71,10 @@ export class ExecutionPlanningController {
     return this.eps.calculateFeasibility(projectId, targetDate);
   }
 
-  @Get('projects/:id/estimated-cost')
-  @RequirePermissions({ module: 'projects', action: 'read' })
-  @ApiOperation({ summary: 'Calculate project estimated cost from employee rates × logged hours' })
-  async getEstimatedCost(@CurrentUser() user: any, @Param('id', ParseIntPipe) projectId: number) {
-    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
-    return this.eps.calculateEstimatedCost(projectId);
-  }
+  // `GET /projects/:id/estimated-cost` was removed in permissions round 2
+  // (B-04): it returned every member's `User.salaryHourly` (as "rate") to
+  // anyone with projects:read on the project, and the web never called
+  // it. The finance-gated `GET /projects/:id/labor-cost` replaces it.
 
   // ─── Progress ───────────────────────────────────────────────────────────
 
@@ -177,8 +175,11 @@ export class ExecutionPlanningController {
     // set (admins), the filter no-ops and everyone is returned.
     @Query('myDeptOnly') myDeptOnly?: string,
   ) {
+    // Permissions round 2 (B-11) — `canSeeFinance` decides whether the
+    // at-risk rows carry budget / budgetUsed / budgetPct and the budget
+    // risk factor (all of them go together).
     return this.eps.getOperationsDashboard(
-      { id: user.id, isAdmin: isAdminUser(user) },
+      { id: user.id, isAdmin: isAdminUser(user), canSeeFinance: canSeeFinance(user) },
       myDeptOnly,
     );
   }

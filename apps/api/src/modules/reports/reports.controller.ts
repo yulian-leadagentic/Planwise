@@ -1,32 +1,17 @@
-import { Controller, Get, Query, UseGuards, Res } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards, Res, ForbiddenException } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { Response } from 'express';
 
-import { ReportsService } from './reports.service';
+import { ReportsService, scrubTimesheetCost, isCostExportType } from './reports.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ReportQueryDto } from './dto/report-query.dto';
-
-/**
- * Returns true iff the caller has explicit canRead on the Finance
- * module. No admin short-circuit — Finance is one of the modules in
- * NO_ADMIN_BYPASS (see RolesGuard), so admins must hold the explicit
- * grant just like everyone else. Lets an org deny finance visibility
- * to admins by simply unchecking the matrix row, without juggling
- * additional user roles.
- */
-function canSeeFinance(user: any): boolean {
-  if (!user) return false;
-  const roleModules: any[] = user.roleModules ?? user.role?.roleModules ?? [];
-  return roleModules.some((rm: any) => {
-    const route = rm.module?.route || '';
-    const name = (rm.module?.name || '').toLowerCase();
-    const matches = route === 'finance' || route === '/finance' || name === 'finance';
-    return matches && !!rm.canRead;
-  });
-}
+// `canSeeFinance` — explicit finance:read, no admin short-circuit
+// (finance is in the RolesGuard's NO_ADMIN_BYPASS). Shared helper since
+// permissions round 2.
+import { AMOUNT_KEYS, canSeeFinance, omitKeys } from '../../common/finance/finance-access';
 
 @ApiTags('Reports')
 @ApiBearerAuth()
@@ -50,12 +35,9 @@ export class ReportsController {
     const result = await this.reportsService.timesheetDetailed(query);
     if (canSeeFinance(user)) return result;
     // Scrub cost-bearing fields when the caller lacks finance:read.
-    // The rows still surface hours / employee / project / etc.
-    return {
-      ...result,
-      rows: result.rows.map((r: any) => ({ ...r, cost: null, currency: null })),
-      totals: { ...result.totals, byCurrency: [] },
-    };
+    // The rows still surface hours / employee / project / etc. Same
+    // scrub the Excel export uses (permissions round 2, B-02).
+    return scrubTimesheetCost(result);
   }
 
   @Get('timesheet/by-project')
@@ -134,20 +116,36 @@ export class ReportsController {
   @Get('milestones')
   @RequirePermissions({ module: 'reports', action: 'read' })
   @ApiOperation({ summary: 'Milestones report' })
-  milestones(@Query() query: ReportQueryDto) {
-    return this.reportsService.milestonesReport(query);
+  async milestones(@CurrentUser() user: any, @Query() query: ReportQueryDto) {
+    const rows = await this.reportsService.milestonesReport(query);
+    // Permissions round 2 (B-19) — `LabelMilestone.amount` is a payment
+    // value; ambiguous name, so stripped here for non-finance callers.
+    return canSeeFinance(user) ? rows : omitKeys(rows, AMOUNT_KEYS);
   }
 
   @Get('export')
   @RequirePermissions({ module: 'reports', action: 'export' })
   @ApiOperation({ summary: 'Export report as Excel or PDF' })
   async exportReport(
+    @CurrentUser() user: any,
     @Query('type') type: string,
     @Query('format') format: 'excel' | 'pdf',
     @Query() query: ReportQueryDto,
     @Res() res: Response,
   ) {
-    const result = await this.reportsService.exportReport(type, format, query);
+    // Permissions round 2 (B-02 / B-03) — files bypass the response
+    // interceptor, so the export enforces the finance rule itself:
+    //   - cost-* types are cost reports: finance:read or 403 (the JSON
+    //     /reports/cost/* routes are finance-gated the same way);
+    //   - timesheet-detailed drops the Cost / Currency columns and the
+    //     per-currency totals for callers without finance:read.
+    const showFinance = canSeeFinance(user);
+    if (isCostExportType(type) && !showFinance) {
+      throw new ForbiddenException('Cost reports require finance:read permission.');
+    }
+    const result = await this.reportsService.exportReport(type, format, query, {
+      canSeeFinance: showFinance,
+    });
 
     if (format === 'excel') {
       res.set({

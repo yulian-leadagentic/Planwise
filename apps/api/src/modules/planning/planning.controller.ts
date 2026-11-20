@@ -9,7 +9,8 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
-import { PlanningService } from './planning.service';
+import { PlanningService, redactPlanningMoney } from './planning.service';
+import { canSeeFinance } from '../../common/finance/finance-access';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
@@ -31,7 +32,12 @@ export class PlanningController {
   @ApiOperation({ summary: 'Get combined planning data for the planning modal' })
   async getPlanningData(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
     await this.access.assertProjectAccess(user.id, id, isAdminUser(user));
-    return this.planningService.getPlanningData(id);
+    const data = await this.planningService.getPlanningData(id);
+    // Permissions round 2 (B-07) — `project.budget` and the budget-summary
+    // money use ambiguous names, so they are stripped here; task
+    // `budgetAmount` / `actualCost` / assignee `hourlyRate` go through
+    // the global FinanceRedactionInterceptor as well.
+    return canSeeFinance(user) ? data : redactPlanningMoney(data);
   }
 }
 

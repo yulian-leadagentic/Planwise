@@ -20,6 +20,30 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
 import { CreateContractDto } from './dto/create-contract.dto';
 import { CreateExpenseDto } from './dto/create-expense.dto';
+import {
+  AMOUNT_KEYS,
+  assertFinanceFieldWrites,
+  canSeeFinance,
+  CONTRACT_ITEM_MONEY_KEYS,
+  omitKeys,
+} from '../../common/finance/finance-access';
+
+/**
+ * Permissions round 2 (B-12 / B-13) — contract money.
+ *   Read:  `totalAmount` / `unitPrice` are stripped by the global
+ *          interceptor; ContractItem `total` / `quantity` and
+ *          Billing / LabelMilestone / Expense `amount` are ambiguous
+ *          names, stripped here for callers without finance:read.
+ *   Write: changing any of them needs finance:write (unchanged echoes
+ *          pass).
+ */
+function redactContractMoney<T extends Record<string, any>>(contract: T): T {
+  if (!contract || typeof contract !== 'object') return contract;
+  const out: Record<string, any> = omitKeys(contract, ['totalAmount']);
+  if (Array.isArray(out.items)) out.items = omitKeys(out.items, CONTRACT_ITEM_MONEY_KEYS);
+  if (Array.isArray(out.billings)) out.billings = omitKeys(out.billings, AMOUNT_KEYS);
+  return out as T;
+}
 
 @ApiTags('Contracts')
 @ApiBearerAuth()
@@ -31,7 +55,8 @@ export class ContractsController {
   @Post()
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Create a contract' })
-  create(@CurrentUser() user: any, @Body() dto: CreateContractDto) {
+  async create(@CurrentUser() user: any, @Body() dto: CreateContractDto) {
+    await assertFinanceFieldWrites(user, dto, ['totalAmount'], null);
     return this.contractsService.create(user.id, dto);
   }
 
@@ -52,18 +77,20 @@ export class ContractsController {
   @Get(':id')
   @RequirePermissions({ module: 'contracts', action: 'read' })
   @ApiOperation({ summary: 'Get contract by ID' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.contractsService.findOne(id);
+  async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    const contract = await this.contractsService.findOne(id);
+    return canSeeFinance(user) ? contract : redactContractMoney(contract);
   }
 
   @Patch(':id')
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Update a contract' })
-  update(
+  async update(
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Partial<CreateContractDto>,
   ) {
+    await assertFinanceFieldWrites(user, dto, ['totalAmount'], () => this.contractsService.findOne(id));
     return this.contractsService.update(id, dto, user.id);
   }
 
@@ -78,18 +105,26 @@ export class ContractsController {
   @Post(':id/items')
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Add item to contract' })
-  addItem(@Param('id', ParseIntPipe) contractId: number, @Body() body: any) {
-    return this.contractsService.addItem(contractId, body);
+  async addItem(@CurrentUser() user: any, @Param('id', ParseIntPipe) contractId: number, @Body() body: any) {
+    // `quantity` defaults to 1 on create — echoing the default is no change.
+    await assertFinanceFieldWrites(user, body, CONTRACT_ITEM_MONEY_KEYS, { quantity: 1 });
+    const item = await this.contractsService.addItem(contractId, body);
+    return canSeeFinance(user) ? item : omitKeys(item, CONTRACT_ITEM_MONEY_KEYS);
   }
 
   @Patch(':id/items/:itemId')
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Update contract item' })
-  updateItem(
+  async updateItem(
+    @CurrentUser() user: any,
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() body: any,
   ) {
-    return this.contractsService.updateItem(itemId, body);
+    await assertFinanceFieldWrites(user, body, CONTRACT_ITEM_MONEY_KEYS, () =>
+      this.contractsService.getItem(itemId),
+    );
+    const item = await this.contractsService.updateItem(itemId, body);
+    return canSeeFinance(user) ? item : omitKeys(item, CONTRACT_ITEM_MONEY_KEYS);
   }
 
   @Delete(':id/items/:itemId')
@@ -103,15 +138,19 @@ export class ContractsController {
   @Post(':contractId/milestones')
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Create milestone for a label' })
-  createMilestone(@CurrentUser() user: any, @Body() body: any) {
-    return this.contractsService.createMilestone(user.id, body);
+  async createMilestone(@CurrentUser() user: any, @Body() body: any) {
+    await assertFinanceFieldWrites(user, body, AMOUNT_KEYS, null);
+    const milestone = await this.contractsService.createMilestone(user.id, body);
+    return canSeeFinance(user) ? milestone : omitKeys(milestone, AMOUNT_KEYS);
   }
 
   @Patch('milestones/:id')
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Update milestone' })
-  updateMilestone(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
-    return this.contractsService.updateMilestone(id, body);
+  async updateMilestone(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    await assertFinanceFieldWrites(user, body, AMOUNT_KEYS, () => this.contractsService.getMilestone(id));
+    const milestone = await this.contractsService.updateMilestone(id, body);
+    return canSeeFinance(user) ? milestone : omitKeys(milestone, AMOUNT_KEYS);
   }
 
   @Delete('milestones/:id')
@@ -147,29 +186,22 @@ export class ContractsController {
   @Post('expenses')
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Create expense' })
-  createExpense(@CurrentUser() user: any, @Body() dto: CreateExpenseDto) {
-    return this.contractsService.createExpense(user.id, dto);
+  async createExpense(@CurrentUser() user: any, @Body() dto: CreateExpenseDto) {
+    await assertFinanceFieldWrites(user, dto, AMOUNT_KEYS, null);
+    const expense = await this.contractsService.createExpense(user.id, dto);
+    return canSeeFinance(user) ? expense : omitKeys(expense, AMOUNT_KEYS);
   }
 
   @Get('expenses')
   @RequirePermissions({ module: 'contracts', action: 'read' })
   @ApiOperation({ summary: 'List expenses by project' })
-  getExpenses(@Query('projectId', ParseIntPipe) projectId: number) {
-    return this.contractsService.getExpenses(projectId);
+  async getExpenses(@CurrentUser() user: any, @Query('projectId', ParseIntPipe) projectId: number) {
+    const expenses = await this.contractsService.getExpenses(projectId);
+    return canSeeFinance(user) ? expenses : omitKeys(expenses, AMOUNT_KEYS);
   }
 
-  // Terms
-  @Post('terms')
-  @RequirePermissions({ module: 'contracts', action: 'write' })
-  @ApiOperation({ summary: 'Create employment/contract term' })
-  createTerm(@Body() body: any) {
-    return this.contractsService.createTerm(body);
-  }
-
-  @Get('terms/:userId')
-  @RequirePermissions({ module: 'contracts', action: 'read' })
-  @ApiOperation({ summary: 'Get terms for a user' })
-  getTerms(@Param('userId', ParseIntPipe) userId: number) {
-    return this.contractsService.getTerms(userId);
-  }
+  // `POST /contracts/terms` and `GET /contracts/terms/:userId` were
+  // removed in permissions round 2 (B-05 / B-14): they read and wrote
+  // `Term.monthlySalary` / `Term.hourlyRate` for ANY user behind plain
+  // contracts:read / contracts:write, and nothing in the web called them.
 }

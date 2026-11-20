@@ -244,6 +244,16 @@ export class ContractsService {
   }
 
   // Contract Items
+  /** Stored item money — the write-side finance check compares against it. */
+  async getItem(itemId: number) {
+    const item = await this.prisma.contractItem.findUnique({
+      where: { id: itemId },
+      select: { id: true, quantity: true, unitPrice: true, total: true },
+    });
+    if (!item) throw new NotFoundException('Contract item not found');
+    return item;
+  }
+
   async addItem(contractId: number, data: any) {
     return this.prisma.contractItem.create({
       data: {
@@ -284,6 +294,16 @@ export class ContractsService {
   }
 
   // Milestones
+  /** Stored milestone amount — the write-side finance check compares against it. */
+  async getMilestone(id: number) {
+    const milestone = await this.prisma.labelMilestone.findUnique({
+      where: { id },
+      select: { id: true, amount: true },
+    });
+    if (!milestone) throw new NotFoundException('Milestone not found');
+    return milestone;
+  }
+
   async createMilestone(userId: number, data: any) {
     return this.prisma.labelMilestone.create({
       data: {
@@ -453,24 +473,6 @@ export class ContractsService {
     });
   }
 
-  // Terms
-  async createTerm(data: any) {
-    return this.prisma.term.create({
-      data: {
-        userId: data.userId,
-        title: data.title,
-        monthlySalary: data.monthlySalary,
-        hourlyRate: data.hourlyRate,
-        startDate: new Date(data.startDate),
-        endDate: data.endDate ? new Date(data.endDate) : null,
-      },
-    });
-  }
-
-  async getTerms(userId: number) {
-    return this.prisma.term.findMany({
-      where: { userId },
-      orderBy: { startDate: 'desc' },
-    });
-  }
+  // Terms (`createTerm` / `getTerms`) were removed in permissions
+  // round 2 together with their routes — see the controller note.
 }

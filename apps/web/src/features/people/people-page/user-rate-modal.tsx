@@ -6,6 +6,7 @@ import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { Modal } from '@/components/shared/modal';
 import { TextField } from '@/components/shared/field';
+import { usePermissions } from '@/hooks/use-permissions';
 import type { UserListItem } from '@/types';
 
 // QA3 round-3 items 3b + 5 — per-employee cost-rate override modal.
@@ -35,6 +36,10 @@ interface Props {
 export function UserRateModal({ user, onClose }: Props) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
+  // Permissions round 2 (B-14) — setting / removing an override needs
+  // finance:write; a finance reader sees the current rate + history only.
+  const { can } = usePermissions();
+  const canEditRates = can('finance', 'write');
   const [hourlyCost, setHourlyCost] = useState('');
   const [effectiveFrom, setEffectiveFrom] = useState(new Date().toISOString().slice(0, 10));
   // Empty = "Current" (open-ended). Any date = bounded window.
@@ -144,7 +149,7 @@ export function UserRateModal({ user, onClose }: Props) {
           )}
         </div>
 
-        <div>
+        {canEditRates && <div>
           <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
             Set / change override — forward effective
           </h4>
@@ -212,7 +217,7 @@ export function UserRateModal({ user, onClose }: Props) {
               {changeMutation.isPending ? 'Saving…' : currentOverride ? 'Change override' : 'Set override'}
             </button>
           </div>
-        </div>
+        </div>}
 
         <div>
           <h4 className="mb-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">

@@ -39,6 +39,10 @@ export function SeniorityHistorySection({
   // finance:read must be explicitly granted to see rates, even for
   // admins. Matches the backend gate on /projects/:id/labor-cost.
   const showCost = can('finance', 'read');
+  // Permissions round 2 (B-14) — adding / editing / removing an entry
+  // moves the employee's cost tier: finance:write only (the API rejects
+  // it otherwise). Without it the history is read-only.
+  const canEditTier = can('finance', 'write');
   const [showAddForm, setShowAddForm] = useState(false);
   const [newLevelId, setNewLevelId] = useState<string>('');
   const [newStartDate, setNewStartDate] = useState<string>(new Date().toISOString().slice(0, 10));
@@ -154,7 +158,7 @@ export function SeniorityHistorySection({
             Date-effective labor category. Open-ended adds auto-close the previous current row.
           </p>
         </div>
-        {!showAddForm && (
+        {canEditTier && !showAddForm && (
           <button
             type="button"
             onClick={() => setShowAddForm(true)}
@@ -166,7 +170,7 @@ export function SeniorityHistorySection({
       </div>
 
       {/* Add form */}
-      {showAddForm && (
+      {canEditTier && showAddForm && (
         <div className="mb-3 rounded-md border border-blue-200 bg-white dark:bg-slate-900 p-3 space-y-2">
           <div className="grid grid-cols-3 gap-2">
             <div>
@@ -316,7 +320,7 @@ export function SeniorityHistorySection({
                 {showCost && hourlyCost != null && (
                   <span className="text-slate-400 dark:text-slate-500">· ₪{hourlyCost}/h</span>
                 )}
-                <div className="ml-auto flex items-center gap-1">
+                {canEditTier && <div className="ml-auto flex items-center gap-1">
                   {/* People UX M5 (T-29) — icon-only buttons get ≥ 24×24 touch
                       area (min-w/min-h override the previous p-1 flex box
                       which resolved to ~20×20 in practice) and an aria-label
@@ -342,7 +346,7 @@ export function SeniorityHistorySection({
                   >
                     <X className="h-3 w-3" aria-hidden="true" />
                   </button>
-                </div>
+                </div>}
               </div>
             );
           })}
