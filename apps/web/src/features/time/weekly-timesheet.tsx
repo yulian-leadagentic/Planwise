@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { timeApi, type TimeEntryPayload } from '@/api/time.api';
 import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useDeleteTimeEntry } from '@/hooks/use-time';
-import { useOverlapConfirm } from './overlap-confirm';
+import { useOverlapDialog } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 import { TimeoffForm } from './timeoff-form';
 import { hrApi, type AbsenceRecord } from '@/features/hr/api/hr.api';
@@ -87,11 +87,9 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
   // Drawer ID in ?task=N so back/refresh/outbound-return restores it.
   const { drawerId: editingTaskId, openDrawer: setEditingTaskId, closeDrawer: closeEditing } = useDrawerRoute('task');
   // Bypass the blanket useCreateTimeEntry hook and drive the request
-  // directly so we can intercept the CROSS_TASK_OVERLAP error and show
-  // the Save-anyway confirmation. The hook always toasts on error,
-  // which is why the user saw the warning without an action button —
-  // V11 in the bug list.
-  const overlap = useOverlapConfirm();
+  // directly so an overlap 409 (same- or cross-task) opens the read-only
+  // overlap dialog instead of the hook's generic error toast.
+  const overlap = useOverlapDialog();
   const [submitting, setSubmitting] = useState(false);
   const queryClient = useQueryClient();
   // Needed for quick-task creation so we can assign the new task to the
@@ -165,11 +163,11 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
     setSubmitting(true);
     // QA4 B5: when editing, hit PATCH /time-entries/:id (which was
     // implemented but never wired). We still funnel through
-    // overlap.withConfirm so the cross-task-overlap "Save anyway"
-    // dialog stays consistent between create + update.
+    // overlap.withOverlapCheck so the overlap dialog stays consistent
+    // between create + update.
     if (isEditing && entry?.id) {
-      await overlap.withConfirm(
-        (confirmOverlap) => timeApi.updateEntry(entry.id, { ...payloadBase, confirmOverlap }),
+      await overlap.withOverlapCheck(
+        () => timeApi.updateEntry(entry.id, payloadBase),
         {
           onSuccess: () => {
             notify.success('Time entry updated', { code: 'TIME-UPDATE-200' });
@@ -183,8 +181,8 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
         },
       );
     } else {
-      await overlap.withConfirm(
-        (confirmOverlap) => timeApi.createEntry({ ...payloadBase, confirmOverlap }),
+      await overlap.withOverlapCheck(
+        () => timeApi.createEntry(payloadBase),
         {
           onSuccess: () => {
             notify.success('Time entry created', { code: 'TIME-CREATE-200' });
@@ -497,9 +495,9 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
         </>
         )}
       </div>
-      {/* Save-anyway dialog for cross-task time overlaps. Renders only
-          when overlap.withConfirm caught a CROSS_TASK_OVERLAP from the
-          backend; otherwise it's null. */}
+      {/* Read-only overlap dialog. Renders only when
+          overlap.withOverlapCheck caught a SAME_TASK_OVERLAP /
+          CROSS_TASK_OVERLAP from the backend; otherwise it's null. */}
       {overlap.dialog}
 
       {/* Task drawer for editing the selected task — opened by the pencil

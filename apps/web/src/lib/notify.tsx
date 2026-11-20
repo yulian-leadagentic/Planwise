@@ -311,6 +311,32 @@ export function getErrorCode(error: any, fallbackModule = 'APP', fallbackAction 
   return `${module}-${action}-${status || 'ERR'}`;
 }
 
+// ─── API error envelope ────────────────────────────────────────────────
+
+/** Just enough of an axios error to reach the envelope. */
+type ApiErrorLike =
+  | { response?: { data?: { error?: { code?: unknown; details?: unknown } } } }
+  | null
+  | undefined;
+
+/**
+ * The stable code from the API's error envelope
+ * `{ success: false, error: { code, message, details } }` — a business
+ * code such as MONTHLY_NOT_YET_COMPUTED / CROSS_TASK_OVERLAP /
+ * PERMISSION_DENIED, or the status-derived one (BAD_REQUEST, CONFLICT …).
+ * Null for network errors or a body without the envelope. (2026-11-20)
+ */
+export function apiErrorCode(error: unknown): string | null {
+  const code = (error as ApiErrorLike)?.response?.data?.error?.code;
+  return typeof code === 'string' && code ? code : null;
+}
+
+/** The envelope's `error.details` payload (e.g. the conflicts of a CROSS_TASK_OVERLAP), or null. */
+export function apiErrorDetails<T = unknown>(error: unknown): T | null {
+  const details = (error as ApiErrorLike)?.response?.data?.error?.details;
+  return details == null ? null : (details as T);
+}
+
 // ─── Permission 403s ───────────────────────────────────────────────────
 
 /** Envelope code the API puts on every "you may not do this" 403. */
@@ -326,7 +352,7 @@ const GENERIC_NO_PERMISSION = "You don't have permission to do this. Ask your ad
  * a permission, and keeps the regular error alert.
  */
 export function isPermissionDenied(error: any): boolean {
-  const code = error?.response?.data?.error?.code;
+  const code = apiErrorCode(error);
   if (code === PERMISSION_DENIED_CODE) return true;
   const status = error?.response?.status ?? error?.status;
   return status === 403 && (code == null || code === 'FORBIDDEN');
@@ -427,8 +453,7 @@ export const notify = {
 
     // Validation-shaped responses (NestJS ValidationPipe returns
     // { details: string[] } in the envelope). Show as bullet list.
-    const details = error?.response?.data?.error?.details
-      ?? error?.response?.data?.details;
+    const details = apiErrorDetails(error) ?? error?.response?.data?.details;
     if (Array.isArray(details) && details.length > 0) {
       return render('validation', message, { code, issues: details.map(String) });
     }

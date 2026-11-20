@@ -5,7 +5,7 @@ import { notify } from '@/lib/notify';
 import { timeApi } from '@/api/time.api';
 import { formatShortDate } from '@/lib/task-constants';
 import { queryKeys } from '@/lib/query-keys';
-import { useOverlapConfirm } from '@/features/time/overlap-confirm';
+import { useOverlapDialog } from '@/features/time/overlap-confirm';
 import { invalidateAfterTimeEntry } from '@/features/time/invalidate-after-time-entry';
 import { LocationToggle, type TimeLocation } from '@/features/time/location-toggle';
 import { TimeDropdown } from './time-dropdown';
@@ -66,16 +66,16 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
   })();
   const historyTotalMin = history.reduce((s, e) => s + (e.minutes ?? 0), 0);
 
-  const overlap = useOverlapConfirm();
+  const overlap = useOverlapDialog();
   const [saving, setSaving] = useState(false);
 
-  // Cross-task overlap → confirm dialog, then retry with confirmOverlap.
-  // Same-task overlap → backend rejects, notify.apiError surfaces it.
+  // Any overlap (same- or cross-task) → backend rejects with 409 and the
+  // read-only overlap dialog lists the conflicting entries.
   const handleLog = () => {
     if (totalMinutes <= 0) return;
     setSaving(true);
-    overlap.withConfirm(
-      (confirmOverlap) => timeApi.createEntry({
+    overlap.withOverlapCheck(
+      () => timeApi.createEntry({
         taskId,
         projectId: taskProjectId ?? undefined,
         date,
@@ -85,7 +85,6 @@ export function QuickTimeLog({ taskId, taskProjectId }: { taskId: number; taskPr
         note: note.trim() || undefined,
         isBillable: true,
         location,
-        confirmOverlap,
       }),
       {
         onSuccess: () => {

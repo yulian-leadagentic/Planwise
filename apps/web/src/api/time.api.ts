@@ -39,12 +39,6 @@ export interface TimeEntryPayload {
    * the field; omit to leave untouched.
    */
   specialHourBucketId?: number | null;
-  /**
-   * Acknowledges a cross-task overlap and allows the entry to save. Sent
-   * by `useOverlapConfirm` after the user clicks "Save anyway" in the
-   * confirm dialog. No effect for same-task overlaps (always rejected).
-   */
-  confirmOverlap?: boolean;
 }
 
 export interface WeeklyGridQuery {

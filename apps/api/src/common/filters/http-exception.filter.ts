@@ -9,6 +9,9 @@ import {
 import * as Sentry from '@sentry/node';
 import { Response } from 'express';
 
+/** Shape of a code a 4xx may put on the envelope instead of the status-derived one. */
+const BUSINESS_CODE = /^[A-Z][A-Z0-9_]*$/;
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(HttpExceptionFilter.name);
@@ -41,13 +44,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
           message = 'Validation failed';
         }
 
-        // Permission messages (2026-11-20) — a 403 may carry its own
-        // stable code: PERMISSION_DENIED for every "you may not do this"
+        // Business codes (2026-11-20) — any 4xx may carry its own stable
+        // code, which replaces the status-derived one. On a 403 that is
+        // PERMISSION_DENIED for every "you may not do this"
         // (PermissionDeniedException, details = { module, action } /
         // { field } / { reason }), or a business-rule code such as
-        // ROLE_IS_SYSTEM. The web shows PERMISSION_DENIED as a "No
-        // permission" alert. Other statuses keep the status-derived code.
-        if (status === HttpStatus.FORBIDDEN && typeof resp.code === 'string' && resp.code) {
+        // ROLE_IS_SYSTEM; the web shows only PERMISSION_DENIED (or a bare
+        // FORBIDDEN) as a "No permission" alert. On a 400 / 409 it is a
+        // rule the web reacts to, e.g. MONTHLY_NOT_YET_COMPUTED or
+        // CROSS_TASK_OVERLAP. Only UPPER_SNAKE strings count; 5xx always
+        // keeps the status-derived code.
+        if (
+          status >= 400 &&
+          status < 500 &&
+          typeof resp.code === 'string' &&
+          BUSINESS_CODE.test(resp.code)
+        ) {
           code = resp.code;
         }
       }

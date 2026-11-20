@@ -11,7 +11,7 @@ vi.mock('sonner', () => ({
 }));
 
 import { toast } from 'sonner';
-import { notify, isPermissionDenied, getPermissionMessage } from './notify';
+import { notify, isPermissionDenied, getPermissionMessage, apiErrorCode, apiErrorDetails } from './notify';
 
 const custom = toast.custom as unknown as ReturnType<typeof vi.fn>;
 
@@ -100,10 +100,71 @@ describe('isPermissionDenied / getPermissionMessage', () => {
     expect(isPermissionDenied(err)).toBe(expected);
   });
 
+  it.each([
+    ['400 MONTHLY_NOT_YET_COMPUTED', axiosError(400, { success: false, error: { code: 'MONTHLY_NOT_YET_COMPUTED', message: 'x', details: null } })],
+    ['409 CROSS_TASK_OVERLAP', axiosError(409, { success: false, error: { code: 'CROSS_TASK_OVERLAP', message: 'x', details: {} } })],
+  ])('a 4xx business code is not a permission refusal (%s)', (_label, err) => {
+    expect(isPermissionDenied(err)).toBe(false);
+  });
+
   it('never returns axios\' "Request failed with status code 403"', () => {
     expect(getPermissionMessage(axiosError(403, undefined))).toBe(
       "You don't have permission to do this. Ask your administrator for access.",
     );
     expect(getPermissionMessage(axiosError(403, PERMISSION_403))).toBe("Only an Admin can change a user's access role.");
+  });
+});
+
+/**
+ * Envelope readers (2026-11-20). The API now forwards 4xx business codes
+ * (MONTHLY_NOT_YET_COMPUTED, CROSS_TASK_OVERLAP, …) in
+ * `{ success: false, error: { code, message, details } }`; the monthly
+ * review drawer and the overlap dialog read them through these helpers.
+ */
+describe('apiErrorCode / apiErrorDetails', () => {
+  const NOT_COMPUTED_400 = {
+    success: false,
+    error: {
+      code: 'MONTHLY_NOT_YET_COMPUTED',
+      message: 'Monthly row not computed yet — click "חישוב מחדש" before approving.',
+      details: null,
+    },
+  };
+
+  it('reads the business code from the envelope (what the monthly review drawer checks)', () => {
+    expect(apiErrorCode(axiosError(400, NOT_COMPUTED_400, '/hr/monthly/5/2026/11/approve', 'post'))).toBe(
+      'MONTHLY_NOT_YET_COMPUTED',
+    );
+  });
+
+  it('reads status-derived codes too', () => {
+    expect(apiErrorCode(axiosError(409, { success: false, error: { code: 'CONFLICT', message: 'x', details: null } }))).toBe('CONFLICT');
+  });
+
+  it.each([
+    ['code at the top of the body (not the envelope)', axiosError(400, { code: 'MONTHLY_NOT_YET_COMPUTED', message: 'x' })],
+    ['empty code', axiosError(400, { error: { code: '' } })],
+    ['non-string code', axiosError(400, { error: { code: 42 } })],
+    ['403 without a body', axiosError(403, undefined)],
+    ['network error', { message: 'Network Error' }],
+    ['null', null],
+  ])('null for %s', (_label, err) => {
+    expect(apiErrorCode(err)).toBeNull();
+  });
+
+  it('returns the envelope details, or null when absent', () => {
+    const details = { date: '2026-11-20', conflicts: [{ id: 1 }] };
+    expect(apiErrorDetails(axiosError(409, { success: false, error: { code: 'CROSS_TASK_OVERLAP', message: 'x', details } }))).toEqual(details);
+    expect(apiErrorDetails(axiosError(400, NOT_COMPUTED_400))).toBeNull();
+    expect(apiErrorDetails({ message: 'Network Error' })).toBeNull();
+  });
+
+  it('notify.apiError renders a 4xx business code as the regular business-rule alert with the server message', () => {
+    notify.apiError(axiosError(400, NOT_COMPUTED_400, '/hr/monthly/5/2026/11/approve', 'post'), 'Approve failed');
+    const { props } = lastCard();
+    expect(props).toMatchObject({ variant: 'businessRule', title: NOT_COMPUTED_400.error.message });
+    // The ref chip is still built from the request, not the envelope code.
+    expect(props.code).toBe('HR-CREATE-400');
+    expect(props.copyDetails).toEqual(expect.any(String));
   });
 });

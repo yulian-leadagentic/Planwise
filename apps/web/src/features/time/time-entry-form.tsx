@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { timeApi } from '@/api/time.api';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
-import { useOverlapConfirm } from './overlap-confirm';
+import { useOverlapDialog } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 import { LocationToggle, type TimeLocation } from './location-toggle';
 
@@ -59,18 +59,17 @@ export function TimeEntryForm({
   const totalMinutes = Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
   const totalHours = (totalMinutes / 60).toFixed(2);
 
-  const overlap = useOverlapConfirm();
+  const overlap = useOverlapDialog();
   const [submitting, setSubmitting] = useState(false);
 
-  // Wrapped save: tries with confirmOverlap=false first; if the backend
-  // returns CROSS_TASK_OVERLAP, the hook shows the confirm dialog and
-  // retries with confirmOverlap=true on user approval. Same-task overlap
-  // is a hard error and falls through to notify.apiError.
+  // Wrapped save: if the backend rejects an overlap (same- or cross-task,
+  // both hard 409s), the hook shows the read-only overlap dialog instead
+  // of an error toast. Nothing is retried.
   const handleLog = () => {
     if (totalMinutes <= 0) return;
     setSubmitting(true);
-    overlap.withConfirm(
-      (confirmOverlap) =>
+    overlap.withOverlapCheck(
+      () =>
         timeApi.createEntry({
           taskId,
           projectId: projectId ?? undefined,
@@ -81,7 +80,6 @@ export function TimeEntryForm({
           note: note.trim() || undefined,
           isBillable: true,
           location,
-          confirmOverlap,
         }),
       {
         onSuccess: () => {

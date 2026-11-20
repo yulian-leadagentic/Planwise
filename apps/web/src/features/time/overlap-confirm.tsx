@@ -1,21 +1,21 @@
 /**
- * Overlap-confirmation dialog for cross-task time-entry overlaps.
+ * Overlap dialog for time entries (informational, 2026-11-20).
  *
  * Why this exists:
- *   Backend rejects cross-task overlaps with HTTP 409 and
- *   `code: 'CROSS_TASK_OVERLAP'`. The client retries the same payload
- *   with `confirmOverlap: true` once the user acknowledges the conflict.
- *
- *   Same-task overlaps are NEVER bypassed — the backend always rejects
- *   them and the UI just surfaces the error via notify.apiError. This
- *   component is only for the cross-task case.
+ *   The backend hard-rejects every overlapping time entry with HTTP 409 —
+ *   `SAME_TASK_OVERLAP` or `CROSS_TASK_OVERLAP`, both carrying
+ *   `details: { date, attempted, conflicts }` (no-overlap policy,
+ *   2026-06-14; no flag bypasses it). Instead of a generic error toast the
+ *   user gets one read-only dialog listing the entries in the way, with a
+ *   single OK. There is no retry and no "Save anyway" — the old
+ *   `confirmOverlap` flag has no effect server-side.
  *
  * Usage:
- *   const overlap = useOverlapConfirm();
+ *   const overlap = useOverlapDialog();
  *
  *   const onSave = () =>
- *     overlap.withConfirm(
- *       (confirmOverlap) => timeApi.createEntry({ ...payload, confirmOverlap }),
+ *     overlap.withOverlapCheck(
+ *       () => timeApi.createEntry(payload),
  *       { onSuccess: ... },
  *     );
  *
@@ -23,100 +23,116 @@
  */
 import { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { notify } from '@/lib/notify';
+import { notify, apiErrorCode, apiErrorDetails } from '@/lib/notify';
+import { formatDate } from '@/lib/date-utils';
 
 interface Conflict {
+  /** The conflicting time entry's id. */
   id: number;
   startTime: string;
   endTime: string;
+  /** Cross-task conflicts only — a same-task conflict is on the entry's own task. */
+  taskId?: number | null;
   taskName?: string | null;
   taskCode?: string | null;
 }
 
-interface OverlapState {
-  conflicts: Conflict[];
+type OverlapCode = 'CROSS_TASK_OVERLAP' | 'SAME_TASK_OVERLAP';
+
+export interface TimeOverlap {
+  code: OverlapCode;
+  /** YYYY-MM-DD of the rejected entry — every conflict is on that day. */
   date: string;
-  attempted: { startTime?: string; endTime?: string };
-  retry: () => Promise<void>;
+  conflicts: Conflict[];
 }
 
 /**
- * Pulls the structured CROSS_TASK_OVERLAP payload out of an axios error.
- * Returns null for any other error shape so callers can fall through to
- * a normal error toast.
+ * Pulls an overlap 409 out of an axios error. Both codes arrive in the API
+ * envelope `{ success: false, error: { code, message, details } }`.
+ * Returns null for any other error so callers fall through to the normal
+ * error toast.
  */
-export function extractCrossTaskOverlap(err: any): {
-  conflicts: Conflict[];
-  date: string;
-  attempted: { startTime?: string; endTime?: string };
-} | null {
-  const body = err?.response?.data;
-  // Nest's HttpException pipes through as { message: { code, message, details } }
-  // when the exception was constructed with an object. The status code is 409.
-  const payload = body?.message && typeof body.message === 'object' ? body.message : body;
-  if (!payload || payload.code !== 'CROSS_TASK_OVERLAP') return null;
-  const details = payload.details ?? {};
+export function extractTimeOverlap(err: unknown): TimeOverlap | null {
+  const code = apiErrorCode(err);
+  if (code !== 'CROSS_TASK_OVERLAP' && code !== 'SAME_TASK_OVERLAP') return null;
+  const details = apiErrorDetails<{ date?: unknown; conflicts?: unknown }>(err) ?? {};
   return {
-    conflicts: Array.isArray(details.conflicts) ? details.conflicts : [],
-    date: details.date ?? '',
-    attempted: details.attempted ?? {},
+    code,
+    date: typeof details.date === 'string' ? details.date : '',
+    conflicts: Array.isArray(details.conflicts) ? (details.conflicts as Conflict[]) : [],
   };
 }
 
+export interface OverlapCheckOptions {
+  onSuccess?: () => void;
+  onError?: (err: unknown) => void;
+}
+
 /**
- * Wraps a save call with cross-task overlap handling. When the call
- * fails with CROSS_TASK_OVERLAP, opens a confirm dialog. If the user
- * accepts, retries with `confirmOverlap=true`.
+ * Runs the save once. An overlap 409 goes to `onOverlap` (the dialog)
+ * INSTEAD of the error toast; any other failure gets notify.apiError.
+ * Never retries. Exported for the spec — components use the hook.
  */
-export function useOverlapConfirm() {
-  const [state, setState] = useState<OverlapState | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+export async function runWithOverlapCheck(
+  run: () => Promise<unknown>,
+  onOverlap: (overlap: TimeOverlap) => void,
+  opts: OverlapCheckOptions = {},
+): Promise<void> {
+  try {
+    await run();
+    opts.onSuccess?.();
+  } catch (err) {
+    opts.onError?.(err);
+    const overlap = extractTimeOverlap(err);
+    if (overlap) onOverlap(overlap);
+    else notify.apiError(err, 'Failed to log time');
+  }
+}
 
-  const withConfirm = async (
-    run: (confirmOverlap: boolean) => Promise<any>,
-    opts: {
-      onSuccess?: () => void;
-      onError?: (err: any) => void;
-    } = {},
-  ) => {
-    try {
-      await run(false);
-      opts.onSuccess?.();
-    } catch (err: any) {
-      const conflict = extractCrossTaskOverlap(err);
-      if (conflict) {
-        // Stash the retry closure — the dialog "Confirm" button calls it.
-        setState({
-          ...conflict,
-          retry: async () => {
-            setSubmitting(true);
-            try {
-              await run(true);
-              setState(null);
-              opts.onSuccess?.();
-            } catch (e: any) {
-              setState(null);
-              opts.onError?.(e);
-              notify.apiError(e, 'Failed to log time');
-            } finally {
-              setSubmitting(false);
-            }
-          },
-        });
-        return;
-      }
-      opts.onError?.(err);
-      notify.apiError(err, 'Failed to log time');
-    }
-  };
+/** Wraps a time-entry save; shows the read-only overlap dialog when the backend rejects an overlap. */
+export function useOverlapDialog() {
+  const [overlap, setOverlap] = useState<TimeOverlap | null>(null);
 
-  const dialog = state ? (
+  const withOverlapCheck = (run: () => Promise<unknown>, opts: OverlapCheckOptions = {}) =>
+    runWithOverlapCheck(run, setOverlap, opts);
+
+  const dialog = overlap ? <OverlapDialog overlap={overlap} onClose={() => setOverlap(null)} /> : null;
+
+  return { withOverlapCheck, dialog };
+}
+
+function conflictLabel(c: Conflict, code: OverlapCode): string {
+  if (c.taskName) return c.taskName;
+  if (code === 'SAME_TASK_OVERLAP') return 'Same task';
+  return c.taskId != null ? `Task #${c.taskId}` : 'Another task';
+}
+
+function displayDate(date: string): string {
+  if (!date) return '';
+  try {
+    return formatDate(date);
+  } catch {
+    return date; // unparseable — show it raw rather than crash the dialog
+  }
+}
+
+function OverlapDialog({ overlap, onClose }: { overlap: TimeOverlap; onClose: () => void }) {
+  const date = displayDate(overlap.date);
+  return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-      onClick={() => !submitting && setState(null)}
-      role="dialog"
+      onClick={onClose}
+      onKeyDown={(e) => {
+        // Escape closes only this dialog, not the form it sits on.
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          onClose();
+        }
+      }}
+      role="alertdialog"
       aria-modal="true"
       aria-labelledby="overlap-dialog-title"
+      aria-describedby="overlap-dialog-desc"
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -126,49 +142,43 @@ export function useOverlapConfirm() {
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
           <div>
             <h2 id="overlap-dialog-title" className="text-sm font-bold text-amber-900">
-              Time overlaps with another task
+              This time overlaps another entry
             </h2>
-            <p className="mt-0.5 text-[12px] text-amber-800">
-              You're trying to log {state.attempted.startTime ?? '?'}–{state.attempted.endTime ?? '?'} on{' '}
-              {state.date}, but this time is already booked on the task{state.conflicts.length === 1 ? '' : 's'} below.
+            <p id="overlap-dialog-desc" className="mt-0.5 text-[12px] text-amber-800">
+              Time entries can't overlap. Change the start/end time or edit the existing entry.
             </p>
           </div>
         </div>
-        <div className="px-5 py-3 space-y-1.5 max-h-60 overflow-y-auto">
-          {state.conflicts.map((c) => (
-            <div
-              key={c.id}
-              className="flex items-center justify-between gap-3 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[12px]"
-            >
-              <div className="min-w-0">
-                {c.taskCode && <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 mr-1.5">{c.taskCode}</span>}
-                <span className="font-medium text-slate-700 dark:text-slate-200 truncate">{c.taskName ?? `Task #${c.id}`}</span>
+        {overlap.conflicts.length > 0 && (
+          <div className="px-5 py-3 space-y-1.5 max-h-60 overflow-y-auto">
+            {overlap.conflicts.map((c) => (
+              <div
+                key={c.id}
+                className="flex items-center justify-between gap-3 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-[12px]"
+              >
+                <div className="min-w-0 truncate">
+                  {c.taskCode && <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500 mr-1.5">{c.taskCode}</span>}
+                  <span className="font-medium text-slate-700 dark:text-slate-200">{conflictLabel(c, overlap.code)}</span>
+                </div>
+                <span className="font-mono text-slate-600 dark:text-slate-300 tabular-nums shrink-0">
+                  {date && `${date} · `}
+                  {c.startTime}–{c.endTime}
+                </span>
               </div>
-              <span className="text-slate-600 dark:text-slate-300 tabular-nums shrink-0">
-                {c.startTime}–{c.endTime}
-              </span>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
         <div className="px-5 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex items-center justify-end gap-2">
           <button
-            onClick={() => setState(null)}
-            disabled={submitting}
-            className="rounded-md px-3 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50"
+            type="button"
+            autoFocus
+            onClick={onClose}
+            className="rounded-md bg-amber-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-amber-700"
           >
-            Cancel
-          </button>
-          <button
-            onClick={() => state.retry()}
-            disabled={submitting}
-            className="rounded-md bg-amber-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
-          >
-            {submitting ? 'Saving…' : 'Save anyway'}
+            OK
           </button>
         </div>
       </div>
     </div>
-  ) : null;
-
-  return { withConfirm, dialog };
+  );
 }

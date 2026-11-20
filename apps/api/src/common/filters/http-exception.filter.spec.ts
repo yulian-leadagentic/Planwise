@@ -5,6 +5,7 @@ import {
   BadRequestException,
   UnauthorizedException,
   ForbiddenException,
+  ConflictException,
 } from '@nestjs/common';
 import { ArgumentsHost } from '@nestjs/common';
 import { HttpExceptionFilter } from './http-exception.filter';
@@ -117,10 +118,75 @@ describe('HttpExceptionFilter', () => {
       expect(plain.jsonMock.mock.calls[0][0].error).toMatchObject({ code: 'FORBIDDEN', message: 'This account has been deactivated.' });
     });
 
-    it('a custom code on a non-403 does not override the status code', () => {
+  });
+
+  describe('4xx business codes (2026-11-20)', () => {
+    it('a 400 keeps its business code, message and details', () => {
+      const { host, statusMock, jsonMock } = makeHost();
+      filter.catch(
+        new BadRequestException({ message: 'Monthly row not computed yet', code: 'MONTHLY_NOT_YET_COMPUTED' }),
+        host,
+      );
+      expect(statusMock).toHaveBeenCalledWith(400);
+      expect(jsonMock.mock.calls[0][0]).toEqual({
+        success: false,
+        error: { code: 'MONTHLY_NOT_YET_COMPUTED', message: 'Monthly row not computed yet', details: null },
+      });
+    });
+
+    it('a 409 keeps its business code and structured details', () => {
+      const { host, statusMock, jsonMock } = makeHost();
+      const details = {
+        date: '2026-11-20',
+        attempted: { startTime: '09:00', endTime: '10:00' },
+        conflicts: [{ id: 7, taskId: 3, taskName: 'Design', taskCode: 'T-3', startTime: '09:30', endTime: '11:00' }],
+      };
+      filter.catch(new ConflictException({ code: 'CROSS_TASK_OVERLAP', message: 'overlap', details }), host);
+      expect(statusMock).toHaveBeenCalledWith(409);
+      expect(jsonMock.mock.calls[0][0].error).toEqual({ code: 'CROSS_TASK_OVERLAP', message: 'overlap', details });
+    });
+
+    it('a 5xx never takes a code from the exception body', () => {
+      const { host, statusMock, jsonMock } = makeHost();
+      filter.catch(
+        new HttpException({ code: 'UPSTREAM_DOWN', message: 'x' }, HttpStatus.SERVICE_UNAVAILABLE),
+        host,
+      );
+      expect(statusMock).toHaveBeenCalledWith(503);
+      expect(jsonMock.mock.calls[0][0].error.code).toBe('INTERNAL_ERROR');
+    });
+
+    it('no code → the status-derived code', () => {
+      const bad = makeHost();
+      filter.catch(new BadRequestException({ message: 'x' }), bad.host);
+      expect(bad.jsonMock.mock.calls[0][0].error.code).toBe('BAD_REQUEST');
+
+      const conflict = makeHost();
+      filter.catch(new ConflictException('x'), conflict.host);
+      expect(conflict.jsonMock.mock.calls[0][0].error.code).toBe('CONFLICT');
+    });
+
+    it.each([
+      ['lowercase', 'missing_required_fields'],
+      ['mixed case', 'MonthlyNotComputed'],
+      ['leading digit', '1_BAD'],
+      ['spaces / punctuation', 'NOT A-CODE'],
+      ['empty string', ''],
+      ['non-string', 42],
+    ])('an odd code (%s) is ignored', (_label, odd) => {
       const { host, jsonMock } = makeHost();
-      filter.catch(new BadRequestException({ code: 'MONTHLY_NOT_YET_COMPUTED', message: 'x' }), host);
+      filter.catch(new BadRequestException({ code: odd, message: 'x' }), host);
       expect(jsonMock.mock.calls[0][0].error.code).toBe('BAD_REQUEST');
+    });
+
+    it('class-validator arrays are unchanged', () => {
+      const { host, jsonMock } = makeHost();
+      filter.catch(new BadRequestException(['name should not be empty']), host);
+      expect(jsonMock.mock.calls[0][0].error).toEqual({
+        code: 'BAD_REQUEST',
+        message: 'Validation failed',
+        details: ['name should not be empty'],
+      });
     });
   });
 

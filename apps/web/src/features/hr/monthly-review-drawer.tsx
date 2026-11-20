@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, RotateCcw, Home, Building2, Hammer } from 'lucide-react';
 
 import { Modal } from '@/components/shared/modal';
-import { notify } from '@/lib/notify';
+import { notify, apiErrorCode } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import {
   hrApi,
@@ -80,8 +80,7 @@ export function MonthlyReviewDrawer({
       notify.success('אושר · Approved');
     },
     onError: (e: any) => {
-      const code = e?.response?.data?.code;
-      if (code === 'MONTHLY_NOT_YET_COMPUTED') {
+      if (apiErrorCode(e) === 'MONTHLY_NOT_YET_COMPUTED') {
         notify.warning('יש לחשב מחדש לפני אישור');
       } else {
         notify.apiError(e, 'Approve failed');
