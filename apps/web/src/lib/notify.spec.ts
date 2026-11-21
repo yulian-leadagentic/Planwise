@@ -11,7 +11,7 @@ vi.mock('sonner', () => ({
 }));
 
 import { toast } from 'sonner';
-import { notify, isPermissionDenied, getPermissionMessage, apiErrorCode, apiErrorDetails } from './notify';
+import { notify, isPermissionDenied, getPermissionMessage, apiErrorCode, apiErrorDetails, apiMissingFields } from './notify';
 
 const custom = toast.custom as unknown as ReturnType<typeof vi.fn>;
 
@@ -166,5 +166,66 @@ describe('apiErrorCode / apiErrorDetails', () => {
     // The ref chip is still built from the request, not the envelope code.
     expect(props.code).toBe('HR-CREATE-400');
     expect(props.copyDetails).toEqual(expect.any(String));
+  });
+});
+
+/**
+ * Missing required fields (2026-11-21). The task guard's 400 now arrives
+ * as `{ error: { code: 'MISSING_REQUIRED_FIELDS', details: { missing } } }`
+ * — the old top-level `error: 'missing_required_fields'` / `missing`
+ * keys were dropped by the API filter, so the bullets never showed.
+ */
+describe('MISSING_REQUIRED_FIELDS', () => {
+  const MISSING_400 = {
+    success: false,
+    error: {
+      code: 'MISSING_REQUIRED_FIELDS',
+      message: 'Non-personal tasks need a Zone (or a project for project-root tasks).',
+      details: { missing: ['zoneId'] },
+    },
+  };
+
+  it('notify.apiError renders the real envelope as a validation card with one bullet per field', () => {
+    notify.apiError(axiosError(400, MISSING_400, '/tasks', 'post'), 'Failed to add tasks');
+    const { props } = lastCard();
+    expect(props).toMatchObject({
+      variant: 'validation',
+      title: MISSING_400.error.message,
+      code: 'TASK-CREATE-400',
+      issues: ['Zone is required'],
+    });
+  });
+
+  it('labels each field; unknown names pass through', () => {
+    const env = { success: false, error: { code: 'MISSING_REQUIRED_FIELDS', message: 'x', details: { missing: ['serviceTypeId', 'foo'] } } };
+    notify.apiError(axiosError(400, env, '/tasks', 'post'), 'x');
+    expect(lastCard().props.issues).toEqual(['Service is required', 'foo is required']);
+  });
+
+  it('other codes carrying details.missing keep the business-rule card (time-entry codes)', () => {
+    const env = { success: false, error: { code: 'TIME_ENTRY_TASK_REQUIRED', message: 'Task is required', details: { missing: ['taskId'] } } };
+    notify.apiError(axiosError(400, env, '/time-entries', 'post'), 'Failed to log time');
+    expect(lastCard().props).toMatchObject({ variant: 'businessRule', title: 'Task is required' });
+  });
+
+  it('the old top-level shape no longer counts; class-validator arrays still render as validation', () => {
+    const old = { error: 'missing_required_fields', message: 'x', missing: ['zoneId'] };
+    expect(apiMissingFields(axiosError(400, old))).toBeNull();
+
+    notify.apiError(
+      axiosError(400, { success: false, error: { code: 'BAD_REQUEST', message: 'Validation failed', details: ['name should not be empty'] } }),
+      'x',
+    );
+    expect(lastCard().props).toMatchObject({ variant: 'validation', issues: ['name should not be empty'] });
+  });
+
+  it.each([
+    ['empty list', { missing: [] }],
+    ['non-array', { missing: 'zoneId' }],
+    ['no details', null],
+    ['non-string entries only', { missing: [1, null] }],
+  ])('apiMissingFields → null for %s', (_label, details) => {
+    const env = { success: false, error: { code: 'MISSING_REQUIRED_FIELDS', message: 'x', details } };
+    expect(apiMissingFields(axiosError(400, env))).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { BadRequestException, ConflictException, NotFoundException, ValidationPipe } from '@nestjs/common';
+import { ArgumentsHost, BadRequestException, ConflictException, NotFoundException, ValidationPipe } from '@nestjs/common';
+import { HttpExceptionFilter } from '../../common/filters/http-exception.filter';
 import { TasksService } from './tasks.service';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -292,6 +293,80 @@ describe('TasksService', () => {
         service.update(TASK_ID, { zoneId: null } as any),
       ).rejects.toBeInstanceOf(BadRequestException);
 
+      expect(prisma.task.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── Missing required fields reach the web (2026-11-21) ──────────────
+  //
+  // The guard used to throw `{ error: 'missing_required_fields', missing }`.
+  // HttpExceptionFilter only forwards code / message / details, so the web
+  // never saw the list and the create-task modal never lit its fields.
+  // The list now rides in `details.missing` under MISSING_REQUIRED_FIELDS.
+  describe('missing required fields → API envelope (2026-11-21)', () => {
+    /** Runs a rejection through the real global filter; returns status + body. */
+    function toEnvelope(err: unknown) {
+      const filter = new HttpExceptionFilter();
+      (filter as any).logger = { error: jest.fn(), warn: jest.fn() };
+      const json = jest.fn();
+      const status = jest.fn().mockReturnValue({ json });
+      const host = {
+        switchToHttp: () => ({ getResponse: () => ({ status }), getRequest: () => ({}) }),
+      } as unknown as ArgumentsHost;
+      filter.catch(err, host);
+      return { status: status.mock.calls[0][0], body: json.mock.calls[0][0] };
+    }
+
+    async function rejectionOf(p: Promise<unknown>): Promise<unknown> {
+      try {
+        await p;
+      } catch (e) {
+        return e;
+      }
+      throw new Error('expected a rejection');
+    }
+
+    it('create: a core task with neither zone nor project → MISSING_REQUIRED_FIELDS + details.missing', async () => {
+      const err = await rejectionOf(service.create(1, { code: 'T-1', name: 'x' } as any));
+      expect(err).toBeInstanceOf(BadRequestException);
+      expect((err as BadRequestException).getResponse()).toMatchObject({
+        code: 'MISSING_REQUIRED_FIELDS',
+        details: { missing: ['zoneId'] },
+      });
+
+      const { status, body } = toEnvelope(err);
+      expect(status).toBe(400);
+      expect(body).toEqual({
+        success: false,
+        error: {
+          code: 'MISSING_REQUIRED_FIELDS',
+          message: 'Non-personal tasks need a Zone (or a project for project-root tasks).',
+          details: { missing: ['zoneId'] },
+        },
+      });
+    });
+
+    it('create: a personal task without a Service → details.missing = [serviceTypeId]', async () => {
+      const err = await rejectionOf(service.create(1, { code: 'T-1', name: 'x', isPersonal: true } as any));
+      const { body } = toEnvelope(err);
+      expect(body.error).toEqual({
+        code: 'MISSING_REQUIRED_FIELDS',
+        message: 'Service is required for personal tasks.',
+        details: { missing: ['serviceTypeId'] },
+      });
+    });
+
+    it('update: clearing the only placement → the same envelope', async () => {
+      prisma.task.findFirst.mockResolvedValue({
+        id: 77, projectId: null, zoneId: 10, isPersonal: false, status: 'not_started',
+      });
+      const err = await rejectionOf(service.update(77, { zoneId: null } as any));
+      const { status, body } = toEnvelope(err);
+      expect(status).toBe(400);
+      expect(body.error).toMatchObject({
+        code: 'MISSING_REQUIRED_FIELDS',
+        details: { missing: ['zoneId'] },
+      });
       expect(prisma.task.update).not.toHaveBeenCalled();
     });
   });

@@ -135,8 +135,10 @@ export class TimeEntriesService {
     // here instead of tightening the DTO for every call site. The
     // projectId derivation below runs after this guard, so a missing
     // projectId is still permitted when a taskId resolves to one.
+    // The field list rides in `details` (2026-11-21) — the global
+    // HttpExceptionFilter drops any other top-level key.
     if (!dto.taskId) {
-      throw new BadRequestException({ message: 'Task is required', code: 'TIME_ENTRY_TASK_REQUIRED', missing: ['taskId'] });
+      throw new BadRequestException({ message: 'Task is required', code: 'TIME_ENTRY_TASK_REQUIRED', details: { missing: ['taskId'] } });
     }
 
     // Auto-derive projectId from the task when the caller didn't pass it
@@ -159,7 +161,7 @@ export class TimeEntriesService {
     // hit the timesheet — those go through Personal Task Dialog and
     // are logged against the user's Home clock, not this path.
     if (!projectId) {
-      throw new BadRequestException({ message: 'Project is required', code: 'TIME_ENTRY_PROJECT_REQUIRED', missing: ['projectId'] });
+      throw new BadRequestException({ message: 'Project is required', code: 'TIME_ENTRY_PROJECT_REQUIRED', details: { missing: ['projectId'] } });
     }
 
     // Overlap validation — both same-task and cross-task overlaps are

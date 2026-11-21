@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { ArgumentsHost, BadRequestException } from '@nestjs/common';
+import { HttpExceptionFilter } from '../../common/filters/http-exception.filter';
 import { TimeEntriesService } from './time-entries.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
@@ -235,5 +236,49 @@ describe('TimeEntriesService.create — bucket gate (HR §9.1)', () => {
 
     expect(prisma.specialHourBucket.findUnique).not.toHaveBeenCalled();
     expect(prisma.employeeBucketEligibility.findFirst).not.toHaveBeenCalled();
+  });
+
+  // ─── Required task / project reach the web (2026-11-21) ─────────────
+  // The field list used to sit in a top-level `missing` key that the
+  // global filter drops; it now rides in `details.missing`.
+
+  /** Runs a rejection through the real global filter; returns status + body. */
+  function toEnvelope(err: unknown) {
+    const filter = new HttpExceptionFilter();
+    (filter as any).logger = { error: jest.fn(), warn: jest.fn() };
+    const json = jest.fn();
+    const status = jest.fn().mockReturnValue({ json });
+    const host = {
+      switchToHttp: () => ({ getResponse: () => ({ status }), getRequest: () => ({}) }),
+    } as unknown as ArgumentsHost;
+    filter.catch(err, host);
+    return { status: status.mock.calls[0][0], body: json.mock.calls[0][0] };
+  }
+
+  it('no task → TIME_ENTRY_TASK_REQUIRED with details.missing = [taskId] in the envelope', async () => {
+    const err = await service.create(USER_ID, { ...baseDto, taskId: undefined } as any).catch((e) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+
+    const { status, body } = toEnvelope(err);
+    expect(status).toBe(400);
+    expect(body).toEqual({
+      success: false,
+      error: { code: 'TIME_ENTRY_TASK_REQUIRED', message: 'Task is required', details: { missing: ['taskId'] } },
+    });
+    expect(prisma.timeEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('a task with no project → TIME_ENTRY_PROJECT_REQUIRED with details.missing = [projectId]', async () => {
+    prisma.task.findUnique.mockResolvedValue({ projectId: null });
+    const err = await service.create(USER_ID, { ...baseDto, projectId: undefined } as any).catch((e) => e);
+
+    const { status, body } = toEnvelope(err);
+    expect(status).toBe(400);
+    expect(body.error).toEqual({
+      code: 'TIME_ENTRY_PROJECT_REQUIRED',
+      message: 'Project is required',
+      details: { missing: ['projectId'] },
+    });
+    expect(prisma.timeEntry.create).not.toHaveBeenCalled();
   });
 });

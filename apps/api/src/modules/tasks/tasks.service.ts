@@ -136,12 +136,15 @@ export class TasksService {
     // root). Service, Deliverable, and Review flag are optional; the
     // PM fills them inline from the grid after creating. Reject with a
     // structured 400 so the frontend can highlight the missing field.
+    // The list rides in `details` (2026-11-21): HttpExceptionFilter only
+    // forwards code / message / details, so the old top-level `error` /
+    // `missing` keys never reached the web.
     const missing = this.missingCoreFields(dto);
     if (missing.length > 0) {
       throw new BadRequestException({
-        error: 'missing_required_fields',
+        code: 'MISSING_REQUIRED_FIELDS',
         message: 'Non-personal tasks need a Zone (or a project for project-root tasks).',
-        missing,
+        details: { missing },
       });
     }
     let projectId: number | null = null;
@@ -150,12 +153,12 @@ export class TasksService {
       // requires Service (`serviceTypeId`), matching the normal
       // Create-Task form. Enforce here so a hand-rolled API caller
       // can't slip a serviceless personal task past the client guard;
-      // structured `missing:['serviceTypeId']` lets the FE highlight.
+      // structured `details.missing:['serviceTypeId']` lets the FE highlight.
       if (!dto.serviceTypeId) {
         throw new BadRequestException({
-          error: 'missing_required_fields',
+          code: 'MISSING_REQUIRED_FIELDS',
           message: 'Service is required for personal tasks.',
-          missing: ['serviceTypeId'],
+          details: { missing: ['serviceTypeId'] },
         });
       }
       // Any / all of the project context fields may be supplied but none are required.
@@ -675,10 +678,11 @@ export class TasksService {
       };
       const missing = this.missingCoreFields(dto, existingCore);
       if (missing.length > 0) {
+        // Same envelope shape as create() (2026-11-21).
         throw new BadRequestException({
-          error: 'missing_required_fields',
+          code: 'MISSING_REQUIRED_FIELDS',
           message: 'Non-personal tasks need a Zone (or a project for project-root tasks).',
-          missing,
+          details: { missing },
         });
       }
     }

@@ -337,6 +337,21 @@ export function apiErrorDetails<T = unknown>(error: unknown): T | null {
   return details == null ? null : (details as T);
 }
 
+/** Envelope code of a 400 that lists the required fields it found empty. */
+export const MISSING_REQUIRED_FIELDS_CODE = 'MISSING_REQUIRED_FIELDS';
+
+/**
+ * The field names of a MISSING_REQUIRED_FIELDS 400 (`error.details.missing`,
+ * e.g. ['zoneId']), or null for any other error. (2026-11-21)
+ */
+export function apiMissingFields(error: unknown): string[] | null {
+  if (apiErrorCode(error) !== MISSING_REQUIRED_FIELDS_CODE) return null;
+  const missing = apiErrorDetails<{ missing?: unknown }>(error)?.missing;
+  if (!Array.isArray(missing)) return null;
+  const fields = missing.filter((k): k is string => typeof k === 'string' && k.length > 0);
+  return fields.length > 0 ? fields : null;
+}
+
 // ─── Permission 403s ───────────────────────────────────────────────────
 
 /** Envelope code the API puts on every "you may not do this" 403. */
@@ -434,12 +449,15 @@ export const notify = {
 
     const message = getErrorMessage(error, fallbackMessage);
 
-    // Structured "missing_required_fields" 400 — surface each missing
+    // Structured MISSING_REQUIRED_FIELDS 400 — surface each missing
     // field as a bullet so the user can pinpoint what to fix even when
     // the calling form doesn't wire inline errors. (Ops backlog #2,
     // 2026-08-08 — matches the core-task guardrail in tasks.service.)
-    const body = error?.response?.data;
-    if (body?.error === 'missing_required_fields' && Array.isArray(body.missing) && body.missing.length > 0) {
+    // 2026-11-21: read from the envelope's `details.missing`; the old
+    // top-level `error` / `missing` keys never survived the API filter.
+    // "is required" (not "…for core tasks") — personal tasks use it too.
+    const missing = apiMissingFields(error);
+    if (missing) {
       const labels: Record<string, string> = {
         serviceTypeId: 'Service',
         zoneId: 'Zone',
@@ -447,7 +465,7 @@ export const notify = {
         deliverableTemplateId: 'Deliverable (template)',
         requiresReview: 'Review flag (yes / no)',
       };
-      const issues = body.missing.map((k: string) => `${labels[k] ?? k} is required for core tasks`);
+      const issues = missing.map((k) => `${labels[k] ?? k} is required`);
       return render('validation', message || 'Missing required fields', { code, issues });
     }
 

@@ -22,8 +22,9 @@ import { X } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import client from '@/api/client';
 import { tasksApi } from '@/api/tasks.api';
-import { notify } from '@/lib/notify';
+import { notify, getErrorMessage } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { createTaskFieldErrors } from './create-task-errors';
 
 interface ProjectOption { id: number; name: string; number?: string }
 interface ZoneOption { id: number; name: string }
@@ -159,12 +160,11 @@ export function CreateTaskModal({
     onError: (err: any) => {
       // Structured 400 from the backend's core-task guardrail lists
       // missing fields — surface them inline instead of blowing up
-      // with a generic toast.
-      const body = err?.response?.data;
-      const missing = Array.isArray(body?.missing) ? body.missing : null;
-      if (body?.error === 'missing_required_fields' && missing) {
-        setFieldErrors(new Set(missing));
-        notify.warning(body.message ?? 'Please fill the required fields', { code: 'TASK-CREATE-400' });
+      // with a generic toast. Read from the API envelope (2026-11-21).
+      const missing = createTaskFieldErrors(err);
+      if (missing) {
+        setFieldErrors(missing);
+        notify.warning(getErrorMessage(err, 'Please fill the required fields'), { code: 'TASK-CREATE-400' });
         return;
       }
       notify.apiError(err, 'Failed to create task');
