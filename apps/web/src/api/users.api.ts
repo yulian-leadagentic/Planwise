@@ -38,9 +38,40 @@ export interface CreateUserPayload {
   website?: string;
 }
 
+/** The API's largest page (`PaginationQueryDto.perPage` @Max). */
+const MAX_PER_PAGE = 1000;
+
 export const usersApi = {
   list: (params?: UserQuery) =>
     client.get<ApiResponse<UserListItem[]>>('/users', { params }).then((r) => r.data),
+
+  /**
+   * Every user matching `params`, all pages. A bare `GET /users` returns
+   * only the first page (20 rows), which silently hid most people from
+   * the pickers and the People page — this pages through at the API's
+   * maximum page size until `meta.total` is reached.
+   */
+  listAll: async (params: Omit<UserQuery, 'page' | 'perPage'> = {}): Promise<UserListItem[]> => {
+    const all: UserListItem[] = [];
+    // Bounded: 50 pages × 1000 rows is far beyond any real directory.
+    for (let page = 1; page <= 50; page++) {
+      const body = await client
+        .get<ApiResponse<UserListItem[]>>('/users', { params: { ...params, perPage: MAX_PER_PAGE, page } })
+        .then((r) => r.data);
+      const rows: UserListItem[] = Array.isArray(body?.data) ? body.data : [];
+      all.push(...rows);
+      const total: unknown = body?.meta?.total;
+      if (rows.length < MAX_PER_PAGE || (typeof total === 'number' && all.length >= total)) break;
+    }
+    return all;
+  },
+
+  /**
+   * Every active user, for pickers that search client-side.
+   * Directory-tier fields only for most callers (permissions round 3),
+   * which is all a picker needs.
+   */
+  listAllActive: (): Promise<UserListItem[]> => usersApi.listAll({ isActive: true }),
 
   get: (id: number) =>
     client.get<ApiResponse<User>>(`/users/${id}`).then((r) => r.data.data),

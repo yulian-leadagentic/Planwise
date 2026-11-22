@@ -320,19 +320,37 @@ export class ProjectAccessService {
    *
    * Returns [] if the user manages nothing — the caller uses that as
    * the signal to short-circuit and preserve pre-feature behaviour.
+   *
+   * Round 3 (2026-11-22): a managed unit whose `path` was never written
+   * ("/" — the column default — or empty) contributes only itself:
+   * `startsWith('/')` would match every unit in the tree. Same guard as
+   * EmployeeScopeService.currentSubordinateIds.
    */
   async getManagedSubtreeUnitIds(userId: number): Promise<number[]> {
     const managed = await this.prisma.orgUnit.findMany({
       where: { managerUserId: userId, deletedAt: null },
-      select: { path: true },
+      select: { id: true, path: true },
     });
     if (managed.length === 0) return [];
 
-    // Union of subtrees. Use an OR on `path startsWith managed.path`.
+    // A usable path names at least one unit id ("/1/5/"); normalise the
+    // trailing "/" so "/1/5" can't match "/1/50/".
+    const subtreePrefix = (path: string | null | undefined): string | null => {
+      const ids = String(path ?? '')
+        .split('/')
+        .filter((s) => /^\d+$/.test(s) && Number(s) > 0);
+      return ids.length > 0 ? `/${ids.join('/')}/` : null;
+    };
+    const prefixes = managed.map((u) => subtreePrefix(u.path)).filter((p): p is string => p != null);
+
+    // Union of the managed units themselves and their subtrees.
     const subtreeUnits = await this.prisma.orgUnit.findMany({
       where: {
         deletedAt: null,
-        OR: managed.map((u) => ({ path: { startsWith: u.path } })),
+        OR: [
+          { id: { in: managed.map((u) => u.id) } },
+          ...prefixes.map((p) => ({ path: { startsWith: p } })),
+        ],
       },
       select: { id: true },
     });

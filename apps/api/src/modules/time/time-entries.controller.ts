@@ -15,6 +15,11 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger'
 
 import { TimeEntriesService } from './time-entries.service';
 import { HrMonthlyService } from '../hr/hr-monthly.service';
+import {
+  EmployeeScopeService,
+  notInManagerChain,
+  toLeaderView,
+} from '../../common/services/employee-scope.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
@@ -29,7 +34,25 @@ export class TimeEntriesController {
   constructor(
     private readonly timeEntriesService: TimeEntriesService,
     private readonly monthly: HrMonthlyService,
+    private readonly employeeScope: EmployeeScopeService,
   ) {}
+
+  /**
+   * Round 3 (2026-11-22) — `?userId=` of someone else needs
+   * EmployeeScopeService.canViewEmployee (self / hr:read / manager
+   * chain). Admin gets no exception. Returns the user id to read.
+   *
+   * `Number.isFinite`: NestJS implicit conversion turns a missing
+   * optional ?userId= into NaN, and `??` doesn't catch NaN.
+   */
+  private async resolveViewedUser(user: any, userId?: number | string): Promise<number> {
+    const asNumber = userId == null || userId === '' ? NaN : Number(userId);
+    const target = Number.isFinite(asNumber) ? asNumber : user.id;
+    if (target !== user.id) {
+      await this.employeeScope.assertCanViewEmployee(user, target, 'attendance and time entries');
+    }
+    return target;
+  }
 
   @Post()
   @OwnData()
@@ -105,42 +128,73 @@ export class TimeEntriesController {
     return this.monthly.getMySummary(user.id, year, month);
   }
 
+  /**
+   * `?weekStart=YYYY-MM-DD` → the 7-day `DailyBreakdown[]` the My Time
+   * page renders (clock record, expected shift, entries, difference per
+   * day). `?date=YYYY-MM-DD` → the single-day breakdown (entries +
+   * summary). The web always sends `weekStart`; `date` stays for API
+   * clients. Another user's breakdown needs canViewEmployee.
+   */
   @Get('daily')
   @OwnData()
   @RequirePermissions({ module: 'time', action: 'read' })
-  @ApiOperation({ summary: 'Get daily breakdown of time entries' })
-  getDailyBreakdown(
+  @ApiOperation({ summary: 'Daily breakdown: ?weekStart= (7 days, with clock data) or ?date= (one day)' })
+  async getDailyBreakdown(
     @CurrentUser() user: any,
-    @Query('date') date: string,
+    @Query('date') date?: string,
     @Query('userId') userId?: number,
+    @Query('weekStart') weekStart?: string,
   ) {
-    // Use Number.isFinite — NestJS implicit conversion turns a missing
-    // optional ?userId= query param into NaN (Number(undefined)), and `??`
-    // doesn't catch NaN, so the fallback to user.id was never picked up.
-    const effectiveUserId = Number.isFinite(userId) ? (userId as number) : user.id;
-    return this.timeEntriesService.getDailyBreakdown(effectiveUserId, date);
+    if (!weekStart && !date) {
+      throw new BadRequestException('weekStart or date is required (YYYY-MM-DD)');
+    }
+    const effectiveUserId = await this.resolveViewedUser(user, userId);
+    if (weekStart) return this.timeEntriesService.getWeekDailyBreakdown(effectiveUserId, weekStart);
+    return this.timeEntriesService.getDailyBreakdown(effectiveUserId, date as string);
   }
 
+  /**
+   * The shared `WeeklyGrid` shape (rows with 7 day cells, clock,
+   * dailyTotals, weekSummary). `?projectId=` narrows the rows and the
+   * logged totals (the Weekly Grid page's project filter). Another
+   * user's grid needs canViewEmployee.
+   */
   @Get('weekly')
   @OwnData()
   @RequirePermissions({ module: 'time', action: 'read' })
-  @ApiOperation({ summary: 'Get weekly grid of time entries' })
-  getWeeklyGrid(
+  @ApiOperation({ summary: 'Weekly grid of time entries (shared WeeklyGrid shape)' })
+  async getWeeklyGrid(
     @CurrentUser() user: any,
     @Query('weekStart') weekStart: string,
     @Query('userId') userId?: number,
+    @Query('projectId') projectId?: number | string,
   ) {
-    // Same NaN-from-implicit-conversion gotcha as getDailyBreakdown above.
-    const effectiveUserId = Number.isFinite(userId) ? (userId as number) : user.id;
-    return this.timeEntriesService.getWeeklyGrid(effectiveUserId, weekStart);
+    const effectiveUserId = await this.resolveViewedUser(user, userId);
+    const project = projectId == null || projectId === '' ? NaN : Number(projectId);
+    return this.timeEntriesService.getWeeklyGrid(
+      effectiveUserId,
+      weekStart,
+      Number.isFinite(project) ? { projectId: project } : {},
+    );
   }
 
+  /**
+   * Round 3 (2026-11-22) — the owner; anyone who may view the employee
+   * (hr:read / manager chain); or the leader of the entry's project,
+   * who gets the leader view (no location, special-hours bucket or
+   * clock data — see toLeaderView). Everyone else: 403.
+   */
   @Get(':id')
   @OwnData()
   @RequirePermissions({ module: 'time', action: 'read' })
   @ApiOperation({ summary: 'Get a time entry by ID' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.timeEntriesService.findOne(id);
+  async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    const entry = await this.timeEntriesService.findOne(id);
+    if (entry.userId === user.id) return entry;
+    if (await this.employeeScope.canViewEmployee(user, entry.userId)) return entry;
+    const projectId = entry.projectId ?? entry.task?.projectId ?? null;
+    if (await this.employeeScope.isProjectLeader(user.id, projectId)) return toLeaderView(entry);
+    throw notInManagerChain('time entries');
   }
 
   @Patch(':id')

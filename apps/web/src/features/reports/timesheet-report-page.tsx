@@ -247,7 +247,10 @@ export function TimesheetReportPage() {
   // reports can slice by personal-ness without a separate view.
   const [personal, setPersonal] = useState<'include' | 'exclude' | 'only'>('include');
 
-  const { data, isLoading } = useQuery<Response>({
+  // Permissions round 3 — the rows cover the employees the caller may
+  // see (+ his own projects, as their leader). Filtering on someone
+  // else is refused with a 403 whose plain-English reason we show.
+  const { data, isLoading, error } = useQuery<Response>({
     queryKey: ['reports', 'timesheet-detailed', from, to, userId, projectId, personal],
     queryFn: () =>
       client
@@ -263,8 +266,13 @@ export function TimesheetReportPage() {
         .then((r) => r.data?.data ?? r.data),
   });
 
-  const rows = data?.rows ?? [];
-  const totals = data?.totals;
+  useEffect(() => {
+    if (error) notify.apiError(error, 'Failed to load the timesheet report');
+  }, [error]);
+
+  // A refused query keeps no stale rows on screen.
+  const rows = error ? [] : data?.rows ?? [];
+  const totals = error ? undefined : data?.totals;
 
   // Client-side grouping. Walks the (already-sorted) row list once and
   // emits a list of [groupHeader, ...rows, subtotal] triples. For the

@@ -101,7 +101,8 @@ export const timeApi = {
       return (d?.data ?? d) as WeeklyGrid;
     }),
 
-  // Daily breakdown — backend: GET /time-entries/daily
+  // Daily breakdown — backend: GET /time-entries/daily?weekStart= returns
+  // the 7-day DailyBreakdown[] (the API's ?date= mode is a single day).
   dailyBreakdown: (params: { weekStart: string }) =>
     client.get<ApiResponse<DailyBreakdown[]>>('/time-entries/daily', { params }).then((r) => r.data.data),
 

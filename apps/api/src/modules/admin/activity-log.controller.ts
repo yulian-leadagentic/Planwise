@@ -2,7 +2,9 @@ import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
+import { ActivityCategory } from '@prisma/client';
+
+import { RolesGuard, isAdminUser, userHasModulePermission } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -40,8 +42,17 @@ export class ActivityLogController {
     // ANDed rather than folded into `where.category` so it holds whatever
     // shape `category` arrives in (a string, or an object from qs's
     // bracket syntax such as `category[in][]=security`).
-    if (!isAdminUser(caller)) {
-      where.AND = [{ category: { not: 'security' } }];
+    //
+    // Permissions round 3 (2026-11-22) — `hr` rows (HR audit: absences,
+    // attachments, eligibilities, monthly approve/reopen/lock, …) are
+    // visible only to `hr:read` holders — not to department leads, not
+    // to an Admin without the HR grant (no admin bypass, same as the
+    // RolesGuard's NO_ADMIN_BYPASS for `hr`). An explicit
+    // `category=hr` without the grant matches nothing (empty page), the
+    // same answer `category=security` gives a non-admin.
+    const hidden = hiddenActivityCategories(caller);
+    if (hidden.length > 0) {
+      where.AND = [{ category: { notIn: hidden } }];
     }
     if (severity) where.severity = severity;
     if (userId) where.userId = Number(userId);
@@ -83,4 +94,15 @@ export class ActivityLogController {
       },
     };
   }
+}
+
+/**
+ * Activity categories the caller may not read (permissions rounds 1 + 3):
+ * `security` unless Admin, `hr` unless `hr:read`. Exported for the spec.
+ */
+export function hiddenActivityCategories(caller: unknown): ActivityCategory[] {
+  const hidden: ActivityCategory[] = [];
+  if (!isAdminUser(caller)) hidden.push('security');
+  if (!userHasModulePermission(caller, 'hr', 'read')) hidden.push('hr');
+  return hidden;
 }

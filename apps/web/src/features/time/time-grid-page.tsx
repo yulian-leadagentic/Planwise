@@ -9,7 +9,6 @@ import { useFilterStore } from '@/stores/filter.store';
 import { getWeekDates, addDays, startOfWeek, format } from '@/lib/date-utils';
 import { minutesToDisplay } from '@/types';
 import { Skeleton } from '@/components/shared/loading-skeleton';
-import { cn } from '@/lib/utils';
 
 export function TimeGridPage() {
   const scrollRef = useStickyHScroll();
@@ -34,6 +33,12 @@ export function TimeGridPage() {
   const createEntry = useCreateTimeEntry();
   const updateEntry = useUpdateTimeEntry();
 
+  // A cell holding several entries can't be edited as one number —
+  // changing `id`'s minutes to the typed total would double-count the
+  // others. Those cells are read-only here (edit them on /time).
+  const entryCount = (cell: NonNullable<typeof grid>['rows'][0]['days'][string]) =>
+    cell ? cell.entries?.length ?? 1 : 0;
+
   const handleCellChange = (
     row: NonNullable<typeof grid>['rows'][0],
     dayKey: string,
@@ -41,9 +46,9 @@ export function TimeGridPage() {
   ) => {
     const existing = row.days[dayKey];
     if (existing) {
-      if (minutes === 0) return;
+      if (minutes === 0 || entryCount(existing) > 1) return;
       updateEntry.mutate({ id: existing.id, minutes });
-    } else if (minutes > 0) {
+    } else if (minutes > 0 && row.taskId != null) {
       createEntry.mutate({
         taskId: row.taskId,
         projectId: row.projectId,
@@ -123,11 +128,27 @@ export function TimeGridPage() {
                   </td>
                   {dayKeys.map((dayKey) => {
                     const cell = row.days[dayKey];
+                    const count = entryCount(cell);
+                    if (cell && count > 1) {
+                      return (
+                        <td key={dayKey} className="px-1 py-1">
+                          <div
+                            className="w-full rounded-md border border-dashed border-input px-3 py-2 text-center font-mono text-xs tabular-nums text-muted-foreground"
+                            title={`${count} entries — edit them on the Timesheet page`}
+                          >
+                            {minutesToDisplay(cell.minutes)}
+                          </div>
+                        </td>
+                      );
+                    }
                     return (
                       <td key={dayKey} className="px-1 py-1">
                         <MinutesInput
                           value={cell?.minutes ?? 0}
                           onChange={(minutes) => handleCellChange(row, dayKey, minutes)}
+                          // Task-less (project) rows are legacy entries: new
+                          // time always needs a task.
+                          disabled={!cell && row.taskId == null}
                           className="w-full text-center text-xs"
                         />
                       </td>

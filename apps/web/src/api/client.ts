@@ -129,6 +129,15 @@ client.interceptors.response.use(
       }
     }
 
+    // Permissions round 3 (2026-11-22) — the API refuses every route but
+    // the self-service ones while the user still has to replace a
+    // password someone else chose. Flip the cached flag so PrivateRoute
+    // swaps the app for the "Set a new password" screen (covers a reset
+    // that happened while this tab was already signed in).
+    if (error.response?.status === 403 && error.response?.data?.error?.code === 'PASSWORD_CHANGE_REQUIRED') {
+      useAuthStore.getState().setMustChangePassword(true);
+    }
+
     // Observability: leave a breadcrumb on every response error, and
     // capture 5xx / network failures to Sentry. 4xx stays out — those are
     // validation / permission / not-found signals we already surface to the

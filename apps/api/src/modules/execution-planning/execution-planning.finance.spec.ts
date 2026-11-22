@@ -64,15 +64,23 @@ describe('GET /dashboard/operations — budget (B-11)', () => {
 
   it('the controller passes the caller’s finance grant (an Admin without the grant is non-finance)', async () => {
     const eps: any = { getOperationsDashboard: jest.fn(async () => ({})) };
-    const ctrl = new ExecutionPlanningController(eps, {} as any);
+    // Round 3 — the controller also passes the caller's visible user ids.
+    const scope: any = { visibleUserIds: jest.fn(async (u: any) => [u.id]) };
+    const ctrl = new ExecutionPlanningController(eps, {} as any, scope);
     await ctrl.getOperationsDashboard({ id: 1, isAdmin: true, roleModules: [] });
-    expect(eps.getOperationsDashboard).toHaveBeenLastCalledWith({ id: 1, isAdmin: true, canSeeFinance: false }, undefined);
+    expect(eps.getOperationsDashboard).toHaveBeenLastCalledWith(
+      { id: 1, isAdmin: true, canSeeFinance: false, visibleUserIds: [1] },
+      undefined,
+    );
     await ctrl.getOperationsDashboard({
       id: 3,
       isAdmin: false,
       roleModules: [{ module: { route: '/finance' }, canRead: true }],
     });
-    expect(eps.getOperationsDashboard).toHaveBeenLastCalledWith({ id: 3, isAdmin: false, canSeeFinance: true }, undefined);
+    expect(eps.getOperationsDashboard).toHaveBeenLastCalledWith(
+      { id: 3, isAdmin: false, canSeeFinance: true, visibleUserIds: [3] },
+      undefined,
+    );
   });
 });
 

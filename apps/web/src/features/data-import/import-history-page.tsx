@@ -15,6 +15,17 @@ import { cn } from '@/lib/utils';
 import { formatDate } from '@/lib/date-utils';
 import { dataImportApi, type ImportRecord, type ImportStatus } from '@/api/data-import.api';
 
+/**
+ * Permissions round 3 (2026-11-22) — keys that must never leave this page
+ * (screen or CSV), even if an old report row still carried them. The API
+ * no longer stores them and strips them from history rows; this is the
+ * client-side backstop.
+ */
+const SECRET_ROW_KEYS = new Set(['generatedPassword', 'password', 'salaryHourly']);
+
+/** Only the users importer can undo itself (the API answers ROLLBACK_NOT_SUPPORTED otherwise). */
+const ROLLBACK_TARGETS = new Set(['users']);
+
 const STATUS_PILL: Record<ImportStatus, string> = {
   parsed: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200',
   committed: 'bg-emerald-100 text-emerald-700',
@@ -99,7 +110,11 @@ export function ImportHistoryPage() {
             {history.map((h) => {
               const expired = h.expiresAt && new Date(h.expiresAt) < new Date();
               const canRollback =
-                h.status !== 'rolled_back' && h.status !== 'failed' && !expired && h.createdCount > 0;
+                ROLLBACK_TARGETS.has(h.target) &&
+                h.status !== 'rolled_back' &&
+                h.status !== 'failed' &&
+                !expired &&
+                h.createdCount > 0;
               return (
                 <tr key={h.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/50">
                   <td className="px-4 py-2 tabular-nums text-slate-600 dark:text-slate-300">
@@ -177,7 +192,7 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
     if (rows.length === 0) return;
     const cols = ['rowIndex', 'outcome', 'entityId', 'errorMessage'];
     const allData = rows.flatMap((r) => Object.keys(r.afterJson ?? {}));
-    const dataKeys = Array.from(new Set(allData)).filter((k) => !cols.includes(k));
+    const dataKeys = Array.from(new Set(allData)).filter((k) => !cols.includes(k) && !SECRET_ROW_KEYS.has(k));
     const header = [...cols, ...dataKeys].join(',');
     const body = rows
       .map((r) => {
@@ -210,12 +225,6 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
       widthClass="w-[640px] max-w-[90vw]"
       hideCloseButton
       bodyClassName="p-0"
-      footer={
-        <p className="flex-1 text-[11px] text-slate-500 dark:text-slate-400 text-left">
-          Generated passwords are visible here so you can distribute them to the new employees. Recipients should
-          change their password on first login.
-        </p>
-      }
     >
       <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-900 z-10">
         <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">Import #{importId} — per-row outcomes</h2>
@@ -270,14 +279,7 @@ function DetailDrawer({ importId, onClose }: { importId: number; onClose: () => 
                       {r.errorMessage ? (
                         <span className="text-red-700">{r.errorMessage}</span>
                       ) : r.afterJson?.email ? (
-                        <span className="text-slate-700 dark:text-slate-200">
-                          {r.afterJson.email}
-                          {r.afterJson.generatedPassword && r.outcome === 'created' && (
-                            <span className="ml-2 text-amber-700 font-mono text-[10px]">
-                              pwd: {r.afterJson.generatedPassword}
-                            </span>
-                          )}
-                        </span>
+                        <span className="text-slate-700 dark:text-slate-200">{r.afterJson.email}</span>
                       ) : (
                         <span className="text-slate-400 dark:text-slate-500">—</span>
                       )}

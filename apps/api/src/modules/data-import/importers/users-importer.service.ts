@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { DataImportMode, DataImportTarget, UserType } from '@prisma/client';
+import { DataImportMode, DataImportTarget, Prisma, UserType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import ExcelJS from 'exceljs';
@@ -9,6 +9,7 @@ import { UsersService } from '../../users/users.service';
 import {
   CommitResult,
   EntityImporter,
+  ImportedCredential,
   ValidatedRow,
   ValidationContext,
 } from './importer.types';
@@ -40,10 +41,30 @@ interface UserImportRow {
   employmentEndDate?: Date;
   seniorityLevelId?: number;
   dailyStandardHours?: number;
-  /** Only set when caller had finance:read at validate time. */
+  /** Only set when caller had finance:read at validate time. Never written to the import report. */
   salaryHourly?: number;
-  /** Plaintext — hashed at commit time, then surfaced in afterJson. */
-  generatedPassword: string;
+  // Permissions round 3 (2026-11-22) — no `generatedPassword` here any
+  // more: the initial password is generated at commit time, per created
+  // row, returned once in the commit response and never stored.
+}
+
+/**
+ * Keys that never reach `data_import_rows.after_json` (the per-row
+ * import report every import runner can re-open for 30 days): the
+ * initial password and the pay rate. The 20261122120000 migration
+ * erased the copies written before.
+ */
+const REPORT_SECRET_KEYS: ReadonlySet<string> = new Set(['generatedPassword', 'password', 'salaryHourly']);
+
+/** The row as it may be stored in the import report — secrets removed. */
+export function toReportJson(data: object | null | undefined, extra: Record<string, unknown> = {}) {
+  if (!data) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries({ ...data, ...extra })) {
+    if (REPORT_SECRET_KEYS.has(k) || v === undefined) continue;
+    out[k] = v;
+  }
+  return out;
 }
 
 // Header names in the downloadable template. Keep matching to header
@@ -341,11 +362,8 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
               seniorityLevelId,
               dailyStandardHours,
               salaryHourly,
-              // Generate a strong random password per row. We surface
-              // the plaintext in afterJson so admins can distribute it
-              // out-of-band (the user resets via the normal flow on
-              // first login). Bcrypt-hashed at commit time.
-              generatedPassword: generateTempPassword(),
+              // No password here — validate writes nothing and must not
+              // hand out passwords; commit generates one per created row.
             }
           : null,
         conflictsWithExisting,
@@ -368,9 +386,12 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
     userId: number;
   }): Promise<CommitResult> {
     let createdCount = 0;
-    let updatedCount = 0;
+    const updatedCount = 0;
     let skippedCount = 0;
     let errorCount = 0;
+    // Initial passwords of the accounts created here — returned once to
+    // the controller (commit response), never persisted or logged.
+    const credentials: ImportedCredential[] = [];
 
     // We use a transaction PER ROW (not for the whole import) so a single
     // bad row doesn't roll back the rest. The user is told up-front to
@@ -386,7 +407,7 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
         }
 
         if (r.conflictsWithExisting && mode === 'insert') {
-          await this.recordRow(importId, r.rowIndex, 'skipped', null, r.data, 'Email already exists (insert-only mode).');
+          await this.recordRow(importId, r.rowIndex, 'skipped', null, toReportJson(r.data), 'Email already exists (insert-only mode).');
           skippedCount++;
           continue;
         }
@@ -410,8 +431,9 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
         // the extracted `ensureBpForUser` + `syncEmployeeBpRole`
         // inside the SAME `tx` so a failure rolls back the user row
         // too and we never end up with an orphan either way.
+        const initialPassword = generateTempPassword();
         const created = await this.prisma.$transaction(async (tx) => {
-          const passwordHash = await bcrypt.hash(r.data!.generatedPassword, 10);
+          const passwordHash = await bcrypt.hash(initialPassword, 10);
           const user = await tx.user.create({
             data: {
               email: r.data!.email,
@@ -419,6 +441,9 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
               lastName: r.data!.lastName,
               phone: r.data!.phone,
               password: passwordHash,
+              // Permissions round 3 — the admin knows this password, so
+              // the employee must choose his own on first sign-in.
+              mustChangePassword: true,
               roleId: r.data!.roleId,
               userType: r.data!.userType,
               position: r.data!.position,
@@ -484,21 +509,32 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
           return { ...user, businessPartnerId: bpId };
         });
 
-        // Strip the password BEFORE writing to afterJson — we DO want
-        // the plaintext visible in the per-row report so the admin can
-        // distribute it, but only to that admin (the report is gated
-        // by the import-runner). Keep password but drop the hash.
-        const afterForLog = { ...r.data, userId: created.id, password: undefined };
-        await this.recordRow(importId, r.rowIndex, 'created', created.id, afterForLog, null);
+        // The import report keeps what was written minus the secrets
+        // (no initial password, no pay rate). The password goes back to
+        // the admin once, in the commit response.
+        await this.recordRow(
+          importId,
+          r.rowIndex,
+          'created',
+          created.id,
+          toReportJson(r.data, { userId: created.id }),
+          null,
+        );
+        credentials.push({
+          email: created.email,
+          firstName: created.firstName,
+          lastName: created.lastName,
+          password: initialPassword,
+        });
         createdCount++;
       } catch (e: any) {
         this.logger.warn(`Row ${r.rowIndex} failed: ${e.message}`);
-        await this.recordRow(importId, r.rowIndex, 'failed', null, r.data, e.message);
+        await this.recordRow(importId, r.rowIndex, 'failed', null, toReportJson(r.data), e.message);
         errorCount++;
       }
     }
 
-    return { createdCount, updatedCount, skippedCount, errorCount };
+    return { createdCount, updatedCount, skippedCount, errorCount, credentials };
   }
 
   async rollback(importId: number): Promise<{ deletedCount: number; restoredCount: number }> {
@@ -532,7 +568,8 @@ export class UsersImporterService implements EntityImporter<UserImportRow> {
         outcome,
         entityId,
         errorMessage,
-        afterJson: after ?? undefined,
+        // Belt and braces — every caller already passes toReportJson().
+        afterJson: (toReportJson(after) ?? undefined) as Prisma.InputJsonValue | undefined,
       },
     });
   }
@@ -557,8 +594,16 @@ function parseISODate(s: string): Date | undefined {
   return Number.isNaN(dt.getTime()) ? undefined : dt;
 }
 
-function generateTempPassword(): string {
-  // 12-char URL-safe random — enough entropy that no two imported users
-  // share a password by accident even at 10k rows.
-  return crypto.randomBytes(9).toString('base64').replace(/[+/=]/g, '');
+/** Unambiguous characters (no 0/O, 1/l/I) — the password is read off a screen or a CSV. */
+const TEMP_PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+
+export function generateTempPassword(length = 12): string {
+  // 12 chars from a 56-char alphabet ≈ 70 bits — no two imported users
+  // share a password by accident even at 10k rows. crypto.randomInt is
+  // uniform (no modulo bias).
+  let out = '';
+  for (let i = 0; i < length; i++) {
+    out += TEMP_PASSWORD_ALPHABET[crypto.randomInt(TEMP_PASSWORD_ALPHABET.length)];
+  }
+  return out;
 }

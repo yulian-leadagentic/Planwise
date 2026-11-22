@@ -1,22 +1,62 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
+import { notify } from '@/lib/notify';
+
+/**
+ * One row of GET /reports/attendance/summary — per employee, distinct
+ * days in the range. The API returns a plain array and accepts
+ * `from` / `to` (YYYY-MM-DD); month / year are UI-only and are turned
+ * into that range here (the API's query whitelist rejects them).
+ * Since permissions round 3 the rows cover only the employees the
+ * caller may see (everyone for HR, otherwise the people he manages).
+ */
+interface AttendanceRow {
+  user: { id: number; firstName: string | null; lastName: string | null };
+  totalDays: number;
+  presentDays: number;
+  absentDays: number;
+  sickDays?: number;
+  leaveDays?: number;
+  lateDays: number;
+  totalMinutes: number;
+  overtimeMinutes: number;
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** First and last day of a month as YYYY-MM-DD (no timezone shifts). */
+function monthRange(year: number, month: number): { from: string; to: string } {
+  const lastDay = new Date(year, month, 0).getDate();
+  return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(lastDay)}` };
+}
 
 export function AttendanceReportPage() {
   const scrollRef = useStickyHScroll();
   const today = new Date();
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [year, setYear] = useState(today.getFullYear());
+  const validYear = Number.isInteger(year) && year >= 2000 && year <= 2100;
+  const { from, to } = monthRange(validYear ? year : today.getFullYear(), month);
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['reports', 'attendance', month, year],
-    queryFn: () => client.get('/reports/attendance/summary', { params: { month, year } }).then((r) => r.data.data),
+  const { data, isLoading, error } = useQuery<AttendanceRow[]>({
+    queryKey: ['reports', 'attendance', from, to],
+    queryFn: () =>
+      client.get('/reports/attendance/summary', { params: { from, to } }).then((r) => {
+        const d = r.data?.data ?? r.data;
+        return Array.isArray(d) ? d : [];
+      }),
+    enabled: validYear,
   });
 
-  const rows = data?.rows ?? [];
+  useEffect(() => {
+    if (error) notify.apiError(error, 'Failed to load the attendance report');
+  }, [error]);
+
+  const rows = data ?? [];
 
   return (
     <div className="space-y-6">
@@ -60,14 +100,16 @@ export function AttendanceReportPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row: any) => (
-                <tr key={row.userId} className="border-b border-border last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3 font-medium">{row.userName}</td>
-                  <td className="px-4 py-3 text-center">{row.daysPresent}</td>
-                  <td className="px-4 py-3 text-center">{row.daysSick}</td>
-                  <td className="px-4 py-3 text-center">{row.daysLeave}</td>
-                  <td className="px-4 py-3 text-center">{row.daysAbsent}</td>
-                  <td className="px-4 py-3 text-center">{row.daysLate}</td>
+              {rows.map((row) => (
+                <tr key={row.user.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                  <td className="px-4 py-3 font-medium">
+                    {`${row.user.firstName ?? ''} ${row.user.lastName ?? ''}`.trim() || '—'}
+                  </td>
+                  <td className="px-4 py-3 text-center font-mono">{row.presentDays}</td>
+                  <td className="px-4 py-3 text-center font-mono">{row.sickDays ?? '—'}</td>
+                  <td className="px-4 py-3 text-center font-mono">{row.leaveDays ?? '—'}</td>
+                  <td className="px-4 py-3 text-center font-mono">{row.absentDays}</td>
+                  <td className="px-4 py-3 text-center font-mono">{row.lateDays}</td>
                 </tr>
               ))}
             </tbody>

@@ -80,6 +80,8 @@ const HrSettingsPage = lazy(() => import('@/features/hr/settings-page').then(m =
 // HR F2 (2026-10-19) — Calendar moved from Admin → HR. `/admin/calendar`
 // redirects below so bookmarks keep working.
 const HrCalendarPage = lazy(() => import('@/features/hr/calendar-page').then(m => ({ default: m.HrCalendarPage })));
+// Permissions round 3 (2026-11-22) — HR audit trail, hr:read only.
+const HrAuditPage = lazy(() => import('@/features/hr/audit-page').then(m => ({ default: m.HrAuditPage })));
 const MonthlySummaryPage = lazy(() => import('@/features/time/monthly-summary-page').then(m => ({ default: m.MonthlySummaryPage })));
 
 // DnD-heavy (kept lazy to avoid @dnd-kit React version conflicts)
@@ -222,6 +224,9 @@ export function AppRouter() {
           <Route path="calendar" element={<L><HrCalendarPage /></L>} />
           <Route path="reports" element={<L><HrReportsPage /></L>} />
           <Route path="settings" element={<L><HrSettingsPage /></L>} />
+          {/* Permissions round 3 — HR audit; RoutePermissionGuard applies
+              hr:read here even for Admins (no admin bypass). */}
+          <Route path="audit" element={<L><HrAuditPage /></L>} />
         </Route>
 
         {/* Account */}

@@ -33,6 +33,9 @@ export async function loadAuthenticatedUser(prisma: PrismaService, userId: numbe
       roleId: true,
       userType: true,
       avatarUrl: true,
+      // Permissions round 3 — JwtAuthGuard blocks every route except the
+      // self-service ones while this is set (PASSWORD_CHANGE_REQUIRED).
+      mustChangePassword: true,
       role: {
         include: {
           roleModules: { include: { module: true } },

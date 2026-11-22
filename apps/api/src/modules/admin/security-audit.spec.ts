@@ -3,7 +3,8 @@
 jest.mock('openid-client', () => ({}));
 
 import { ForbiddenException } from '@nestjs/common';
-import { ActivityLogController } from './activity-log.controller';
+import { ActivityLogController, hiddenActivityCategories } from './activity-log.controller';
+import { ProjectsService } from '../projects/projects.service';
 import { RolesController } from './roles.controller';
 import { AdminUsersController } from './users.controller';
 import { ActivityLogService } from '../../common/services/activity-log.service';
@@ -25,55 +26,116 @@ const DEPT_LEAD = {
   isAdmin: false,
   roleModules: [{ module: { route: '/admin/activity-log', name: 'Activity Log' }, canRead: true, canWrite: true }],
 };
+// Permissions round 3 (2026-11-22) — HR roles hold hr:read; an Admin
+// does NOT get hr rows through the admin bypass.
+const HR_READER = {
+  id: 4,
+  isAdmin: false,
+  roleModules: [
+    { module: { route: '/admin/activity-log', name: 'Activity Log' }, canRead: true, canWrite: false },
+    { module: { route: '/hr', name: 'HR' }, canRead: true, canWrite: false },
+  ],
+};
+const ADMIN_WITH_HR = {
+  id: 5,
+  isAdmin: true,
+  roleModules: [{ module: { route: '/hr', name: 'HR' }, canRead: true, canWrite: true }],
+};
 const ADMIN_WRITE_NON_ADMIN = {
   id: 3,
   isAdmin: false,
   roleModules: [{ module: { route: '/admin', name: 'Admin' }, canRead: true, canWrite: true }],
 };
 
-describe('GET /admin/activity-logs — security rows are Admin-only', () => {
+describe('GET /admin/activity-logs — security rows are Admin-only, hr rows hr:read-only', () => {
   function make() {
     const prisma: any = {
       activityLog: { findMany: jest.fn(async () => []), count: jest.fn(async () => 0) },
     };
     return { ctrl: new ActivityLogController(prisma), prisma };
   }
-  const whereOf = (prisma: any) => prisma.activityLog.findMany.mock.calls[0][0].where;
+  const whereOf = (prisma: any, i = 0) => prisma.activityLog.findMany.mock.calls[i][0].where;
 
-  const NOT_SECURITY = [{ category: { not: 'security' } }];
+  // A department lead (admin/activity-log:read, no hr) — neither security nor hr.
+  const NOT_SECURITY_OR_HR = [{ category: { notIn: ['security', 'hr'] } }];
+  const NOT_HR = [{ category: { notIn: ['hr'] } }];
+  const NOT_SECURITY = [{ category: { notIn: ['security'] } }];
 
-  it('hides security rows from a non-admin reader', async () => {
+  it('hides security and hr rows from a department lead', async () => {
     const { ctrl, prisma } = make();
     await ctrl.findAll(DEPT_LEAD);
-    expect(whereOf(prisma).AND).toEqual(NOT_SECURITY);
-    expect(prisma.activityLog.count.mock.calls[0][0].where.AND).toEqual(NOT_SECURITY);
+    expect(whereOf(prisma).AND).toEqual(NOT_SECURITY_OR_HR);
+    expect(prisma.activityLog.count.mock.calls[0][0].where.AND).toEqual(NOT_SECURITY_OR_HR);
   });
 
-  it('category=security from a non-admin is ANDed with "not security" (matches nothing)', async () => {
+  it('category=security from a non-admin is ANDed with the exclusion (matches nothing)', async () => {
     const { ctrl, prisma } = make();
     await ctrl.findAll(DEPT_LEAD, 1, 50, 'security');
-    expect(whereOf(prisma)).toMatchObject({ category: 'security', AND: NOT_SECURITY });
+    expect(whereOf(prisma)).toMatchObject({ category: 'security', AND: NOT_SECURITY_OR_HR });
+  });
+
+  it('category=hr without hr:read is ANDed with the exclusion (empty page, not an error)', async () => {
+    const { ctrl, prisma } = make();
+    await ctrl.findAll(DEPT_LEAD, 1, 50, 'hr');
+    expect(whereOf(prisma)).toMatchObject({ category: 'hr', AND: NOT_SECURITY_OR_HR });
   });
 
   it('a bracket-syntax category filter from a non-admin is still excluded', async () => {
     const { ctrl, prisma } = make();
-    await ctrl.findAll(DEPT_LEAD, 1, 50, { in: ['security'] } as any);
-    expect(whereOf(prisma)).toMatchObject({ category: { in: ['security'] }, AND: NOT_SECURITY });
+    await ctrl.findAll(DEPT_LEAD, 1, 50, { in: ['security', 'hr'] } as any);
+    expect(whereOf(prisma)).toMatchObject({ category: { in: ['security', 'hr'] }, AND: NOT_SECURITY_OR_HR });
   });
 
   it('leaves other explicit categories alone for a non-admin', async () => {
     const { ctrl, prisma } = make();
     await ctrl.findAll(DEPT_LEAD, 1, 50, 'auth');
-    expect(whereOf(prisma)).toMatchObject({ category: 'auth', AND: NOT_SECURITY });
+    expect(whereOf(prisma)).toMatchObject({ category: 'auth', AND: NOT_SECURITY_OR_HR });
   });
 
-  it('shows everything (and category=security) to an Admin', async () => {
+  it('an Admin without hr sees security rows but not hr rows (no admin bypass for hr)', async () => {
     const { ctrl, prisma } = make();
     await ctrl.findAll(ADMIN);
     expect(whereOf(prisma).category).toBeUndefined();
-    expect(whereOf(prisma).AND).toBeUndefined();
+    expect(whereOf(prisma).AND).toEqual(NOT_HR);
     await ctrl.findAll(ADMIN, 1, 50, 'security');
-    expect(prisma.activityLog.findMany.mock.calls[1][0].where).toEqual({ category: 'security' });
+    expect(whereOf(prisma, 1)).toEqual({ category: 'security', AND: NOT_HR });
+    await ctrl.findAll(ADMIN, 1, 50, 'hr');
+    expect(whereOf(prisma, 2)).toEqual({ category: 'hr', AND: NOT_HR });
+  });
+
+  it('an hr:read holder who is not an Admin sees hr rows but not security rows', async () => {
+    const { ctrl, prisma } = make();
+    await ctrl.findAll(HR_READER, 1, 50, 'hr');
+    expect(whereOf(prisma)).toEqual({ category: 'hr', AND: NOT_SECURITY });
+  });
+
+  it('an Admin who also holds hr:read sees everything', async () => {
+    const { ctrl, prisma } = make();
+    await ctrl.findAll(ADMIN_WITH_HR);
+    expect(whereOf(prisma).AND).toBeUndefined();
+    await ctrl.findAll(ADMIN_WITH_HR, 1, 50, 'security');
+    expect(whereOf(prisma, 1)).toEqual({ category: 'security' });
+  });
+
+  it('hiddenActivityCategories names exactly what each caller may not read', () => {
+    expect(hiddenActivityCategories(DEPT_LEAD)).toEqual(['security', 'hr']);
+    expect(hiddenActivityCategories(ADMIN)).toEqual(['hr']);
+    expect(hiddenActivityCategories(HR_READER)).toEqual(['security']);
+    expect(hiddenActivityCategories(ADMIN_WITH_HR)).toEqual([]);
+  });
+});
+
+describe('GET /projects/:id/activity-logs — never shows hr or security rows', () => {
+  it('excludes both categories in the query and the count', async () => {
+    const prisma: any = {
+      activityLog: { findMany: jest.fn(async () => []), count: jest.fn(async () => 0) },
+    };
+    const svc = Object.create(ProjectsService.prototype);
+    (svc as any).prisma = prisma;
+    await svc.getActivityLogs(7, { perPage: 20, page: 1 });
+    const expected = { projectId: 7, category: { notIn: ['hr', 'security'] } };
+    expect(prisma.activityLog.findMany.mock.calls[0][0].where).toEqual(expected);
+    expect(prisma.activityLog.count.mock.calls[0][0].where).toEqual(expected);
   });
 });
 

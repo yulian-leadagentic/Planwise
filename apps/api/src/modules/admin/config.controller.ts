@@ -162,7 +162,22 @@ export class ConfigController {
   async createTeamTemplate(@Body() body: { name: string }, @Req() req: any) {
     return this.prisma.teamTemplate.create({
       data: { name: body.name, createdBy: req.user?.id || 1 },
-      include: { members: { include: { user: true } }, _count: { select: { members: true } } },
+      // Round 3 (privacy) — explicit member/user selects, same shape as
+      // GET /team-templates. `include: { user: true }` returned the whole
+      // User row, password hash and OTP fields included.
+      include: {
+        members: {
+          select: {
+            id: true,
+            teamTemplateId: true,
+            userId: true,
+            projectRoleTypeId: true,
+            user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true, userType: true, position: true } },
+            projectRoleType: { select: { id: true, code: true, name: true } },
+          },
+        },
+        _count: { select: { members: true } },
+      },
     });
   }
 

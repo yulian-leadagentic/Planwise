@@ -16,6 +16,16 @@ import * as ExcelJS from 'exceljs';
 
 import { ReportsController } from './reports.controller';
 import { ReportsService, isCostExportType, scrubTimesheetCost } from './reports.service';
+import { ALL_TIME_SCOPE } from '../../common/services/employee-scope.service';
+
+// Round 3 (2026-11-22) — the controller now resolves the caller's
+// employee scope; these finance tests run as someone who sees everyone.
+function scopeStub(): any {
+  return {
+    timeEntryScope: jest.fn(async () => ALL_TIME_SCOPE),
+    visibleUserIds: jest.fn(async () => 'all'),
+  };
+}
 
 const perm = (route: string, flags: Record<string, boolean>) => ({ module: { route, name: route.slice(1) }, ...flags });
 const REPORTS_EXPORTER = {
@@ -86,7 +96,7 @@ function fakeRes() {
 describe('GET /reports/export — timesheet-detailed (B-02)', () => {
   it('without finance:read the workbook has no Cost / Currency columns and no cost totals', async () => {
     const svc = new ReportsService(makePrisma());
-    const buf = await svc.exportReport('timesheet-detailed', 'excel', {} as any, { canSeeFinance: false });
+    const buf = await svc.exportReport('timesheet-detailed', 'excel', {} as any, { canSeeFinance: false, scope: ALL_TIME_SCOPE });
     const headers = await headersOf(buf);
     expect(headers).toContain('Hours');
     expect(headers).not.toContain('Cost');
@@ -98,7 +108,7 @@ describe('GET /reports/export — timesheet-detailed (B-02)', () => {
 
   it('with finance:read the Cost column and per-currency totals are there', async () => {
     const svc = new ReportsService(makePrisma());
-    const buf = await svc.exportReport('timesheet-detailed', 'excel', {} as any, { canSeeFinance: true });
+    const buf = await svc.exportReport('timesheet-detailed', 'excel', {} as any, { canSeeFinance: true, scope: ALL_TIME_SCOPE });
     const headers = await headersOf(buf);
     expect(headers).toEqual(expect.arrayContaining(['Cost', 'Currency']));
     const text = await allCellText(buf);
@@ -114,11 +124,11 @@ describe('GET /reports/export — timesheet-detailed (B-02)', () => {
 
   it('the controller passes the caller’s finance grant through', async () => {
     const reportsService: any = { exportReport: jest.fn(async () => Buffer.from('x')) };
-    const ctrl = new ReportsController(reportsService);
+    const ctrl = new ReportsController(reportsService, scopeStub());
     await ctrl.exportReport(REPORTS_EXPORTER, 'timesheet-detailed', 'excel', {} as any, fakeRes());
-    expect(reportsService.exportReport).toHaveBeenLastCalledWith('timesheet-detailed', 'excel', {}, { canSeeFinance: false });
+    expect(reportsService.exportReport).toHaveBeenLastCalledWith('timesheet-detailed', 'excel', {}, { canSeeFinance: false, scope: ALL_TIME_SCOPE });
     await ctrl.exportReport(FINANCE_EXPORTER, 'timesheet-detailed', 'excel', {} as any, fakeRes());
-    expect(reportsService.exportReport).toHaveBeenLastCalledWith('timesheet-detailed', 'excel', {}, { canSeeFinance: true });
+    expect(reportsService.exportReport).toHaveBeenLastCalledWith('timesheet-detailed', 'excel', {}, { canSeeFinance: true, scope: ALL_TIME_SCOPE });
   });
 
   it('the JSON route and the export share one scrub', () => {
@@ -134,7 +144,7 @@ describe('GET /reports/export — timesheet-detailed (B-02)', () => {
 describe('GET /reports/export — cost-* types (B-03)', () => {
   it('cost-by-project without finance:read → 403 before any query', async () => {
     const reportsService: any = { exportReport: jest.fn() };
-    const ctrl = new ReportsController(reportsService);
+    const ctrl = new ReportsController(reportsService, scopeStub());
     const res = fakeRes();
     await expect(ctrl.exportReport(REPORTS_EXPORTER, 'cost-by-project', 'excel', {} as any, res)).rejects.toThrow(
       ForbiddenException,
@@ -158,7 +168,7 @@ describe('GET /reports/export — cost-* types (B-03)', () => {
 
   it('a finance:read caller still gets it', async () => {
     const reportsService: any = { exportReport: jest.fn(async () => Buffer.from('x')) };
-    const ctrl = new ReportsController(reportsService);
+    const ctrl = new ReportsController(reportsService, scopeStub());
     const res = fakeRes();
     await ctrl.exportReport(FINANCE_EXPORTER, 'cost-by-project', 'excel', {} as any, res);
     expect(reportsService.exportReport).toHaveBeenCalledWith('cost-by-project', 'excel', {}, { canSeeFinance: true });
@@ -170,7 +180,7 @@ describe('GET /reports/milestones (B-19)', () => {
   it('drops LabelMilestone.amount for callers without finance:read', async () => {
     const rows = [{ id: 1, name: 'Permit', amount: '25000.00', label: { id: 3, name: 'A' } }];
     const reportsService: any = { milestonesReport: jest.fn(async () => rows) };
-    const ctrl = new ReportsController(reportsService);
+    const ctrl = new ReportsController(reportsService, scopeStub());
     expect(await ctrl.milestones(REPORTS_EXPORTER, {} as any)).toEqual([{ id: 1, name: 'Permit', label: { id: 3, name: 'A' } }]);
     expect(await ctrl.milestones(FINANCE_EXPORTER, {} as any)).toBe(rows);
   });

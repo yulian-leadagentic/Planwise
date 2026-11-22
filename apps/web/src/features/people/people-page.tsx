@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import { Tabs, tabPanelId, tabTriggerId } from '@/components/shared/tabs';
 import { TextField, SelectField } from '@/components/shared/field';
 import { Modal } from '@/components/shared/modal';
-import { useUsers } from '@/hooks/use-users';
+import { useAllUsers } from '@/hooks/use-users';
 import { useFilterStore } from '@/stores/filter.store';
 import { useDebounce } from '@/hooks/use-debounce';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -267,6 +267,14 @@ export function PeoplePage() {
     } else {
       payload.dailyStandardHours = Number(form.dailyStandardHours);
     }
+    // Permissions round 3 (privacy) — employment details are HR data: the
+    // API refuses them without hr:write (an Admin without HR included),
+    // so they are neither shown nor sent then. Empty dates are omitted
+    // either way (the date validator rejects "").
+    for (const k of ['employmentDate', 'employmentEndDate'] as const) {
+      if (!canWritePersonal || !payload[k]) delete payload[k];
+    }
+    if (!canWritePersonal) delete payload.dailyStandardHours;
     createUser.mutate(payload);
   };
 
@@ -363,15 +371,18 @@ export function PeoplePage() {
   });
 
   const isPartners = peopleTab === 'partners';
-  // The edit/reset-password buttons used to be gated on a non-existent
-  // "partners" module permission, which made them invisible to every
-  // role. Even after correcting to "people", non-admin roles still
-  // couldn't see them. Since the "Add Person" button at the top of this
-  // very page has NO permission gate at all, gating the row actions is
-  // inconsistent — the backend is the authority anyway and will reject
-  // an unauthorized PATCH. So we always show the row actions and let
-  // the server decide. (T-fix, 2026-06-29.)
-  const canEditPeople = true;
+  // Permissions round 3 (privacy, 2026-11-22) — the same bar as the
+  // server's PATCH /users/:id gate (`canEditPeople` in
+  // user-write-policy.ts): Admin, partners:write or hr:write. Everyone
+  // else gets a read-only directory (no edit pencil, no inline selects).
+  const canEditPeople = isAdmin || can('partners', 'write') || can('hr', 'write');
+  // Account tier (employee no., access role, active state, labor
+  // category) — the API returns it to Admin and HR (hr:read) only, and
+  // only they may list inactive users.
+  const canSeeAccount = isAdmin || can('hr', 'read');
+  // Personal tier (employment dates, daily standard hours) — set by HR
+  // (hr:write) only; no Admin bypass.
+  const canWritePersonal = can('hr', 'write');
   // Permissions round 1 (2026-11-20) — owner decision 6: only Admin and
   // HR add (and remove) employees; access role and password are Admin
   // only; active state is Admin or HR. These mirror the server rules on
@@ -402,16 +413,20 @@ export function PeoplePage() {
   // Hoisted above the columns memo so the deactivate/role-change
   // confirms can resolve the person by id from the current page.
   const userType = peopleTab === 'employees' ? 'employee' : 'partner';
+  // Round 3 — only Admin / HR may list inactive users (the API answers
+  // 403 otherwise), so everyone else is pinned to active, whatever the
+  // persisted filter says.
   const isActiveParam: boolean | 'all' | undefined =
-    peopleStatus === 'active' ? true
+    !canSeeAccount || peopleStatus === 'active' ? true
     : peopleStatus === 'inactive' ? false
     : 'all';
-  const { data, isLoading } = useUsers({
+  // Every matching person, all pages — `useUsers` without perPage got the
+  // API's default page of 20, so the table silently stopped at 20 people.
+  const { data: users = [], isLoading } = useAllUsers({
     userType,
     search: debouncedSearch || undefined,
     isActive: isActiveParam,
   });
-  const users = data?.data ?? [];
   // Labor-category options for the column filter: the catalog when the
   // viewer may read it (finance:read), else the distinct categories on
   // the loaded rows (names only — the API strips their cost).
@@ -500,13 +515,16 @@ export function PeoplePage() {
             }
             updateActive.mutate({ userId, isActive });
           },
-      // QA3 round-3 item 7b — finance-gated ₪/h column.
-      showEffectiveRate,
+      // QA3 round-3 item 7b — finance-gated ₪/h column. Round 3: the
+      // rate is account-tier data too (the API computes it for Admin /
+      // HR with finance:read only).
+      showEffectiveRate && canSeeAccount,
       // Permissions round 1 — inline role select + reset password are
-      // Admin only.
-      { canChangeRole: isAdmin, canResetPassword: isAdmin },
+      // Admin only. Round 3 — account-tier columns (code, labor
+      // category, access role, status) only for Admin / HR.
+      { canChangeRole: isAdmin, canResetPassword: isAdmin, showAccountColumns: canSeeAccount },
     ),
-    [isPartners, roles, canEditPeople, savingUserId, orgUnits, seniorityOptions, showEffectiveRate, users, confirm, isAdmin, canChangeActive, canChangeOrgUnit, canChangeLaborCategory],
+    [isPartners, roles, canEditPeople, savingUserId, orgUnits, seniorityOptions, showEffectiveRate, users, confirm, isAdmin, canChangeActive, canChangeOrgUnit, canChangeLaborCategory, canSeeAccount],
   );
 
   // Status filter: this is the ONLY page in the app that legitimately
@@ -558,7 +576,9 @@ export function PeoplePage() {
       {/* Status filter — defaults to Active. The whole rest of the app
        *  relies on the backend's active-only default; this page is the
        *  one exception (admins need to find deactivated users to
-       *  reactivate or delete them). */}
+       *  reactivate or delete them). Round 3 — Admin / HR only: nobody
+       *  else may list inactive users. */}
+      {canSeeAccount && (
       <div className="flex items-center gap-1.5" role="group" aria-label="Filter by status">
         {(['active', 'inactive', 'all'] as const).map((status) => {
           const pressed = peopleStatus === status;
@@ -580,6 +600,7 @@ export function PeoplePage() {
           );
         })}
       </div>
+      )}
 
       <div
         role="tabpanel"
@@ -616,6 +637,9 @@ export function PeoplePage() {
                     {user.position ?? user.companyName ?? user.roleName}
                   </p>
                 </div>
+                {/* Round 3 — active state is account-tier data; absent
+                    for directory viewers (who only ever see active rows). */}
+                {user.isActive !== undefined && (
                 <span
                   className={cn(
                     'rounded-full px-2 py-0.5 text-xs font-medium',
@@ -626,6 +650,7 @@ export function PeoplePage() {
                 >
                   {user.isActive ? 'Active' : 'Inactive'}
                 </span>
+                )}
               </div>
             </div>
           )}
@@ -972,7 +997,10 @@ export function PeoplePage() {
               )}
               </>)}
 
-              {/* M4a.4 — Employment fields */}
+              {/* M4a.4 — Employment fields. Round 3 (privacy) — HR data:
+                  shown and sent only with hr:write (the API refuses them
+                  otherwise, an Admin without HR included). */}
+              {canWritePersonal && (
               <div className="grid grid-cols-3 gap-4">
                 <TextField
                   label="Start date"
@@ -1000,6 +1028,7 @@ export function PeoplePage() {
                   placeholder="e.g. 8"
                 />
               </div>
+              )}
               {peopleTab === 'partners' && (
                 <TextField
                   label="Organization Name"
@@ -1144,7 +1173,7 @@ export function PeoplePage() {
         </Modal>
       )}
 
-      {editingUser && (
+      {editingUser && canEditPeople && (
         <EditPersonModal
           user={editingUser}
           roles={roles}

@@ -156,6 +156,13 @@ enum ActivityCategory {
   // password / email / active changes, SSO config). Only Admins can
   // read these rows in GET /admin/activity-logs.
   security
+  // Permissions round 3 (2026-11-22) — HR audit rows (absences,
+  // attachments, eligibilities, employee HR fields, monthly approve /
+  // reopen / lock, HR catalog + settings). Visible only to `hr:read`
+  // holders — not to department leads, not to an Admin without `hr`.
+  // Read through GET /hr/audit; GET /admin/activity-logs hides them
+  // from callers without the grant.
+  hr
 }
 
 enum ActivitySeverity {
@@ -345,6 +352,14 @@ model User {
   otpCode            String?         @map("otp_code")
   otpExpiresAt       DateTime?       @map("otp_expires_at")
   otpAttempts        Int             @default(0) @map("otp_attempts")
+  /// Permissions round 3 (2026-11-22) — forced password change on first
+  /// login. Set when someone else chose the password (Admin/HR create,
+  /// Admin reset of another user's password, data import); cleared when
+  /// the user sets his own password (PATCH /auth/me/password or the
+  /// forgot-password reset). While true, JwtAuthGuard rejects every
+  /// route except the self-service ones with 403 PASSWORD_CHANGE_REQUIRED.
+  /// SSO-only users (password = null) never get it.
+  mustChangePassword Boolean         @default(false) @map("must_change_password")
   isActive           Boolean         @default(true) @map("is_active")
   lastLoginAt        DateTime?       @map("last_login_at")
   createdAt          DateTime        @default(now()) @map("created_at")

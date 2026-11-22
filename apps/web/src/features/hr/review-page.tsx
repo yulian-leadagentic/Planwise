@@ -73,9 +73,12 @@ export function HrMonthlyReviewPage() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [drawerUserId, setDrawerUserId] = useState<number | null>(null);
 
-  const { can } = usePermissions();
+  const { can, user } = usePermissions();
   const canWrite = can('hr', 'write');
   const canApprove = can('hr', 'approve');
+  // Permissions round 3 (2026-11-22) — nobody approves his own month
+  // (the API answers 403 SELF_APPROVAL_NOT_ALLOWED); bulk approve skips it.
+  const myUserId: number | undefined = user?.id;
 
   const confirm = useConfirm();
   const queryClient = useQueryClient();
@@ -157,23 +160,29 @@ export function HrMonthlyReviewPage() {
   const approveAll = useMutation({
     mutationFn: async () => {
       // Only computed+OPEN rows can be approved. Missing rows don't exist
-      // in the DB yet — recompute first to materialize them.
-      const toApprove = rows
-        .filter(isComputed)
-        .filter((r) => r.row.status === 'OPEN');
+      // in the DB yet — recompute first to materialize them. The caller's
+      // own row is skipped: another HR approver must approve it.
+      const open = rows.filter(isComputed).filter((r) => r.row.status === 'OPEN');
+      const toApprove = open.filter((r) => r.row.userId !== myUserId);
+      const skippedOwn = open.length !== toApprove.length;
       const results = await Promise.allSettled(
         toApprove.map((r) =>
           hrApi.approveMonthly(r.row.userId, year, month),
         ),
       );
-      return results;
+      return { results, skippedOwn };
     },
-    onSuccess: (results) => {
+    onSuccess: ({ results, skippedOwn }) => {
       queryClient.invalidateQueries({ queryKey: monthKey });
       const ok = results.filter((r) => r.status === 'fulfilled').length;
       const fail = results.filter((r) => r.status === 'rejected').length;
       if (fail > 0) notify.warning(`אושרו ${ok}, נכשלו ${fail}`);
       else notify.success(`אושרו ${ok} עובדים`);
+      if (skippedOwn) {
+        notify.info('החודש שלך לא אושר', {
+          description: "Your own month was skipped — you can't approve it yourself. Another HR approver must do it.",
+        });
+      }
     },
     onError: (e: any) => notify.apiError(e, 'Approve all failed'),
   });
@@ -354,9 +363,14 @@ export function HrMonthlyReviewPage() {
     [],
   );
 
+  // Rows "אשר הכל" will actually approve — the caller's own row is
+  // never one of them.
+  const ownRowOpen = rows
+    .filter(isComputed)
+    .some((r) => r.row.status === 'OPEN' && r.row.userId === myUserId);
   const openCount = rows
     .filter(isComputed)
-    .filter((r) => r.row.status === 'OPEN').length;
+    .filter((r) => r.row.status === 'OPEN' && r.row.userId !== myUserId).length;
 
   return (
     <div className="space-y-5">
@@ -409,7 +423,10 @@ export function HrMonthlyReviewPage() {
                 if (
                   await confirm(`לאשר ${openCount} עובדים?`, {
                     description:
-                      'Approves every OPEN row for this month. Reopen flips the row back.',
+                      'Approves every OPEN row for this month. Reopen flips the row back.' +
+                      (ownRowOpen
+                        ? " Your own month is not included — another HR approver must approve it."
+                        : ''),
                     confirmLabel: 'אשר הכל',
                   })
                 ) {

@@ -113,6 +113,38 @@ export class ActivityLogService {
     });
   }
 
+  // ─── HR (permissions round 3, 2026-11-22) ────────────────────────
+
+  /**
+   * Audit row for an HR action: absences, attachments, eligibilities,
+   * employee HR fields, monthly approve / reopen / lock, HR catalog and
+   * settings. Category `hr` — visible only to `hr:read` holders (GET
+   * /hr/audit); GET /admin/activity-logs hides it from everyone else,
+   * including an Admin without the HR grant.
+   *
+   * Put the employee the row is about in `metadata.employeeId` — the
+   * HR audit tab filters on it. Never put a document's content, a
+   * medical note or a free-text reason in `changes`; record that it
+   * changed instead.
+   */
+  async logHrEvent(input: {
+    action: string;
+    description: string;
+    actorUserId?: number | null;
+    entityType: string;
+    entityId?: number | null;
+    entityName?: string | null;
+    changes?: Prisma.InputJsonValue | null;
+    metadata?: Prisma.InputJsonValue | null;
+    severity?: ActivitySeverity;
+  }): Promise<void> {
+    await this.write({
+      ...input,
+      category: 'hr',
+      severity: input.severity ?? 'info',
+    });
+  }
+
   // ─── Project ──────────────────────────────────────────────────────
 
   async logProjectCreated(input: LogCommonInput & { projectName: string }): Promise<void> {

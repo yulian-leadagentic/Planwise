@@ -12,6 +12,7 @@ import { UsersModule } from '../users/users.module';
 import { OidcController } from './oidc/oidc.controller';
 import { OidcUserResolverService } from './oidc/oidc-user-resolver.service';
 import { SsoAdminModule } from '../sso-admin/sso-admin.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -35,6 +36,8 @@ import { SsoAdminModule } from '../sso-admin/sso-admin.module';
     // controller uses the SAME issuer-mapping the admin test-connection
     // endpoint uses. One place to fix if a provider changes.
     SsoAdminModule,
+    // NotificationsService.sendEmail — the forgot-password code e-mail.
+    NotificationsModule,
   ],
   controllers: [AuthController, OidcController],
   providers: [AuthService, JwtStrategy, LocalStrategy, RefreshStrategy, OidcUserResolverService],

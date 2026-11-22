@@ -1067,9 +1067,16 @@ export class ProjectsService {
   ): Promise<{ data: any[]; meta: { total: number; page: number; perPage: number } }> {
     const take = opts.perPage;
     const skip = (opts.page - 1) * take;
+    // Permissions round 3 (2026-11-22) — safeguard: HR and security rows
+    // never show in a project feed, even if one is ever written with a
+    // projectId (HR rows are hr:read-only, security rows Admin-only).
+    const where: Prisma.ActivityLogWhereInput = {
+      projectId,
+      category: { notIn: ['hr', 'security'] },
+    };
     const [rows, total] = await Promise.all([
       this.prisma.activityLog.findMany({
-        where: { projectId },
+        where,
         skip,
         take,
         orderBy: { createdAt: 'desc' },
@@ -1077,7 +1084,7 @@ export class ProjectsService {
           user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
         },
       }),
-      this.prisma.activityLog.count({ where: { projectId } }),
+      this.prisma.activityLog.count({ where }),
     ]);
     const data = rows.map((r) => ({
       ...r,

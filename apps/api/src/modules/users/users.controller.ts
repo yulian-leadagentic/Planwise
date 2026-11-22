@@ -23,6 +23,8 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { assertFinanceAccess } from '../../common/finance/finance-access';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
+import { assertCanReadPeopleDirectory, userFieldAccess } from './user-visibility';
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -69,19 +71,37 @@ export class UsersController {
     return this.usersService.backfillPositionsToProfessions();
   }
 
+  /**
+   * Permissions round 3 (privacy, 2026-11-22) — the fields each row
+   * carries depend on the caller (user-visibility.ts): directory tier for
+   * everyone; account tier (employee no., role, active state, last
+   * login, labor category) for Admin / HR; personal tier (employment
+   * dates, tax ID, address, …) for HR. Only Admin / HR may pass
+   * `isActive=false|all` or `roleId`.
+   *
+   * Gate (round 3 follow-up): Admin, `partners:read` OR `hr:read` —
+   * checked by hand (see `canReadPeopleDirectory`), not with
+   * `@RequirePermissions`, whose entries are ANDed and which would lose
+   * the Admin bypass once `hr` (NO_ADMIN_BYPASS) is named.
+   */
   @Get()
-  @RequirePermissions({ module: 'partners', action: 'read' })
   @ApiPaginated()
-  @ApiOperation({ summary: 'List people with filters' })
-  findAll(@Query() query: QueryUsersDto) {
-    return this.usersService.findAll(query);
+  @ApiOperation({ summary: 'List people with filters (Admin, partners:read or hr:read; fields depend on the caller)' })
+  findAll(@Query() query: QueryUsersDto, @CurrentUser() actor: any) {
+    assertCanReadPeopleDirectory(actor);
+    return this.usersService.findAll(query, actor);
   }
 
+  /**
+   * Round 3 — as the list, plus the user himself gets the account and
+   * personal tiers on his own record; `role.roleModules` only for Admin
+   * or the user himself. Same gate as the list.
+   */
   @Get(':id')
-  @RequirePermissions({ module: 'partners', action: 'read' })
-  @ApiOperation({ summary: 'Get user by ID' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.usersService.findOne(id);
+  @ApiOperation({ summary: 'Get user by ID (Admin, partners:read or hr:read; fields depend on the caller)' })
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() actor: any) {
+    assertCanReadPeopleDirectory(actor);
+    return this.usersService.findOne(id, actor);
   }
 
   /**
@@ -118,11 +138,23 @@ export class UsersController {
   // finance itself is never bypassed). The read keeps partners:read —
   // `seniorityLevel.defaultHourlyCost` in it is removed by the global
   // finance interceptor for callers without finance:read.
+  //
+  // Permissions round 3 (privacy) — the labor category is account-tier
+  // data (Admin / HR / the user himself), so its history is too. The
+  // route gate is the people-directory gate (Admin, partners:read or
+  // hr:read), so the People edit modal works for HR roles without
+  // `partners`.
 
   @Get(':id/seniorities')
-  @RequirePermissions({ module: 'partners', action: 'read' })
-  @ApiOperation({ summary: "List a user's seniority history (newest first)" })
-  listSeniorities(@Param('id', ParseIntPipe) id: number) {
+  @ApiOperation({ summary: "List a user's seniority history (newest first; Admin, HR or the user himself)" })
+  listSeniorities(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    assertCanReadPeopleDirectory(user);
+    if (!userFieldAccess(user, id).account) {
+      throw new PermissionDeniedException(
+        "Only an Admin or HR can view a person's labor category history.",
+        { reason: 'ADMIN_OR_HR_ONLY' },
+      );
+    }
     return this.seniorityHistory.listForUser(id);
   }
 

@@ -3,15 +3,24 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
+
+/** Mirror of AuthService.hashResetSecret with the spec's refresh secret. */
+const REFRESH_SECRET = 'b'.repeat(32);
+const hmac = (kind: 'otp' | 'reset', value: string) =>
+  crypto.createHmac('sha256', REFRESH_SECRET).update(`${kind}:${value}`).digest('hex');
+const flush = () => new Promise((r) => setImmediate(r));
 
 describe('AuthService', () => {
   let service: AuthService;
   let prisma: any;
   let jwtService: any;
   let configService: any;
+  let notifications: { sendEmail: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -34,11 +43,12 @@ describe('AuthService', () => {
       get: jest.fn((key: string, def?: string) => {
         const map: Record<string, string> = {
           JWT_ACCESS_SECRET: 'a'.repeat(32),
-          JWT_REFRESH_SECRET: 'b'.repeat(32),
+          JWT_REFRESH_SECRET: REFRESH_SECRET,
         };
         return map[key] ?? def;
       }),
     };
+    notifications = { sendEmail: jest.fn(async () => true) };
 
     const moduleRef = await Test.createTestingModule({
       providers: [
@@ -46,6 +56,7 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: jwtService },
         { provide: ConfigService, useValue: configService },
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
 
@@ -88,66 +99,117 @@ describe('AuthService', () => {
     });
   });
 
+  // Permissions round 3 (2026-11-22) — the code is e-mailed for real
+  // and only its HMAC is stored; responses never reveal whether the
+  // address has an account.
   describe('forgotPassword', () => {
     it('silently returns for unknown email (no user enumeration)', async () => {
       prisma.user.findFirst.mockResolvedValue(null);
       await expect(service.forgotPassword('unknown@x.com')).resolves.toBeUndefined();
+      await flush();
       expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(notifications.sendEmail).not.toHaveBeenCalled();
     });
 
-    it('generates a 6-digit OTP and stores it with expiry', async () => {
-      prisma.user.findFirst.mockResolvedValue({ id: 1 });
+    it('ignores a non-string email (no Prisma filter injection)', async () => {
+      await expect(service.forgotPassword({ contains: '@' } as any)).resolves.toBeUndefined();
+      expect(prisma.user.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('skips SSO-only accounts (no local password to reset)', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 1, email: 'a@b.com', firstName: 'Dana', password: null });
+      await service.forgotPassword('a@b.com');
+      await flush();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(notifications.sendEmail).not.toHaveBeenCalled();
+    });
+
+    it('stores only a hash of the 6-digit code, with expiry, and e-mails the code', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 1, email: 'a@b.com', firstName: 'Dana', password: 'x' });
       prisma.user.update.mockResolvedValue({});
 
       await service.forgotPassword('a@b.com');
+      await flush();
 
       const call = prisma.user.update.mock.calls[0][0];
-      expect(call.data.otpCode).toMatch(/^\d{6}$/);
+      expect(call.data.otpCode).toMatch(/^[0-9a-f]{64}$/);
+      expect(call.data.otpCode).not.toMatch(/^\d{6}$/);
       expect(call.data.otpExpiresAt).toBeInstanceOf(Date);
       expect(call.data.otpAttempts).toBe(0);
+
+      expect(notifications.sendEmail).toHaveBeenCalledTimes(1);
+      const mail = notifications.sendEmail.mock.calls[0][0];
+      expect(mail.to).toBe('a@b.com');
+      const code = /\b(\d{6})\b/.exec(mail.text)?.[1];
+      expect(code).toBeDefined();
+      expect(mail.html).toContain(code);
+      // The stored value is the HMAC of exactly the code that was sent.
+      expect(call.data.otpCode).toBe(hmac('otp', code!));
+    });
+
+    it('does not wait for the e-mail (same response time with or without an account)', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 1, email: 'a@b.com', firstName: 'Dana', password: 'x' });
+      prisma.user.update.mockResolvedValue({});
+      notifications.sendEmail.mockImplementation(() => new Promise(() => undefined)); // never settles
+      await expect(service.forgotPassword('a@b.com')).resolves.toBeUndefined();
     });
   });
 
   describe('verifyOtp', () => {
+    const pending = (overrides: Record<string, unknown> = {}) => ({
+      id: 1, otpCode: hmac('otp', '123456'), otpExpiresAt: new Date(Date.now() + 600000), otpAttempts: 0, ...overrides,
+    });
+
     it('throws for expired OTP', async () => {
-      prisma.user.findFirst.mockResolvedValue({
-        id: 1, otpCode: '123456', otpExpiresAt: new Date(Date.now() - 60000), otpAttempts: 0,
-      });
+      prisma.user.findFirst.mockResolvedValue(pending({ otpExpiresAt: new Date(Date.now() - 60000) }));
       await expect(service.verifyOtp('a@b.com', '123456')).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('increments otpAttempts on wrong code', async () => {
-      prisma.user.findFirst.mockResolvedValue({
-        id: 1, otpCode: '123456', otpExpiresAt: new Date(Date.now() + 600000), otpAttempts: 0,
-      });
+      prisma.user.findFirst.mockResolvedValue(pending());
       prisma.user.update.mockResolvedValue({});
 
-      await expect(service.verifyOtp('a@b.com', '000000')).rejects.toThrow('Invalid OTP code');
+      await expect(service.verifyOtp('a@b.com', '000000')).rejects.toThrow('The code is invalid or has expired');
       expect(prisma.user.update).toHaveBeenCalledWith({
         where: { id: 1 },
         data: { otpAttempts: { increment: 1 } },
       });
     });
 
-    it('blocks after 5 failed attempts', async () => {
-      prisma.user.findFirst.mockResolvedValue({
-        id: 1, otpCode: '123456', otpExpiresAt: new Date(Date.now() + 600000), otpAttempts: 5,
-      });
+    it('blocks after 5 failed attempts (and burns the code)', async () => {
+      prisma.user.findFirst.mockResolvedValue(pending({ otpAttempts: 5 }));
       prisma.user.update.mockResolvedValue({});
 
-      await expect(service.verifyOtp('a@b.com', '123456')).rejects.toThrow('Maximum OTP attempts');
+      await expect(service.verifyOtp('a@b.com', '123456')).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.user.update.mock.calls[0][0].data).toEqual({ otpCode: null, otpExpiresAt: null, otpAttempts: 0 });
     });
 
-    it('returns a reset token on valid OTP', async () => {
-      prisma.user.findFirst.mockResolvedValue({
-        id: 1, otpCode: '123456', otpExpiresAt: new Date(Date.now() + 600000), otpAttempts: 1,
-      });
+    it('gives an unknown address the same answer as a wrong code (no enumeration)', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      const unknown = await service.verifyOtp('nobody@x.com', '123456').catch((e) => e.message);
+      prisma.user.findFirst.mockResolvedValue(pending());
+      prisma.user.update.mockResolvedValue({});
+      const wrong = await service.verifyOtp('a@b.com', '000000').catch((e) => e.message);
+      expect(unknown).toBe(wrong);
+    });
+
+    it('a stored plain-text code no longer matches', async () => {
+      prisma.user.findFirst.mockResolvedValue(pending({ otpCode: '123456' }));
+      prisma.user.update.mockResolvedValue({});
+      await expect(service.verifyOtp('a@b.com', '123456')).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('returns a reset token on valid OTP and stores only its hash', async () => {
+      prisma.user.findFirst.mockResolvedValue(pending({ otpAttempts: 1 }));
       prisma.user.update.mockResolvedValue({});
 
       const result = await service.verifyOtp('a@b.com', '123456');
       expect(result).toHaveProperty('resetToken');
       expect(typeof result.resetToken).toBe('string');
       expect(result.resetToken.length).toBeGreaterThan(10);
+      const stored = prisma.user.update.mock.calls[0][0].data.otpCode;
+      expect(stored).not.toBe(result.resetToken);
+      expect(stored).toBe(hmac('reset', result.resetToken));
     });
   });
 
@@ -157,7 +219,13 @@ describe('AuthService', () => {
       await expect(service.resetPassword('bad-token', 'newPass')).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('hashes the new password with bcrypt', async () => {
+    it('looks the token up by its hash', async () => {
+      prisma.user.findFirst.mockResolvedValue(null);
+      await service.resetPassword('tok-1', 'newPass123').catch(() => undefined);
+      expect(prisma.user.findFirst.mock.calls[0][0].where.otpCode).toBe(hmac('reset', 'tok-1'));
+    });
+
+    it('hashes the new password with bcrypt and clears mustChangePassword', async () => {
       prisma.user.findFirst.mockResolvedValue({ id: 1 });
       prisma.user.update.mockResolvedValue({});
 
@@ -171,6 +239,7 @@ describe('AuthService', () => {
       expect(call.data.password).not.toBe('myNewPass123');
       // Verify OTP fields are cleared
       expect(call.data.otpCode).toBeNull();
+      expect(call.data.mustChangePassword).toBe(false);
     });
   });
 
@@ -191,6 +260,14 @@ describe('AuthService', () => {
         data: { lastLoginAt: expect.any(Date) },
       });
     });
+
+    it('carries mustChangePassword in the login response', async () => {
+      prisma.user.update.mockResolvedValue({});
+      const forced = await service.login({ id: 1, email: 'a@b.com', roleId: 2, mustChangePassword: true });
+      expect(forced.user.mustChangePassword).toBe(true);
+      const normal = await service.login({ id: 2, email: 'c@d.com', roleId: 2 });
+      expect(normal.user.mustChangePassword).toBe(false);
+    });
   });
 
   describe('changePassword', () => {
@@ -198,7 +275,38 @@ describe('AuthService', () => {
       const hashed = await bcrypt.hash('real', 10);
       prisma.user.findFirst.mockResolvedValue({ id: 1, password: hashed });
 
-      await expect(service.changePassword(1, 'wrong', 'new')).rejects.toThrow('Current password is incorrect');
+      await expect(service.changePassword(1, 'wrong', 'newPassword1')).rejects.toThrow('Current password is incorrect');
+    });
+
+    it('rejects a new password shorter than 8 characters', async () => {
+      await expect(service.changePassword(1, 'real', 'short')).rejects.toThrow('at least 8 characters');
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects re-using the current password', async () => {
+      const hashed = await bcrypt.hash('given-by-admin', 10);
+      prisma.user.findFirst.mockResolvedValue({ id: 1, password: hashed });
+      await expect(service.changePassword(1, 'given-by-admin', 'given-by-admin')).rejects.toThrow('different from the current one');
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('clears mustChangePassword on success', async () => {
+      const hashed = await bcrypt.hash('given-by-admin', 10);
+      prisma.user.findFirst.mockResolvedValue({ id: 1, password: hashed });
+      prisma.user.update.mockResolvedValue({});
+      await service.changePassword(1, 'given-by-admin', 'myOwnSecret9');
+      const call = prisma.user.update.mock.calls[0][0];
+      expect(call.data.mustChangePassword).toBe(false);
+      expect(await bcrypt.compare('myOwnSecret9', call.data.password)).toBe(true);
+    });
+  });
+
+  describe('getProfile (GET /auth/me)', () => {
+    it('selects mustChangePassword', async () => {
+      prisma.user.findFirst.mockResolvedValue({ id: 1, mustChangePassword: true, role: { name: 'x', roleModules: [] }, userRoles: [] });
+      const me: any = await service.getProfile(1);
+      expect(prisma.user.findFirst.mock.calls[0][0].select.mustChangePassword).toBe(true);
+      expect(me.mustChangePassword).toBe(true);
     });
   });
 

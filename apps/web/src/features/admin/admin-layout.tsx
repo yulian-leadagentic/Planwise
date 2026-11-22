@@ -30,7 +30,7 @@ import { SubNavLayout, type SubNavItem } from '@/components/layout/sub-nav-layou
  * strings used elsewhere so the sub-nav gates identically to the hub.
  */
 const ADMIN_ITEMS: SubNavItem[] = [
-  { label: 'Employees',              href: '/admin/employees',                 icon: Users,         module: 'partners',                 group: 'Access & Security' },
+  { label: 'Employees',              href: '/admin/employees',                 icon: Users,         module: 'partners|hr',              group: 'Access & Security' },
   { label: 'Roles & Permissions',    href: '/admin/roles',                     icon: Shield,        module: 'admin/roles',              group: 'Access & Security' },
   { label: 'Organization',           href: '/admin/organization',              icon: Network,       module: 'org',                      group: 'Access & Security' },
   { label: 'SSO / Identity',         href: '/admin/sso',                       icon: KeyRound,      module: 'org',                      group: 'Access & Security' },

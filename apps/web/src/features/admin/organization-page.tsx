@@ -36,8 +36,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 
 import client from '@/api/client';
+import { usersApi } from '@/api/users.api';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
+import { queryKeys } from '@/lib/query-keys';
 import { usePermissions } from '@/hooks/use-permissions';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { PageHeader } from '@/components/shared/page-header';
@@ -838,19 +840,13 @@ function PeoplePickerModal({
   const [submitting, setSubmitting] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Every active user (all pages) — a bare GET /users returned only the
+  // first 20, and its `['users-active']` key was shared with screens that
+  // fetch a different URL, so whichever loaded first won the cache.
   const { data: users = [], isLoading } = useQuery<UserRow[]>({
-    queryKey: ['users-active'],
+    queryKey: queryKeys.users.allActive(),
     staleTime: 5 * 60 * 1000,
-    queryFn: () =>
-      client.get('/users').then((r) => {
-        // The users endpoint sometimes ships { data: [] } and sometimes
-        // a raw array — match the same defensive unwrap the task-drawer
-        // assignee picker uses.
-        const d = r.data?.data ?? r.data;
-        if (Array.isArray(d)) return d;
-        if (Array.isArray(d?.data)) return d.data;
-        return [];
-      }),
+    queryFn: () => usersApi.listAllActive(),
   });
 
   const filtered = useMemo(() => {

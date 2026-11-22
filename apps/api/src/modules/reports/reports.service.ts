@@ -5,6 +5,68 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ReportQueryDto } from './dto/report-query.dto';
 import { redactFinanceFields } from '../../common/finance/finance-access';
 import { PermissionDeniedException, describePermission } from '../../common/errors/permission-denied';
+import {
+  NO_TIME_SCOPE,
+  TimeEntryScope,
+  VisibleUserIds,
+  isUserVisible,
+  toLeaderView,
+} from '../../common/services/employee-scope.service';
+
+/**
+ * Permissions round 3 — privacy (2026-11-22). Every per-person report
+ * runs inside the caller's scope, which the controller resolves with
+ * EmployeeScopeService:
+ *
+ *   • attendance reports (clock records) — `VisibleUserIds`: everyone
+ *     for hr:read, otherwise the caller + the employees he manages;
+ *   • time-entry reports — `TimeEntryScope`: the same employees, plus
+ *     every entry on a project the caller LEADS, shown in the leader
+ *     view (no location / special-hours bucket / clock data).
+ *
+ * Service methods default to "nobody" so a new caller can't leak
+ * hours by omission. Cost reports (finance aggregates, no per-person
+ * rows) are not scoped.
+ */
+
+/** `/reports/export` types that read clock records (attendance scope). */
+const ATTENDANCE_EXPORT_TYPES = new Set(['attendance', 'overtime', 'late-arrivals']);
+
+/** Which scope an export type needs: attendance, time entries, or none (cost aggregates). */
+export function exportScopeKind(type: string | null | undefined): 'attendance' | 'entries' | 'none' {
+  const t = String(type ?? '').trim().toLowerCase();
+  if (ATTENDANCE_EXPORT_TYPES.has(t)) return 'attendance';
+  if (t === 'cost-by-project') return 'none';
+  return 'entries';
+}
+
+/** Prisma `where` for the user ids of a VisibleUserIds (null = no restriction). */
+function visibleUserWhere(visible: VisibleUserIds): { userId: { in: number[] } } | null {
+  return visible === 'all' ? null : { userId: { in: visible } };
+}
+
+/**
+ * Prisma `where` for a TimeEntryScope (null = no restriction): the
+ * entry's employee is visible, OR the entry is on a project the caller
+ * leads — resolved through the entry AND through its task, since
+ * `entry.projectId` is NULL on many historical rows.
+ */
+export function timeEntryScopeWhere(scope: TimeEntryScope): any | null {
+  if (scope.visibleUserIds === 'all') return null;
+  const or: any[] = [];
+  if (scope.visibleUserIds.length > 0) or.push({ userId: { in: scope.visibleUserIds } });
+  if (scope.ledProjectIds.length > 0) {
+    or.push({ projectId: { in: scope.ledProjectIds } });
+    or.push({ task: { projectId: { in: scope.ledProjectIds } } });
+  }
+  if (or.length === 0) return { userId: { in: [] } };
+  return { OR: or };
+}
+
+/** True when the row is visible only because the caller leads its project. */
+function isLeaderOnlyRow(scope: TimeEntryScope, userId: number): boolean {
+  return !isUserVisible(scope.visibleUserIds, userId);
+}
 
 /** 403 for a cost-* export without finance:read (controller + service). */
 export function costReportsDenied(): PermissionDeniedException {
@@ -61,7 +123,7 @@ export class ReportsService {
    * Totals: per-currency aggregates (no FX conversion — same rule
    * as the M5 labor-cost endpoint).
    */
-  async timesheetDetailed(query: ReportQueryDto) {
+  async timesheetDetailed(query: ReportQueryDto, scope: TimeEntryScope = NO_TIME_SCOPE) {
     const { from, to } = this.getDateRange(query);
 
     // Compose the task-level filter — resolve project via the task
@@ -72,12 +134,14 @@ export class ReportsService {
     if (query.personal === 'exclude') taskFilter.isPersonal = false;
     else if (query.personal === 'only') taskFilter.isPersonal = true;
 
+    const scopeWhere = timeEntryScopeWhere(scope);
     const entries = await this.prisma.timeEntry.findMany({
       where: {
         deletedAt: null,
         date: { gte: from, lte: to },
         ...(query.userId ? { userId: Number(query.userId) } : {}),
         ...(Object.keys(taskFilter).length > 0 ? { task: taskFilter } : {}),
+        ...(scopeWhere ? { AND: [scopeWhere] } : {}),
       },
       orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { id: 'asc' }],
       select: {
@@ -186,6 +250,10 @@ export class ReportsService {
         totalsByCurrency.set(currency, agg);
       }
 
+      // Round 3 — a row the caller sees only as the project's leader:
+      // date, task, hours, note. No time-of-day window, no seniority.
+      const leaderOnly = isLeaderOnlyRow(scope, e.user.id);
+
       const zonePath = e.task?.zone?.path ?? '';
       const zoneBreadcrumb = zonePath
         ? zonePath
@@ -199,8 +267,8 @@ export class ReportsService {
       return {
         id: e.id,
         date: e.date.toISOString().slice(0, 10),
-        startTime: e.startTime ?? null,
-        endTime: e.endTime ?? null,
+        startTime: leaderOnly ? null : e.startTime ?? null,
+        endTime: leaderOnly ? null : e.endTime ?? null,
         hours: +hours.toFixed(2),
         // Flatten the user shape so the UI doesn't have to dig two
         // levels deep for the most-used display fields.
@@ -244,7 +312,7 @@ export class ReportsService {
         description: e.note ?? null,
         cost,
         currency,
-        seniorityLevelName: sl?.name ?? null,
+        seniorityLevelName: leaderOnly ? null : sl?.name ?? null,
       };
     });
 
@@ -262,15 +330,32 @@ export class ReportsService {
     };
   }
 
-  async timesheetByProject(query: ReportQueryDto) {
+  /**
+   * Shared `where` of the time-entry reports: live entries in the date
+   * range, the optional userId / projectId filters, and the caller's
+   * TimeEntryScope.
+   */
+  private scopedEntryWhere(query: ReportQueryDto, scope: TimeEntryScope, extra: Record<string, any> = {}) {
     const { from, to } = this.getDateRange(query);
+    const scopeWhere = timeEntryScopeWhere(scope);
+    return {
+      deletedAt: null,
+      date: { gte: from, lte: to },
+      ...(query.userId ? { userId: Number(query.userId) } : {}),
+      ...(query.projectId ? { projectId: Number(query.projectId) } : {}),
+      ...extra,
+      ...(scopeWhere ? { AND: [scopeWhere] } : {}),
+    };
+  }
 
+  /** The entry as the caller may see it: full, or the leader view. */
+  private entryForScope<T extends { userId: number }>(scope: TimeEntryScope, entry: T): T {
+    return isLeaderOnlyRow(scope, entry.userId) ? toLeaderView(entry) : entry;
+  }
+
+  async timesheetByProject(query: ReportQueryDto, scope: TimeEntryScope = NO_TIME_SCOPE) {
     const entries = await this.prisma.timeEntry.findMany({
-      where: {
-        date: { gte: from, lte: to },
-        ...(query.userId ? { userId: Number(query.userId) } : {}),
-        ...(query.projectId ? { projectId: Number(query.projectId) } : {}),
-      },
+      where: this.scopedEntryWhere(query, scope),
       include: {
         project: { select: { id: true, name: true } },
         user: { select: { id: true, firstName: true, lastName: true } },
@@ -280,7 +365,8 @@ export class ReportsService {
 
     // Group by project
     const grouped: Record<number, any> = {};
-    for (const entry of entries) {
+    for (const raw of entries) {
+      const entry = this.entryForScope(scope, raw);
       const pid = entry.projectId ?? 0;
       if (!grouped[pid]) {
         grouped[pid] = {
@@ -298,15 +384,9 @@ export class ReportsService {
     return Object.values(grouped);
   }
 
-  async timesheetByLabel(query: ReportQueryDto) {
-    const { from, to } = this.getDateRange(query);
-
+  async timesheetByLabel(query: ReportQueryDto, scope: TimeEntryScope = NO_TIME_SCOPE) {
     const entries = await this.prisma.timeEntry.findMany({
-      where: {
-        date: { gte: from, lte: to },
-        ...(query.userId ? { userId: Number(query.userId) } : {}),
-        ...(query.projectId ? { projectId: Number(query.projectId) } : {}),
-      },
+      where: this.scopedEntryWhere(query, scope),
       include: {
         task: {
           select: {
@@ -320,7 +400,8 @@ export class ReportsService {
     });
 
     const grouped: Record<number, any> = {};
-    for (const entry of entries) {
+    for (const raw of entries) {
+      const entry = this.entryForScope(scope, raw);
       const zoneId = (entry.task as any)?.zone?.id ?? 0;
       if (!grouped[zoneId]) {
         grouped[zoneId] = {
@@ -336,19 +417,21 @@ export class ReportsService {
     return Object.values(grouped);
   }
 
-  async timesheetToday() {
+  /** Attendance route: clock records + logged totals of the visible employees only. */
+  async timesheetToday(visible: VisibleUserIds = []) {
     const today = startOfDay(new Date());
     const todayEnd = endOfDay(new Date());
+    const userWhere = visibleUserWhere(visible) ?? {};
 
     const [clockedIn, entries] = await Promise.all([
       this.prisma.timeClock.findMany({
-        where: { date: today },
+        where: { date: today, ...userWhere },
         include: {
           user: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
         },
       }),
       this.prisma.timeEntry.findMany({
-        where: { date: { gte: today, lte: todayEnd } },
+        where: { deletedAt: null, date: { gte: today, lte: todayEnd }, ...userWhere },
         include: {
           user: { select: { id: true, firstName: true, lastName: true } },
           project: { select: { id: true, name: true } },
@@ -368,14 +451,10 @@ export class ReportsService {
     };
   }
 
-  async timesheetActivity(query: ReportQueryDto) {
-    const { from, to } = this.getDateRange(query);
-
-    return this.prisma.timeEntry.findMany({
-      where: {
-        date: { gte: from, lte: to },
-        ...(query.userId ? { userId: Number(query.userId) } : {}),
-      },
+  async timesheetActivity(query: ReportQueryDto, scope: TimeEntryScope = NO_TIME_SCOPE) {
+    // `projectId` is not an activity filter (never was) — keep it out.
+    const entries = await this.prisma.timeEntry.findMany({
+      where: this.scopedEntryWhere({ ...query, projectId: undefined }, scope),
       include: {
         user: { select: { id: true, firstName: true, lastName: true } },
         project: { select: { id: true, name: true } },
@@ -383,23 +462,37 @@ export class ReportsService {
       },
       orderBy: { date: 'desc' },
     });
+    return entries.map((e) => this.entryForScope(scope, e));
   }
 
-  async attendanceSummary(query: ReportQueryDto) {
+  /** `where` of the attendance reports: date range, optional userId, visible employees only. */
+  private scopedClockWhere(query: ReportQueryDto, visible: VisibleUserIds, extra: Record<string, any> = {}) {
     const { from, to } = this.getDateRange(query);
+    const userWhere = visibleUserWhere(visible);
+    return {
+      date: { gte: from, lte: to },
+      ...extra,
+      ...(query.userId ? { userId: Number(query.userId) } : {}),
+      ...(userWhere ? { AND: [userWhere] } : {}),
+    };
+  }
 
+  /**
+   * Per-employee attendance counts in the range. Days are distinct
+   * dates (several clock-ins on one day count once). Round 3: sick and
+   * leave days are their own columns and no longer count as present.
+   */
+  async attendanceSummary(query: ReportQueryDto, visible: VisibleUserIds = []) {
     const records = await this.prisma.timeClock.findMany({
-      where: {
-        date: { gte: from, lte: to },
-        ...(query.userId ? { userId: Number(query.userId) } : {}),
-      },
+      where: this.scopedClockWhere(query, visible),
       include: {
         user: { select: { id: true, firstName: true, lastName: true } },
       },
     });
 
-    // Group by user
+    const dayOf = (d: Date) => new Date(d).toISOString().slice(0, 10);
     const byUser: Record<number, any> = {};
+    const days: Record<number, Record<'all' | 'present' | 'absent' | 'sick' | 'leave' | 'late', Set<string>>> = {};
     for (const record of records) {
       if (!byUser[record.userId]) {
         byUser[record.userId] = {
@@ -407,35 +500,46 @@ export class ReportsService {
           totalDays: 0,
           presentDays: 0,
           absentDays: 0,
+          sickDays: 0,
+          leaveDays: 0,
           lateDays: 0,
           totalMinutes: 0,
           overtimeMinutes: 0,
         };
+        days[record.userId] = {
+          all: new Set(), present: new Set(), absent: new Set(), sick: new Set(), leave: new Set(), late: new Set(),
+        };
       }
       const u = byUser[record.userId];
-      u.totalDays++;
-      if (record.status === 'absent') {
-        u.absentDays++;
-      } else {
-        u.presentDays++;
-      }
-      if (record.isLate) u.lateDays++;
+      const d = days[record.userId];
+      const key = dayOf(record.date);
+      d.all.add(key);
+      if (record.status === 'absent') d.absent.add(key);
+      else if (record.status === 'sick') d.sick.add(key);
+      else if (record.status === 'leave') d.leave.add(key);
+      else d.present.add(key);
+      if (record.isLate) d.late.add(key);
       u.totalMinutes += record.totalMinutes ?? 0;
       u.overtimeMinutes += record.overtimeMinutes ?? 0;
     }
 
-    return Object.values(byUser);
+    return Object.entries(byUser).map(([userId, u]) => {
+      const d = days[Number(userId)];
+      return {
+        ...u,
+        totalDays: d.all.size,
+        presentDays: d.present.size,
+        absentDays: d.absent.size,
+        sickDays: d.sick.size,
+        leaveDays: d.leave.size,
+        lateDays: d.late.size,
+      };
+    });
   }
 
-  async overtimeReport(query: ReportQueryDto) {
-    const { from, to } = this.getDateRange(query);
-
+  async overtimeReport(query: ReportQueryDto, visible: VisibleUserIds = []) {
     return this.prisma.timeClock.findMany({
-      where: {
-        date: { gte: from, lte: to },
-        overtimeMinutes: { gt: 0 },
-        ...(query.userId ? { userId: Number(query.userId) } : {}),
-      },
+      where: this.scopedClockWhere(query, visible, { overtimeMinutes: { gt: 0 } }),
       include: {
         user: { select: { id: true, firstName: true, lastName: true } },
       },
@@ -443,15 +547,9 @@ export class ReportsService {
     });
   }
 
-  async lateArrivalsReport(query: ReportQueryDto) {
-    const { from, to } = this.getDateRange(query);
-
+  async lateArrivalsReport(query: ReportQueryDto, visible: VisibleUserIds = []) {
     return this.prisma.timeClock.findMany({
-      where: {
-        date: { gte: from, lte: to },
-        isLate: true,
-        ...(query.userId ? { userId: Number(query.userId) } : {}),
-      },
+      where: this.scopedClockWhere(query, visible, { isLate: true }),
       include: {
         user: { select: { id: true, firstName: true, lastName: true } },
       },
@@ -464,6 +562,7 @@ export class ReportsService {
 
     const entries = await this.prisma.timeEntry.findMany({
       where: {
+        deletedAt: null,
         date: { gte: from, lte: to },
         taskId: { not: null },
         ...(query.projectId ? { projectId: Number(query.projectId) } : {}),
@@ -505,6 +604,7 @@ export class ReportsService {
 
     const entries = await this.prisma.timeEntry.findMany({
       where: {
+        deletedAt: null,
         date: { gte: from, lte: to },
         task: { isNot: null },
         ...(query.projectId ? { projectId: Number(query.projectId) } : {}),
@@ -546,6 +646,7 @@ export class ReportsService {
 
     const entries = await this.prisma.timeEntry.findMany({
       where: {
+        deletedAt: null,
         date: { gte: from, lte: to },
         ...(query.projectId ? { projectId: Number(query.projectId) } : {}),
       },
@@ -605,22 +706,28 @@ export class ReportsService {
    * defaults to false so a new caller can't leak money by omission. The
    * controller refuses cost-* types to non-finance callers before this
    * runs; the check is repeated here so the service is safe on its own.
+   *
+   * `opts.scope` (permissions round 3): the caller's TimeEntryScope —
+   * attendance types use its `visibleUserIds`, time-entry types the
+   * whole scope (incl. projects he leads). Missing = nobody (fail
+   * closed); `cost-by-project` is a finance aggregate and not scoped.
    */
   async exportReport(
     type: string,
     format: 'excel' | 'pdf',
     query: ReportQueryDto,
-    opts: { canSeeFinance: boolean } = { canSeeFinance: false },
+    opts: { canSeeFinance: boolean; scope?: TimeEntryScope } = { canSeeFinance: false },
   ): Promise<Buffer> {
     if (isCostExportType(type) && !opts.canSeeFinance) {
       throw costReportsDenied();
     }
+    const scope = opts.scope ?? NO_TIME_SCOPE;
     // The detailed timesheet is the customer-facing export — it gets
     // a purpose-built Excel layout with proper columns, currency
     // formatting, and a totals footer. Other types fall through to
     // the generic "dump every scalar field" path below.
     if (type === 'timesheet-detailed') {
-      const raw = await this.timesheetDetailed(query);
+      const raw = await this.timesheetDetailed(query, scope);
       const data = opts.canSeeFinance ? raw : scrubTimesheetCost(raw);
       if (format === 'excel') {
         return this.generateTimesheetDetailedExcel(data, { includeCost: opts.canSeeFinance });
@@ -635,22 +742,22 @@ export class ReportsService {
     let data: any;
     switch (type) {
       case 'timesheet-by-project':
-        data = await this.timesheetByProject(query);
+        data = await this.timesheetByProject(query, scope);
         break;
       case 'attendance':
-        data = await this.attendanceSummary(query);
+        data = await this.attendanceSummary(query, scope.visibleUserIds);
         break;
       case 'overtime':
-        data = await this.overtimeReport(query);
+        data = await this.overtimeReport(query, scope.visibleUserIds);
         break;
       case 'late-arrivals':
-        data = await this.lateArrivalsReport(query);
+        data = await this.lateArrivalsReport(query, scope.visibleUserIds);
         break;
       case 'cost-by-project':
         data = await this.costByProject(query);
         break;
       default:
-        data = await this.timesheetByProject(query);
+        data = await this.timesheetByProject(query, scope);
     }
 
     // Defence in depth for the generic dumps: no money key reaches the

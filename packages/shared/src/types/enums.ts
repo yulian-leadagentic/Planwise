@@ -66,7 +66,10 @@ export const ACTIVITY_CATEGORIES = [
   'user',
   'system',
   'admin',
+  'partner',
   'security',
+  // Permissions round 3 (2026-11-22) — HR audit rows, hr:read only.
+  'hr',
 ] as const;
 export type ActivityCategory = (typeof ACTIVITY_CATEGORIES)[number];
 

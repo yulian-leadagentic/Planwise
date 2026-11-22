@@ -19,7 +19,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nes
 import { Response, Request } from 'express';
 
 import { AuthService } from './auth.service';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { JwtAuthGuard, AllowWhilePasswordChangeRequired } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -86,6 +86,7 @@ export class AuthController {
 
   @Post('logout')
   @UseGuards(JwtAuthGuard)
+  @AllowWhilePasswordChangeRequired()
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Logout and clear refresh cookie' })
@@ -99,8 +100,10 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send OTP to email for password reset' })
   async forgotPassword(@Body('email') email: string) {
+    // Same answer whether or not the address has an account — the code
+    // is e-mailed in the background (see AuthService.forgotPassword).
     await this.authService.forgotPassword(email);
-    return { message: 'If the email exists, an OTP has been sent' };
+    return { message: 'If an account exists for that email, we sent it a 6-digit code.' };
   }
 
   @Post('verify-otp')
@@ -122,6 +125,7 @@ export class AuthController {
 
   @Get('me')
   @UseGuards(JwtAuthGuard)
+  @AllowWhilePasswordChangeRequired()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
   async getProfile(@CurrentUser() user: any) {
@@ -136,8 +140,11 @@ export class AuthController {
     return this.authService.updateProfile(user.id, body);
   }
 
+  // Permissions round 3 — the one write a user with mustChangePassword
+  // may do; success clears the flag.
   @Patch('me/password')
   @UseGuards(JwtAuthGuard)
+  @AllowWhilePasswordChangeRequired()
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Change current user password' })
   async changePassword(

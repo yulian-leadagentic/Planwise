@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, RotateCcw, Home, Building2, Hammer } from 'lucide-react';
 
 import { Modal } from '@/components/shared/modal';
-import { notify, apiErrorCode } from '@/lib/notify';
+import { notify, apiErrorCode, getErrorMessage } from '@/lib/notify';
 import { cn } from '@/lib/utils';
+import { usePermissions } from '@/hooks/use-permissions';
 import {
   hrApi,
   type DailyBreakdownRow,
@@ -35,6 +36,10 @@ export interface MonthlyReviewDrawerProps {
 
 const HE_DOW = ['א', 'ב', 'ג', 'ד', 'ה', 'ו', 'ש'];
 
+/** Permissions round 3 (2026-11-22) — API code for "nobody approves his own month". */
+const SELF_APPROVAL_NOT_ALLOWED = 'SELF_APPROVAL_NOT_ALLOWED';
+const SELF_APPROVAL_MESSAGE = "You can't approve your own month — another HR approver must do it.";
+
 const DAY_TYPE_LABELS: Record<string, string> = {
   REGULAR: 'רגיל',
   HOLIDAY: 'חג',
@@ -64,6 +69,10 @@ export function MonthlyReviewDrawer({
   canApprove,
 }: MonthlyReviewDrawerProps) {
   const qc = useQueryClient();
+  const { user } = usePermissions();
+  // The API refuses self-approval (403 SELF_APPROVAL_NOT_ALLOWED); say so
+  // up front instead of offering a button that can only fail.
+  const isOwnMonth = user?.id != null && user.id === userId;
   const detailKey = ['hr', 'monthly', userId, year, month] as const;
   const listKey = ['hr', 'monthly', year, month];
 
@@ -82,6 +91,11 @@ export function MonthlyReviewDrawer({
     onError: (e: any) => {
       if (apiErrorCode(e) === 'MONTHLY_NOT_YET_COMPUTED') {
         notify.warning('יש לחשב מחדש לפני אישור');
+      } else if (apiErrorCode(e) === SELF_APPROVAL_NOT_ALLOWED) {
+        notify.warning('לא ניתן לאשר את החודש שלך', {
+          description: getErrorMessage(e, SELF_APPROVAL_MESSAGE),
+          code: SELF_APPROVAL_NOT_ALLOWED,
+        });
       } else {
         notify.apiError(e, 'Approve failed');
       }
@@ -144,21 +158,34 @@ export function MonthlyReviewDrawer({
                 {row.status === 'OPEN' && (
                   // G1b: Approve button was emerald/green — now primary
                   // blue (confirm CTAs go blue per planwise-design).
-                  <button
-                    type="button"
-                    disabled={!canApprove || approve.isPending}
-                    onClick={() => approve.mutate()}
-                    className={cn(
-                      'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-semibold border-none transition-colors',
-                      canApprove
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                        : 'cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500',
+                  <div className="flex items-center gap-2">
+                    {isOwnMonth && canApprove && (
+                      <span className="text-[11px] font-medium text-amber-600 dark:text-amber-300">
+                        Your own month — another HR approver must approve it (it can't be locked until then)
+                      </span>
                     )}
-                    title={canApprove ? 'Approve this employee' : "You don't have permission to approve monthly HR reviews"}
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    אשר
-                  </button>
+                    <button
+                      type="button"
+                      disabled={!canApprove || isOwnMonth || approve.isPending}
+                      onClick={() => approve.mutate()}
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[13px] font-semibold border-none transition-colors',
+                        canApprove && !isOwnMonth
+                          ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                          : 'cursor-not-allowed bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500',
+                      )}
+                      title={
+                        !canApprove
+                          ? "You don't have permission to approve monthly HR reviews"
+                          : isOwnMonth
+                            ? SELF_APPROVAL_MESSAGE
+                            : 'Approve this employee'
+                      }
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                      אשר
+                    </button>
+                  </div>
                 )}
                 {row.status === 'APPROVED' && (
                   <button

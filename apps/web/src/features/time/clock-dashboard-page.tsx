@@ -1,5 +1,6 @@
-import { Clock, AlertTriangle, LogOut, Palmtree } from 'lucide-react';
+import { Clock, AlertTriangle, LogOut, Palmtree, Users } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
+import { EmptyState } from '@/components/shared/empty-state';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { useTeamClockDashboard } from '@/hooks/use-time';
 import { formatTime } from '@/lib/date-utils';
@@ -47,11 +48,40 @@ export function ClockDashboardPage() {
   const late = dashboard.late ?? [];
   const onLeave = dashboard.onLeave ?? [];
 
+  // Permissions round 3 (2026-11-22): the API returns only the people
+  // the caller may see — everyone for HR, otherwise himself + the
+  // employees he manages. Someone who manages nobody gets a clear
+  // explanation instead of four buckets holding only himself.
+  const seesNobodyElse =
+    dashboard.scope != null && !dashboard.scope.allEmployees && (dashboard.scope.visibleOthers ?? 0) === 0;
+
+  if (seesNobodyElse) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Clock Dashboard"
+          description="Attendance of the employees you manage"
+        />
+        <div className="rounded-[14px] border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+          <EmptyState
+            icon={Users}
+            title="No employees to show"
+            description="You can see attendance of people you manage. When employees are assigned to a unit you manage, they appear here."
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Clock Dashboard"
-        description="Real-time team attendance overview"
+        description={
+          dashboard.scope && !dashboard.scope.allEmployees
+            ? 'Today’s attendance of the employees you manage'
+            : 'Real-time team attendance overview'
+        }
       />
 
       <div className="grid gap-6 lg:grid-cols-2">

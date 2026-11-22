@@ -15,7 +15,7 @@
  */
 import { useState, useMemo, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, ArrowLeft, ArrowRight, Download, History as HistoryIcon, Users, Building2, Contact as ContactIcon } from 'lucide-react';
+import { Upload, FileSpreadsheet, AlertTriangle, CheckCircle2, ArrowLeft, ArrowRight, Download, History as HistoryIcon, Users, Building2, Contact as ContactIcon, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Sentry from '@sentry/react';
 import { PageHeader } from '@/components/shared/page-header';
@@ -23,7 +23,14 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
-import { dataImportApi, type ImportTarget, type ImportMode, type ValidationResponse } from '@/api/data-import.api';
+import {
+  dataImportApi,
+  type ImportTarget,
+  type ImportMode,
+  type ValidationResponse,
+  type ImportedCredential,
+} from '@/api/data-import.api';
+import { credentialsCsv } from './credentials-csv';
 import { ContactsImportWizard } from './contacts/contacts-import-wizard';
 
 type WizardStep = 'pick' | 'upload' | 'review' | 'done';
@@ -75,6 +82,8 @@ export function DataImportPage() {
     skippedCount: number;
     errorCount: number;
     importId: number;
+    /** Permissions round 3 — initial passwords, shown once, never stored. */
+    credentials: ImportedCredential[];
   } | null>(null);
   // People UX U4 (P-20) · 2026-09-27 — the contacts wizard flips this
   // when it has unsaved conflict decisions so the top-level Cancel
@@ -119,6 +128,7 @@ export function DataImportPage() {
         skippedCount: data.summary.skippedCount,
         errorCount: data.summary.errorCount,
         importId: data.import.id,
+        credentials: data.credentials ?? [],
       });
       setStep('done');
       const ok = data.summary.errorCount === 0;
@@ -133,6 +143,7 @@ export function DataImportPage() {
   });
 
   // Reset wizard back to the start (used after success or "Import another")
+  // — this also drops the one-time credentials from memory.
   const reset = () => {
     setTarget(null);
     setFile(null);
@@ -719,11 +730,29 @@ function DoneStep({
   onAnother,
 }: {
   target: ImportTarget;
-  result: { createdCount: number; skippedCount: number; errorCount: number; importId: number };
+  result: { createdCount: number; skippedCount: number; errorCount: number; importId: number; credentials: ImportedCredential[] };
   onAnother: () => void;
 }) {
   const ok = result.errorCount === 0;
+  const confirm = useConfirm();
+  const [downloaded, setDownloaded] = useState(false);
+  const hasCredentials = target === 'users' && result.credentials.length > 0;
+
+  // Leaving the Done step drops the passwords for good — make sure the
+  // admin saved them first.
+  const onAnotherGuarded = async () => {
+    if (hasCredentials && !downloaded) {
+      const leave = await confirm(
+        "The initial passwords are shown only on this screen. If you leave without downloading them, you'll have to reset each password from the People page.",
+        { title: 'Leave without saving the passwords?', confirmLabel: 'Leave', variant: 'danger' },
+      );
+      if (!leave) return;
+    }
+    onAnother();
+  };
+
   return (
+    <div className="space-y-4">
     <div className={cn('rounded-lg border p-6', ok ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50')}>
       <div className="flex items-start gap-3">
         {ok ? (
@@ -747,13 +776,129 @@ function DoneStep({
               View import details
             </Link>
             <button
-              onClick={onAnother}
+              onClick={onAnotherGuarded}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-blue-700"
             >
               Import another file
             </button>
           </div>
         </div>
+      </div>
+    </div>
+    {hasCredentials && (
+      <CredentialsPanel
+        importId={result.importId}
+        credentials={result.credentials}
+        downloaded={downloaded}
+        onDownloaded={() => setDownloaded(true)}
+      />
+    )}
+    </div>
+  );
+}
+
+// ─── Initial passwords (permissions round 3, 2026-11-22) ──────────────
+//
+// The commit response carries each created account's initial password
+// ONCE — the server never stores it. This panel is the only place it can
+// be seen: a table + "Download CSV", with a clear "shown only once"
+// warning. Every user must set his own password on first sign-in.
+
+function CredentialsPanel({
+  importId,
+  credentials,
+  downloaded,
+  onDownloaded,
+}: {
+  importId: number;
+  credentials: ImportedCredential[];
+  downloaded: boolean;
+  onDownloaded: () => void;
+}) {
+  const [reveal, setReveal] = useState(false);
+
+  const download = () => {
+    // BOM so Excel opens Hebrew names as UTF-8.
+    const blob = new Blob(['\uFEFF' + credentialsCsv(credentials)], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `import-${importId}-initial-passwords.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    onDownloaded();
+  };
+
+  return (
+    <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-start gap-3 min-w-0">
+          <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[7px] bg-violet-50 dark:bg-violet-500/10 text-violet-600 dark:text-violet-300">
+            <KeyRound className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Initial passwords</h3>
+            <p className="text-[13px] text-slate-500 dark:text-slate-400">
+              <span className="font-mono tabular-nums">{credentials.length}</span> new{' '}
+              {credentials.length === 1 ? 'account' : 'accounts'}. Each person must choose a new password on first sign-in.
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setReveal((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 transition-all duration-150"
+          >
+            {reveal ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            {reveal ? 'Hide' : 'Show'} passwords
+          </button>
+          <button
+            type="button"
+            onClick={download}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white transition-all duration-150"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download CSV
+          </button>
+        </div>
+      </div>
+
+      <div
+        role="alert"
+        className="mx-5 mt-4 flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-900/60 border-l-[3px] border-l-amber-500 bg-amber-50 dark:bg-amber-950/30 px-3 py-2.5 text-[13px] text-amber-800 dark:text-amber-200"
+      >
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+        <span>
+          <strong className="font-semibold">Shown only once.</strong> These passwords are not saved anywhere — not in
+          the import history either. Download them now and hand them to each person privately.
+          {downloaded && <span className="ml-1 font-semibold">Downloaded.</span>}
+        </span>
+      </div>
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-[13px]">
+          <thead className="bg-[#FAFBFC] dark:bg-slate-800/50 border-y border-slate-100 dark:border-slate-800">
+            <tr className="text-[11px] uppercase font-semibold text-slate-400 dark:text-slate-500 tracking-[0.05em]">
+              <th className="px-3 py-1.5 text-left">Name</th>
+              <th className="px-3 py-1.5 text-left">Email</th>
+              <th className="px-3 py-1.5 text-left">Initial password</th>
+            </tr>
+          </thead>
+          <tbody>
+            {credentials.map((c) => (
+              <tr key={c.email} className="border-b border-slate-50 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                <td className="px-3 py-2 font-semibold text-slate-900 dark:text-slate-100">
+                  {c.firstName} {c.lastName}
+                </td>
+                <td className="px-3 py-2 text-slate-700 dark:text-slate-200">{c.email}</td>
+                <td className="px-3 py-2 font-mono text-xs font-medium text-slate-700 dark:text-slate-200">
+                  {reveal ? c.password : '••••••••••••'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );

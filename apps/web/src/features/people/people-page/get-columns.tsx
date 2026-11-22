@@ -40,8 +40,15 @@ export function getColumns(
   // Permissions round 1 (2026-11-20) — Admin-only row affordances. The
   // role cell falls back to plain text and the reset-password icon is
   // hidden when false (the server rejects those writes anyway).
-  access: { canChangeRole: boolean; canResetPassword: boolean } = { canChangeRole: true, canResetPassword: true },
+  // Permissions round 3 (2026-11-22) — `showAccountColumns`: the
+  // account-tier columns (code, labor category, access role, status)
+  // render only for Admin / HR, the callers the API returns them to.
+  access: { canChangeRole: boolean; canResetPassword: boolean; showAccountColumns?: boolean } = {
+    canChangeRole: true,
+    canResetPassword: true,
+  },
 ): ColumnDef<UserListItem, unknown>[] {
+  const showAccount = access.showAccountColumns ?? true;
   const cols: ColumnDef<UserListItem, unknown>[] = [
     {
       // QA3 master-handoff fix (2026-09-27) — the row's User model has
@@ -67,7 +74,9 @@ export function getColumns(
               next to the name so the user always has a way into the edit
               modal even if column layout, breakpoints, or HMR state mess
               with the trailing Actions column. Hover-revealed so the
-              column visually stays as a "name" cell at rest. */}
+              column visually stays as a "name" cell at rest. Round 3 —
+              editors only (Admin, partners:write, hr:write). */}
+          {canEdit && (
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onEdit(row.original); }}
@@ -77,6 +86,7 @@ export function getColumns(
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
+          )}
         </div>
       ),
     },
@@ -351,21 +361,18 @@ export function getColumns(
     },
   );
 
-  // Actions column is ALWAYS rendered now. Previously this was gated on
-  // a permission check that always evaluated to false for non-admin
-  // roles, hiding the edit + reset-password icons across the board.
-  // The header label "Actions" makes the column visible at a glance so
-  // users on a wide-enough viewport know the row is editable; on narrow
-  // viewports the DataTable wrapper handles horizontal scrolling.
-  // (T-fix, 2026-06-29.)
-  {
-    void canEdit; // gate retained as no-op for future use
+  // Actions column — rendered whenever the viewer has at least one row
+  // action. Round 3 (2026-11-22): the edit pencil follows the server's
+  // PATCH /users/:id gate (`canEdit`: Admin, partners:write, hr:write)
+  // instead of always showing — a read-only viewer has nothing to open.
+  if (canEdit || onCostOverride || access.canResetPassword) {
     cols.push({
       id: 'actions',
       header: 'Actions',
       enableColumnFilter: false,
       cell: ({ row }) => (
         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+          {canEdit && (
           <button
             type="button"
             onClick={() => onEdit(row.original)}
@@ -374,6 +381,7 @@ export function getColumns(
           >
             <Pencil className="h-3.5 w-3.5" />
           </button>
+          )}
           {onCostOverride && (
             <button
               type="button"
@@ -399,5 +407,16 @@ export function getColumns(
     });
   }
 
+  // Round 3 — the API does not return these fields to directory viewers;
+  // drop their columns rather than render a column of dashes.
+  if (!showAccount) {
+    return cols.filter((c) => {
+      const key = c.id ?? ('accessorKey' in c ? String(c.accessorKey) : '');
+      return !ACCOUNT_COLUMN_IDS.has(key);
+    });
+  }
   return cols;
 }
+
+/** Account-tier columns (Admin / HR only). */
+const ACCOUNT_COLUMN_IDS: ReadonlySet<string> = new Set(['code', 'seniorityLevel', 'effectiveHourlyCost', 'roleName', 'isActive']);

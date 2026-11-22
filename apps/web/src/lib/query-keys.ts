@@ -77,7 +77,10 @@ export const queryKeys = {
   // ─── Lookups ──────────────────────────────────────────────────────
   users: {
     all: ['users'] as const,
-    list: () => [...queryKeys.users.all, 'list'] as const,
+    /** `usersApi.listAllActive()` — every active user, all pages. */
+    allActive: () => [...queryKeys.users.all, 'all-active'] as const,
+    /** `GET /users/:id` — fields depend on the caller (round 3). */
+    detail: (id: number) => [...queryKeys.users.all, 'detail', id] as const,
   },
   phases: { all: ['phases'] as const },
   services: { all: ['services'] as const },

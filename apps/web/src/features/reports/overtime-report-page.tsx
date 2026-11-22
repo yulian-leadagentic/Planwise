@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { notify } from '@/lib/notify';
 import { PageHeader } from '@/components/shared/page-header';
 import { useStickyHScroll } from '@/components/shared/sticky-h-scroll';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
@@ -13,12 +14,19 @@ export function OvertimeReportPage() {
   const [from, setFrom] = useState(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0]);
   const [to, setTo] = useState(new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString().split('T')[0]);
 
-  const { data, isLoading } = useQuery({
+  // Rows cover only the employees the caller may see (permissions round
+  // 3); a refused request (e.g. a userId filter for someone else) shows
+  // the server's reason instead of an empty table.
+  const { data, isLoading, error } = useQuery({
     queryKey: ['reports', 'overtime', from, to],
-    queryFn: () => client.get('/reports/overtime', { params: { from, to } }).then((r) => r.data.data),
+    queryFn: () => client.get('/reports/overtime', { params: { from, to } }).then((r) => r.data?.data ?? r.data),
   });
 
-  const rows = data ?? [];
+  useEffect(() => {
+    if (error) notify.apiError(error, 'Failed to load the overtime report');
+  }, [error]);
+
+  const rows = Array.isArray(data) ? data : [];
 
   return (
     <div className="space-y-6">
@@ -61,7 +69,8 @@ export function OvertimeReportPage() {
             <tbody>
               {rows.map((row: any, i: number) => (
                 <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/30">
-                  <td className="px-4 py-3 font-medium">{row.firstName} {row.lastName}</td>
+                  {/* The API nests the employee under `user` (clock record + include). */}
+                  <td className="px-4 py-3 font-medium">{row.user?.firstName ?? row.firstName} {row.user?.lastName ?? row.lastName}</td>
                   <td className="px-4 py-3">{formatDate(row.date)}</td>
                   <td className="px-4 py-3">{row.clockIn ? new Date(row.clockIn).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
                   <td className="px-4 py-3">{row.clockOut ? new Date(row.clockOut).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>

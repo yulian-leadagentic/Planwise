@@ -82,6 +82,46 @@ export class HrController {
     private readonly prisma: PrismaService,
   ) {}
 
+  // ─── HR audit (permissions round 3, 2026-11-22) ─────────────────────
+
+  /**
+   * HR audit trail — category `hr` activity rows. `hr:read` only (no
+   * admin bypass — NO_ADMIN_BYPASS covers `hr`): department leads and an
+   * Admin without the HR grant can't read them, here or in GET
+   * /admin/activity-logs.
+   */
+  @Get('audit')
+  @RequirePermissions({ module: 'hr', action: 'read' })
+  @ApiOperation({ summary: 'HR audit trail (category hr), newest first, paged and filterable.' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'perPage', required: false, type: Number })
+  @ApiQuery({ name: 'from', required: false, type: String, description: 'YYYY-MM-DD (inclusive)' })
+  @ApiQuery({ name: 'to', required: false, type: String, description: 'YYYY-MM-DD (inclusive)' })
+  @ApiQuery({ name: 'action', required: false, type: String, description: 'Action prefix, e.g. hr.absence' })
+  @ApiQuery({ name: 'actorId', required: false, type: Number, description: 'Who did it' })
+  @ApiQuery({ name: 'employeeId', required: false, type: Number, description: 'Who it is about' })
+  listAudit(
+    @Query('page') page?: string,
+    @Query('perPage') perPage?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('action') action?: string,
+    @Query('actorId') actorId?: string,
+    @Query('employeeId') employeeId?: string,
+  ) {
+    const int = (v?: string) => (v != null && v !== '' && Number.isInteger(Number(v)) ? Number(v) : undefined);
+    const str = (v?: string) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+    return this.hr.listAudit({
+      page: int(page),
+      perPage: int(perPage),
+      from: str(from),
+      to: str(to),
+      action: str(action),
+      actorId: int(actorId),
+      employeeId: int(employeeId),
+    });
+  }
+
   // ─── HR settings (singleton) ────────────────────────────────────────
 
   @Get('settings')
@@ -328,9 +368,10 @@ export class HrController {
   @ApiOperation({ summary: 'Update HR employment fields on an employee' })
   updateEmployee(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: any,
     @Body() dto: UpdateHrEmployeeDto,
   ) {
-    return this.hr.updateEmployee(id, dto);
+    return this.hr.updateEmployee(id, dto, user.id);
   }
 
   // ─── Eligibility CRUD ───────────────────────────────────────────────
@@ -359,9 +400,10 @@ export class HrController {
   updateEligibility(
     @Param('id', ParseIntPipe) userId: number,
     @Param('eligibilityId', ParseIntPipe) eligibilityId: number,
+    @CurrentUser() user: any,
     @Body() dto: UpdateEligibilityDto,
   ) {
-    return this.hr.updateEligibility(userId, eligibilityId, dto);
+    return this.hr.updateEligibility(userId, eligibilityId, dto, user.id);
   }
 
   @Delete('employees/:id/eligibilities/:eligibilityId')
@@ -370,8 +412,9 @@ export class HrController {
   deactivateEligibility(
     @Param('id', ParseIntPipe) userId: number,
     @Param('eligibilityId', ParseIntPipe) eligibilityId: number,
+    @CurrentUser() user: any,
   ) {
-    return this.hr.deactivateEligibility(userId, eligibilityId);
+    return this.hr.deactivateEligibility(userId, eligibilityId, user.id);
   }
 
   // ─── Absences on an employee ────────────────────────────────────────
@@ -600,13 +643,14 @@ export class HrController {
   @Post('monthly/:userId/reopen')
   @RequirePermissions({ module: 'hr', action: 'approve' })
   @ApiOperation({
-    summary: 'Reopen an APPROVED row (clears approvedBy*; LOCKED rows refuse).',
+    summary: 'Reopen an APPROVED row (clears approvedBy*; LOCKED rows refuse). Who reopened is recorded in the HR audit.',
   })
   reopenMonthly(
     @Param('userId', ParseIntPipe) userId: number,
+    @CurrentUser() user: any,
     @Body() dto: ApproveMonthDto,
   ) {
-    return this.monthly.reopen({ userId, year: dto.year, month: dto.month });
+    return this.monthly.reopen({ userId, year: dto.year, month: dto.month, actorId: user.id });
   }
 
   /**

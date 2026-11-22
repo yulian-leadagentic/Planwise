@@ -58,14 +58,22 @@ export function ForgotPasswordSteps() {
 
   const handleOtpSubmit = (data: z.infer<typeof otpSchema>) => {
     verifyOtp.mutate(
-      { email, code: data.code },
+      { email, code: data.code.trim() },
       {
-        onSuccess: (result: any) => {
+        onSuccess: (result) => {
           setResetToken(result.resetToken);
           setStep('password');
         },
       },
     );
+  };
+
+  // Permissions round 3 (2026-11-22) — the code is e-mailed for real now;
+  // a lost / expired one can be re-sent without starting over.
+  const resendCode = () => {
+    if (!email || forgotPassword.isPending) return;
+    otpForm.reset();
+    forgotPassword.mutate({ email });
   };
 
   const handlePasswordSubmit = (data: z.infer<typeof passwordSchema>) => {
@@ -79,7 +87,7 @@ export function ForgotPasswordSteps() {
           <h1 className="text-2xl font-bold">Reset Password</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {step === 'email' && 'Enter your email to receive a verification code'}
-            {step === 'otp' && 'Enter the 6-digit code sent to your email'}
+            {step === 'otp' && 'If an account exists for that email, we sent it a 6-digit code. Enter it below.'}
             {step === 'password' && 'Set your new password'}
           </p>
         </div>
@@ -162,6 +170,18 @@ export function ForgotPasswordSteps() {
                 {verifyOtp.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                 Verify
               </button>
+              <p className="text-center text-xs text-muted-foreground">
+                Didn&apos;t get it? Check your spam folder, or{' '}
+                <button
+                  type="button"
+                  onClick={resendCode}
+                  disabled={forgotPassword.isPending}
+                  className="font-medium text-brand-600 hover:text-brand-700 disabled:opacity-50"
+                >
+                  send a new code
+                </button>
+                .
+              </p>
             </form>
           )}
 

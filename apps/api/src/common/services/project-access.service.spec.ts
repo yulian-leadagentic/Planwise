@@ -244,6 +244,56 @@ describe('ProjectAccessService', () => {
     });
   });
 
+  // Round 3 (2026-11-22) — a managed unit whose materialised path was
+  // never written ("/" is the column default, or empty) must not expand
+  // to the whole org tree: `startsWith('/')` matches every unit.
+  describe('getManagedSubtreeUnitIds — unwritten paths', () => {
+    const subtreeOr = () => prisma.orgUnit.findMany.mock.calls[1][0].where.OR;
+
+    it('a normal path expands to its subtree (plus the unit itself)', async () => {
+      prisma.orgUnit.findMany
+        .mockResolvedValueOnce([{ id: 5, path: '/1/5/' }])
+        .mockResolvedValueOnce([{ id: 5 }, { id: 7 }]);
+      await expect(service.getManagedSubtreeUnitIds(20)).resolves.toEqual([5, 7]);
+      expect(subtreeOr()).toEqual([{ id: { in: [5] } }, { path: { startsWith: '/1/5/' } }]);
+      expect(prisma.orgUnit.findMany.mock.calls[1][0].where.deletedAt).toBeNull();
+    });
+
+    it.each(['/', '', null, '//'])('path %p contributes only the managed unit itself', async (path) => {
+      prisma.orgUnit.findMany
+        .mockResolvedValueOnce([{ id: 5, path }])
+        .mockResolvedValueOnce([{ id: 5 }]);
+      await expect(service.getManagedSubtreeUnitIds(20)).resolves.toEqual([5]);
+      expect(subtreeOr()).toEqual([{ id: { in: [5] } }]);
+      for (const clause of subtreeOr()) expect(clause).not.toHaveProperty('path');
+    });
+
+    it('mixed: only the written path becomes a startsWith', async () => {
+      prisma.orgUnit.findMany
+        .mockResolvedValueOnce([{ id: 5, path: '/' }, { id: 9, path: '/1/9/' }])
+        .mockResolvedValueOnce([{ id: 5 }, { id: 9 }, { id: 11 }]);
+      await service.getManagedSubtreeUnitIds(20);
+      expect(subtreeOr()).toEqual([{ id: { in: [5, 9] } }, { path: { startsWith: '/1/9/' } }]);
+    });
+
+    it('a path without its trailing "/" is normalised (no "/1/5" → "/1/50/" match)', async () => {
+      prisma.orgUnit.findMany
+        .mockResolvedValueOnce([{ id: 5, path: '/1/5' }])
+        .mockResolvedValueOnce([{ id: 5 }]);
+      await service.getManagedSubtreeUnitIds(20);
+      expect(subtreeOr()).toEqual([{ id: { in: [5] } }, { path: { startsWith: '/1/5/' } }]);
+    });
+
+    it('a manager whose only unit has path "/" sees just that unit’s members as subordinates', async () => {
+      prisma.orgUnit.findMany
+        .mockResolvedValueOnce([{ id: 5, path: '/' }])
+        .mockResolvedValueOnce([{ id: 5 }]);
+      prisma.user.findMany.mockResolvedValueOnce([{ id: 30 }]);
+      await expect(service.getSubordinateUserIds(20)).resolves.toEqual([30]);
+      expect(prisma.user.findMany.mock.calls[0][0].where.orgUnitId).toEqual({ in: [5] });
+    });
+  });
+
   describe('hierarchical access — getAccessibleProjectIds widen', () => {
     it('empty org config leaves the result identical to today', async () => {
       // No org data — orgUnit.findMany default mock returns [].

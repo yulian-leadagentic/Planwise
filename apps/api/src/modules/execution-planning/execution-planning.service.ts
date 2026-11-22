@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectAccessService } from '../../common/services/project-access.service';
+import { VisibleUserIds, isUserVisible } from '../../common/services/employee-scope.service';
 import { rollupTaskCompletion } from '../../common/task-completion';
 import { LIVE_PREDECESSOR_EDGE } from '../../common/task-dependency-filters';
 
@@ -196,18 +197,29 @@ export class ExecutionPlanningService {
     return { dailyData, summary };
   }
 
-  async getProjectWorkload(projectId: number, from: string, to: string) {
+  /**
+   * Planned vs capacity per project member. Permissions round 3
+   * (2026-11-22): the logged (actual) hours are per-person timesheet
+   * data — they are kept only for members in `visible`
+   * (EmployeeScopeService.visibleUserIds); everyone else gets
+   * `actualHours: null` per day and `totalActual: null`. Missing
+   * `visible` = nobody (fail closed).
+   */
+  async getProjectWorkload(projectId: number, from: string, to: string, visible: VisibleUserIds = []) {
     const members = await this.prisma.projectMember.findMany({
       where: { projectId },
       include: { user: { select: { id: true, firstName: true, lastName: true, position: true } } },
     });
 
     const workloads = await Promise.all(
-      members.map(async (m) => ({
-        user: m.user,
-        role: m.role,
-        workload: await this.getUserWorkload(m.userId, from, to),
-      })),
+      members.map(async (m) => {
+        const workload: any = await this.getUserWorkload(m.userId, from, to);
+        if (!isUserVisible(visible, m.userId)) {
+          workload.dailyData = workload.dailyData.map((d: any) => ({ ...d, actualHours: null }));
+          workload.summary = { ...workload.summary, totalActual: null };
+        }
+        return { user: m.user, role: m.role, workload };
+      }),
     );
 
     return { projectId, members: workloads };
@@ -615,10 +627,17 @@ export class ExecutionPlanningService {
    * no finance (fail closed).
    */
   async getOperationsDashboard(
-    user: { id: number; isAdmin: boolean; canSeeFinance?: boolean },
+    user: { id: number; isAdmin: boolean; canSeeFinance?: boolean; visibleUserIds?: VisibleUserIds },
     myDeptOnlyRaw?: string,
   ) {
     const showFinance = user.canSeeFinance === true;
+    // Permissions round 3 (2026-11-22) — weekly logged hours are
+    // per-person timesheet data: only for the employees the caller may
+    // see (EmployeeScopeService.visibleUserIds). Everyone else is listed
+    // with `hoursWeek: null` and left out of every hours-derived figure
+    // (overloaded / available / employees at risk / dept hour totals).
+    // Missing = only the caller himself (fail closed).
+    const visibleUsers: VisibleUserIds = user.visibleUserIds ?? [user.id];
     const { scopeToMyDept } = this.resolveOpsScope(user, myDeptOnlyRaw);
     const now = new Date();
 
@@ -747,8 +766,20 @@ export class ExecutionPlanningService {
     const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); weekStart.setHours(0, 0, 0, 0);
     const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 4); weekEnd.setHours(23, 59, 59, 999);
 
-    const weekEntries = await this.prisma.timeEntry.groupBy({ by: ['userId'], where: { deletedAt: null, date: { gte: weekStart, lte: weekEnd } }, _sum: { minutes: true } });
+    const weekEntries = await this.prisma.timeEntry.groupBy({
+      by: ['userId'],
+      where: {
+        deletedAt: null,
+        date: { gte: weekStart, lte: weekEnd },
+        ...(visibleUsers === 'all' ? {} : { userId: { in: visibleUsers } }),
+      },
+      _sum: { minutes: true },
+    });
     const hoursMap = new Map(weekEntries.map((e) => [e.userId, Math.round(Number(e._sum.minutes ?? 0) / 60)]));
+    /** This week's logged hours, or null for someone the caller may not see. */
+    const hoursOf = (userId: number): number | null =>
+      isUserVisible(visibleUsers, userId) ? hoursMap.get(userId) ?? 0 : null;
+    const hoursVisible = (userId: number) => isUserVisible(visibleUsers, userId);
 
     const taskCountByUser = await this.prisma.taskAssignee.groupBy({ by: ['userId'], where: { deletedAt: null, task: { deletedAt: null, status: { notIn: ['completed', 'cancelled'] } } }, _count: true });
     const taskCountMap = new Map(taskCountByUser.map((t) => [t.userId, t._count]));
@@ -799,7 +830,7 @@ export class ExecutionPlanningService {
 
       dept.members.push({
         id: emp.id, firstName: emp.firstName, lastName: emp.lastName, avatarUrl: emp.avatarUrl, position: emp.position,
-        hoursWeek: hoursMap.get(emp.id) ?? 0, capacity, tasks: taskCountMap.get(emp.id) ?? 0,
+        hoursWeek: hoursOf(emp.id), capacity, tasks: taskCountMap.get(emp.id) ?? 0,
         overdueTasks: empTasks.filter((t) => t.daysOverdue !== null && t.daysOverdue > 0).length,
         openTasks: empTasks.length,
         projectCount: memberProjectIds.size,
@@ -808,25 +839,35 @@ export class ExecutionPlanningService {
       });
     }
 
-    const departments = Array.from(deptMap.values()).map((d) => ({
-      name: d.name,
-      members: d.members,
-      totalHours: d.members.reduce((s: number, m: any) => s + m.hoursWeek, 0),
-      totalCapacity: d.members.reduce((s: number, m: any) => s + m.capacity, 0),
-      totalOverdue: d.members.reduce((s: number, m: any) => s + m.overdueTasks, 0),
-      projectCount: (d._projectIds as Set<number>).size,
-      deliverableCount: (d._deliverableIds as Set<number>).size,
-      openTaskCount: d._openTasks,
-    }));
+    // Round 3 — dept hour totals cover only the members whose hours the
+    // caller may see (null when none); capacity is summed over the same
+    // members so the load bar stays a fair ratio.
+    const departments = Array.from(deptMap.values()).map((d) => {
+      const counted = d.members.filter((m: any) => m.hoursWeek != null);
+      const capacityOf = counted.length > 0 ? counted : d.members;
+      return {
+        name: d.name,
+        members: d.members,
+        totalHours: counted.length > 0 ? counted.reduce((s: number, m: any) => s + m.hoursWeek, 0) : null,
+        totalCapacity: capacityOf.reduce((s: number, m: any) => s + m.capacity, 0),
+        totalOverdue: d.members.reduce((s: number, m: any) => s + m.overdueTasks, 0),
+        projectCount: (d._projectIds as Set<number>).size,
+        deliverableCount: (d._deliverableIds as Set<number>).size,
+        openTaskCount: d._openTasks,
+      };
+    });
 
-    const overloaded = employees.filter((e) => (hoursMap.get(e.id) ?? 0) > Number(e.dailyStandardHours ?? 8) * 5);
-    const available = employees.filter((e) => (hoursMap.get(e.id) ?? 0) < Number(e.dailyStandardHours ?? 8) * 5 * 0.7);
+    // Hours-derived signals: only over employees whose hours are visible.
+    const hoursEmployees = employees.filter((e) => hoursVisible(e.id));
+    const overloaded = hoursEmployees.filter((e) => (hoursMap.get(e.id) ?? 0) > Number(e.dailyStandardHours ?? 8) * 5);
+    const available = hoursEmployees.filter((e) => (hoursMap.get(e.id) ?? 0) < Number(e.dailyStandardHours ?? 8) * 5 * 0.7);
 
     // ── Employees at risk (feat/ops-complete) ────────────────────────
     // Overloaded (this week hours > weekly capacity) AND carrying at
     // least one overdue task. Reuses the overloaded + memberTasks
-    // signals above — no new data sources per the spec.
-    const employeesAtRisk = employees
+    // signals above — no new data sources per the spec. Round 3: only
+    // employees whose hours the caller may see (overload IS hours data).
+    const employeesAtRisk = hoursEmployees
       .map((e) => {
         const tasks = memberTasksMap.get(e.id) ?? [];
         const overdueForUser = tasks.filter((t) => t.daysOverdue !== null && t.daysOverdue > 0);

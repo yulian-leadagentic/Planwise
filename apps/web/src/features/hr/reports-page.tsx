@@ -11,7 +11,7 @@ import {
 import { PageHeader } from '@/components/shared/page-header';
 import { PeopleMultiSelect, type Person } from '@/components/shared/people-multi-select';
 import client from '@/api/client';
-import { notify } from '@/lib/notify';
+import { notify, apiErrorCode, getErrorMessage } from '@/lib/notify';
 import { NoAccess } from '@/components/shared/no-access';
 import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
@@ -47,6 +47,14 @@ import {
  * uppercase 0.05em labels, no shadows on cards, rounded-[14px] /
  * rounded-[5px] / rounded-lg. Full dark + light branch.
  */
+
+/**
+ * Permissions round 3 (2026-11-22) — locking an unapproved month skips
+ * approval, so the API refuses locking your own month until another HR
+ * approver has approved it (403 SELF_APPROVAL_NOT_ALLOWED).
+ */
+const SELF_APPROVAL_NOT_ALLOWED = 'SELF_APPROVAL_NOT_ALLOWED';
+const SELF_LOCK_MESSAGE = "You can't lock your own month before another HR approver approves it.";
 
 const HE_MONTHS = [
   'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
@@ -97,8 +105,9 @@ export function HrReportsPage() {
   );
   const [previewEmpId, setPreviewEmpId] = useState<number | null>(null);
 
-  const { can } = usePermissions();
+  const { can, user } = usePermissions();
   const canExport = can('hr', 'export');
+  const myUserId: number | undefined = user?.id;
 
   // ─── Data: org units + employees ────────────────────────────────
   const { data: orgUnits = [] } = useQuery<OrgUnit[]>({
@@ -207,7 +216,16 @@ export function HrReportsPage() {
       });
       notify.success('החודש ננעל · Month locked');
     },
-    onError: (err: unknown) => notify.apiError(err, 'Lock failed'),
+    onError: (err: unknown) => {
+      if (apiErrorCode(err) === SELF_APPROVAL_NOT_ALLOWED) {
+        notify.warning('לא ניתן לנעול את החודש שלך', {
+          description: getErrorMessage(err, SELF_LOCK_MESSAGE),
+          code: SELF_APPROVAL_NOT_ALLOWED,
+        });
+      } else {
+        notify.apiError(err, 'Lock failed');
+      }
+    },
   });
 
   const activeEmp: ReportPayloadEmployee | null = useMemo(() => {
@@ -459,6 +477,7 @@ export function HrReportsPage() {
           payload={previewPayload}
           activeEmp={activeEmp}
           onSelectEmp={setPreviewEmpId}
+          myUserId={myUserId}
           onLock={(userId) => {
             if (
               window.confirm(
@@ -512,6 +531,7 @@ function PreviewPanel({
   payload,
   activeEmp,
   onSelectEmp,
+  myUserId,
   onLock,
   lockPending,
   lockPendingUserId,
@@ -519,6 +539,7 @@ function PreviewPanel({
   payload: ReportPayload;
   activeEmp: ReportPayloadEmployee | null;
   onSelectEmp: (id: number) => void;
+  myUserId: number | undefined;
   onLock: (userId: number) => void;
   lockPending: boolean;
   lockPendingUserId: number | null;
@@ -558,6 +579,7 @@ function PreviewPanel({
       {activeEmp && (
         <EmployeeSheet
           emp={activeEmp}
+          myUserId={myUserId}
           onLock={onLock}
           lockPending={lockPending && lockPendingUserId === activeEmp.header.userId}
         />
@@ -568,10 +590,12 @@ function PreviewPanel({
 
 function EmployeeSheet({
   emp,
+  myUserId,
   onLock,
   lockPending,
 }: {
   emp: ReportPayloadEmployee;
+  myUserId: number | undefined;
   onLock: (userId: number) => void;
   lockPending: boolean;
 }) {
@@ -589,6 +613,14 @@ function EmployeeSheet({
   ];
   const name = displayName(emp.header);
   const canLock = emp.header.status !== 'LOCKED';
+  // Your own month locks only after another HR approver approved it
+  // (an OPEN / DRAFT month would skip approval). An APPROVED own month
+  // is left to the API, which checks who approved it.
+  const ownUnapproved =
+    myUserId != null &&
+    emp.header.userId === myUserId &&
+    (emp.header.status === 'OPEN' || emp.header.status === 'DRAFT');
+  const lockDisabled = lockPending || ownUnapproved;
 
   return (
     <div className="p-4 space-y-4">
@@ -597,12 +629,12 @@ function EmployeeSheet({
         {canLock && (
           <button
             type="button"
-            disabled={lockPending}
+            disabled={lockDisabled}
             onClick={() => onLock(emp.header.userId)}
-            title="נעל חודש · Lock month"
+            title={ownUnapproved ? SELF_LOCK_MESSAGE : 'נעל חודש · Lock month'}
             className={cn(
               'absolute top-3 left-3 inline-flex items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide transition-colors',
-              lockPending
+              lockDisabled
                 ? 'cursor-not-allowed border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-400 dark:text-slate-500'
                 : 'border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/40',
             )}
@@ -625,6 +657,11 @@ function EmployeeSheet({
         {emp.header.error && (
           <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
             {emp.header.error}
+          </div>
+        )}
+        {canLock && ownUnapproved && (
+          <div className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-300" dir="ltr">
+            Your own month — another HR approver must approve it before it can be locked
           </div>
         )}
         <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">

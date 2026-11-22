@@ -12,14 +12,24 @@ import type { User } from '@/types';
  */
 const AUTH_FLAG_KEY = 'planwise.was_authenticated';
 
+/**
+ * The signed-in user as the auth endpoints return it. Permissions
+ * round 3 (2026-11-22): `mustChangePassword` (login response, /auth/me)
+ * — while true, PrivateRoute shows only the "Set a new password" screen
+ * and the API answers every other route with 403 PASSWORD_CHANGE_REQUIRED.
+ */
+export type AuthUser = User & { mustChangePassword?: boolean };
+
 interface AuthState {
   accessToken: string | null;
-  user: User | null;
+  user: AuthUser | null;
   isAuthenticated: boolean;
   /** True until the initial refresh attempt completes, to avoid flashing /login. */
   isBootstrapping: boolean;
-  setAuth: (token: string, user: User) => void;
-  setUser: (user: User) => void;
+  setAuth: (token: string, user: AuthUser) => void;
+  setUser: (user: AuthUser) => void;
+  /** Flip the forced-password-change flag on the cached user (no-op when signed out). */
+  setMustChangePassword: (value: boolean) => void;
   setToken: (token: string) => void;
   setBootstrapComplete: () => void;
   clearAuth: () => void;
@@ -40,6 +50,14 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   setUser: (user) => {
     set({ user });
+  },
+
+  setMustChangePassword: (value) => {
+    set((state) =>
+      state.user && state.user.mustChangePassword !== value
+        ? { user: { ...state.user, mustChangePassword: value } }
+        : state,
+    );
   },
 
   setToken: (token) => {

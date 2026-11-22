@@ -15,6 +15,7 @@ import { ContactsResolveService } from './contacts/resolve.service';
 import { ContactsCommitService } from './contacts/commit.service';
 import { BusinessPartnersModule } from '../business-partners/business-partners.module';
 import { UsersModule } from '../users/users.module';
+import { AuthorizationModule } from '../../common/authorization.module';
 
 /**
  * Bulk-import module. M1 ships the Employees (users) importer; the
@@ -37,7 +38,9 @@ import { UsersModule } from '../users/users.module';
  * People edit modal for ~43% of active employees.
  */
 @Module({
-  imports: [BusinessPartnersModule, UsersModule],
+  // AuthorizationModule — ProjectAccessService, whose subordinate memo
+  // the users import invalidates (imported users join org units).
+  imports: [BusinessPartnersModule, UsersModule, AuthorizationModule],
   controllers: [
     DataImportController,
     ContactsImportController,

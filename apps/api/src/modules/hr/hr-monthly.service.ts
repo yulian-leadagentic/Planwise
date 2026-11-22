@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -12,7 +13,17 @@ import {
   Prisma,
 } from '@prisma/client';
 
+import * as Sentry from '@sentry/node';
+
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
+
+/**
+ * Permissions round 3 (2026-11-22) — business code for "nobody approves
+ * his own record". 403 with its own code (not PERMISSION_DENIED): the
+ * caller holds hr:approve, the rule is about whose row it is.
+ */
+export const SELF_APPROVAL_NOT_ALLOWED = 'SELF_APPROVAL_NOT_ALLOWED';
 
 /**
  * HR Phase C2 (2026-10-16) — monthly attendance engine per
@@ -75,7 +86,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class HrMonthlyService {
   private readonly log = new Logger(HrMonthlyService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly activityLog: ActivityLogService,
+  ) {}
 
   // ─── Public API ────────────────────────────────────────────────────
 
@@ -277,6 +291,16 @@ export class HrMonthlyService {
     month: number;
     approverId: number;
   }) {
+    // Permissions round 3 (2026-11-22) — owner's decision: nobody
+    // approves his own record, an HR approver included. Checked before
+    // anything else so the answer doesn't depend on the row's state.
+    if (args.approverId === args.userId) {
+      throw new ForbiddenException({
+        code: SELF_APPROVAL_NOT_ALLOWED,
+        message: "You can't approve your own month — another HR approver must do it.",
+        details: { userId: args.userId, year: args.year, month: args.month },
+      });
+    }
     const row = await this.prisma.monthlyAttendance.findUnique({
       where: {
         userId_year_month: {
@@ -310,6 +334,17 @@ export class HrMonthlyService {
         approvedAt: new Date(),
       },
     });
+    this.audit({
+      action: 'hr.monthly.approved',
+      actorId: args.approverId,
+      rowId: row.id,
+      userId: args.userId,
+      year: args.year,
+      month: args.month,
+      from: row.status,
+      to: MonthlyStatus.APPROVED,
+      description: `Approved the ${monthLabel(args.year, args.month)} attendance of employee ${args.userId}`,
+    });
     return decimalRow(updated);
   }
 
@@ -322,9 +357,16 @@ export class HrMonthlyService {
    *   • row LOCKED → no-op (idempotent)
    *   • row OPEN → flip to LOCKED
    *
-   * We repurpose `approvedBy*` as the locker record because the schema
-   * has no dedicated `lockedBy*` columns. This matches the Phase C
-   * approve path's audit trail.
+   * Permissions round 3 (2026-11-22) — locking no longer overwrites
+   * `approvedBy*` with the locker (that erased who actually approved
+   * the month). The approver fields keep the approval; who locked it
+   * and when is recorded in the HR audit row (`hr.monthly.locked`).
+   *
+   * Permissions round 3 (2026-11-22) — locking an OPEN (or not yet
+   * computed) month skips approval, so nobody may lock his own month
+   * until another HR approver has approved it: 403
+   * SELF_APPROVAL_NOT_ALLOWED, checked before anything is written.
+   * An already-LOCKED own month stays an idempotent no-op.
    */
   async lockMonth(args: {
     userId: number;
@@ -338,6 +380,18 @@ export class HrMonthlyService {
       where: { userId_year_month: { userId, year, month } },
     });
 
+    if (userId === lockerId && existing?.status !== 'LOCKED') {
+      const approvedBySomeoneElse =
+        existing?.status === 'APPROVED' && existing.approvedById != null && existing.approvedById !== lockerId;
+      if (!approvedBySomeoneElse) {
+        throw new ForbiddenException({
+          code: SELF_APPROVAL_NOT_ALLOWED,
+          message: "You can't lock your own month before another HR approver approves it.",
+          details: { userId, year, month, status: existing?.status ?? null },
+        });
+      }
+    }
+
     if (!existing) {
       // No row yet — compute first. computeMonth writes an OPEN row;
       // we then flip it to LOCKED below (two writes, but a fresh row
@@ -346,9 +400,9 @@ export class HrMonthlyService {
       if ('skipped' in r) {
         // Shouldn't happen for a fresh row, but tolerate: fall through
         // to a direct lock using the surfaced existing row.
-        return this.flipToLocked(r.skipped.existing.id, lockerId);
+        return this.flipToLocked(r.skipped.existing.id, lockerId, { userId, year, month, from: null });
       }
-      return this.flipToLocked(r.id, lockerId);
+      return this.flipToLocked(r.id, lockerId, { userId, year, month, from: null });
     }
 
     if (existing.status === 'LOCKED') {
@@ -358,25 +412,34 @@ export class HrMonthlyService {
 
     // APPROVED or OPEN — flip directly. computeMonth refuses APPROVED
     // rows (returns `{ skipped }`), so we must NOT recompute here.
-    return this.flipToLocked(existing.id, lockerId);
+    return this.flipToLocked(existing.id, lockerId, { userId, year, month, from: existing.status });
   }
 
   private async flipToLocked(
     id: number,
     lockerId: number,
+    ctx: { userId: number; year: number; month: number; from: MonthlyStatus | null },
   ): Promise<ComputedMonthlyAttendance> {
+    // Only the status changes — approvedBy* stays the approver's.
     const updated = await this.prisma.monthlyAttendance.update({
       where: { id },
-      data: {
-        status: MonthlyStatus.LOCKED,
-        approvedById: lockerId,
-        approvedAt: new Date(),
-      },
+      data: { status: MonthlyStatus.LOCKED },
+    });
+    this.audit({
+      action: 'hr.monthly.locked',
+      actorId: lockerId,
+      rowId: id,
+      userId: ctx.userId,
+      year: ctx.year,
+      month: ctx.month,
+      from: ctx.from,
+      to: MonthlyStatus.LOCKED,
+      description: `Locked the ${monthLabel(ctx.year, ctx.month)} attendance of employee ${ctx.userId}`,
     });
     return decimalRow(updated);
   }
 
-  async reopen(args: { userId: number; year: number; month: number }) {
+  async reopen(args: { userId: number; year: number; month: number; actorId?: number | null }) {
     const row = await this.prisma.monthlyAttendance.findUnique({
       where: {
         userId_year_month: {
@@ -403,7 +466,58 @@ export class HrMonthlyService {
         approvedAt: null,
       },
     });
+    // Permissions round 3 (2026-11-22) — the row's approver fields are
+    // cleared, so the audit row is where "who reopened it (and whose
+    // approval was undone)" lives.
+    this.audit({
+      action: 'hr.monthly.reopened',
+      actorId: args.actorId ?? null,
+      rowId: row.id,
+      userId: args.userId,
+      year: args.year,
+      month: args.month,
+      from: row.status,
+      to: MonthlyStatus.OPEN,
+      previousApproverId: row.approvedById ?? null,
+      description: `Reopened the ${monthLabel(args.year, args.month)} attendance of employee ${args.userId}`,
+    });
     return decimalRow(updated);
+  }
+
+  /**
+   * Fire-and-forget HR audit row for a monthly status change (category
+   * `hr`, `metadata.employeeId` = the employee). Never fails the write.
+   */
+  private audit(p: {
+    action: string;
+    actorId: number | null;
+    rowId: number;
+    userId: number;
+    year: number;
+    month: number;
+    from: MonthlyStatus | string | null;
+    to: MonthlyStatus;
+    previousApproverId?: number | null;
+    description: string;
+  }) {
+    this.activityLog
+      .logHrEvent({
+        action: p.action,
+        description: p.description,
+        actorUserId: p.actorId,
+        entityType: 'monthly_attendance',
+        entityId: p.rowId,
+        entityName: monthLabel(p.year, p.month),
+        changes: {
+          status: { from: p.from, to: p.to },
+          ...(p.previousApproverId !== undefined
+            ? { approvedById: { from: p.previousApproverId, to: null } }
+            : {}),
+        },
+        metadata: { employeeId: p.userId, year: p.year, month: p.month },
+        severity: p.action === 'hr.monthly.reopened' ? 'warn' : 'info',
+      })
+      .catch((e) => Sentry.captureException(e));
   }
 
   // ─── Self-service summary (/time/my-monthly-summary) ────────────────
@@ -1025,4 +1139,9 @@ function decimalRow(row: Prisma.MonthlyAttendanceGetPayload<{}>): ComputedMonthl
     approvedAt: row.approvedAt,
     computedAt: row.computedAt,
   };
+}
+
+/** `2026-10` — the month an attendance row covers, for audit rows. */
+function monthLabel(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}`;
 }

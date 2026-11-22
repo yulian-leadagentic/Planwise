@@ -414,6 +414,43 @@ export interface CreateBucketPayload {
 }
 export type UpdateBucketPayload = Partial<CreateBucketPayload>;
 
+// ─── HR audit (permissions round 3, 2026-11-22) ───────────────────────
+
+/** One category-`hr` activity row from GET /hr/audit. */
+export interface HrAuditRow {
+  id: string;
+  createdAt: string;
+  action: string;
+  severity: 'info' | 'warn' | 'error' | 'critical';
+  entityType: string | null;
+  entityId: number | null;
+  entityName: string | null;
+  description: string;
+  changes: Record<string, unknown> | null;
+  actor: { id: number; firstName: string; lastName: string } | null;
+  employee: { id: number; firstName: string | null; lastName: string | null } | null;
+}
+
+export interface HrAuditQuery {
+  page?: number;
+  perPage?: number;
+  /** YYYY-MM-DD, inclusive. */
+  from?: string;
+  /** YYYY-MM-DD, inclusive. */
+  to?: string;
+  /** Action prefix, e.g. `hr.absence`. */
+  action?: string;
+  /** Who did it. */
+  actorId?: number;
+  /** Who it is about. */
+  employeeId?: number;
+}
+
+export interface HrAuditPage {
+  data: HrAuditRow[];
+  meta: { total: number; page: number; perPage: number; totalPages: number };
+}
+
 /** API response envelope — matches the project's { data } wrapper. */
 function unwrap<T>(data: any): T {
   return (data?.data ?? data) as T;
@@ -717,4 +754,21 @@ export const hrApi = {
     client
       .post(`/hr/monthly/${userId}/lock`, { year, month })
       .then((r) => unwrap<MonthlyAttendanceRow>(r.data)),
+
+  /**
+   * Permissions round 3 (2026-11-22) — HR audit trail (hr:read only; no
+   * admin bypass). The envelope is `{ success, data, meta }`, so read
+   * both halves rather than unwrapping `data` alone.
+   */
+  listAudit: (q: HrAuditQuery) =>
+    client
+      .get('/hr/audit', {
+        params: Object.fromEntries(
+          Object.entries(q).filter(([, v]) => v !== undefined && v !== '' && v !== null),
+        ),
+      })
+      .then((r) => ({
+        data: (r.data?.data ?? []) as HrAuditRow[],
+        meta: (r.data?.meta ?? { total: 0, page: 1, perPage: q.perPage ?? 50, totalPages: 0 }) as HrAuditPage['meta'],
+      })),
 };

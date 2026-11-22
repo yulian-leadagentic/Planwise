@@ -149,8 +149,11 @@ export function MyTimePage() {
         </button>
       </div>
 
-      {/* Week summary */}
-      {grid && (
+      {/* Week summary — `weekSummary` of GET /time-entries/weekly (shared
+          WeeklyGrid shape). Overtime / missing are the net of worked
+          minus expected over the days that have already ended. The
+          guard only covers an older API build without the field. */}
+      {grid?.weekSummary && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="rounded-lg border border-border p-3 text-center">
             <p className="text-xs text-muted-foreground">Logged</p>

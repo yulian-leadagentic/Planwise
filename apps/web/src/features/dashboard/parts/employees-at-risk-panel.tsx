@@ -32,7 +32,8 @@ type EmployeeAtRisk = {
   avatarUrl: string | null;
   position: string | null;
   department: string | null;
-  hoursWeek: number;
+  /** null when the caller may not see this person's logged hours (round 3). */
+  hoursWeek: number | null;
   capacity: number;
   overloadPct: number;
   overdueCount: number;
@@ -100,7 +101,7 @@ export function EmployeesAtRiskPanel({
                 {e.position ?? 'Employee'}
                 {e.department && <span> · {e.department}</span>}
                 {' · '}
-                <span className="font-mono tabular-nums">{e.hoursWeek}h</span>
+                <span className="font-mono tabular-nums">{e.hoursWeek != null ? `${e.hoursWeek}h` : '—'}</span>
                 <span className="text-slate-400 dark:text-slate-500">/{e.capacity}h this week</span>
               </p>
               <ul className="mt-2 space-y-1">

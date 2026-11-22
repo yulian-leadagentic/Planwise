@@ -10,6 +10,18 @@ export function useUsers(params?: UserQuery) {
   });
 }
 
+/**
+ * Every user matching `params` across all pages (see usersApi.listAll) —
+ * for screens that filter / sort client-side, like the People page.
+ * Under the `['users', …]` prefix, so user writes invalidate it too.
+ */
+export function useAllUsers(params: Omit<UserQuery, 'page' | 'perPage'> = {}) {
+  return useQuery({
+    queryKey: ['users', 'all', params],
+    queryFn: () => usersApi.listAll(params),
+  });
+}
+
 export function useUser(id: number) {
   return useQuery({
     queryKey: ['users', id],

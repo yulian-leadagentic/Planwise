@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 
 import { HrMonthlyService } from './hr-monthly.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ActivityLogService } from '../../common/services/activity-log.service';
 
 /**
  * HR Phase C2 (2026-10-16) — the 8 approved spec cases for the monthly
@@ -143,6 +144,7 @@ describe('HrMonthlyService — monthly engine (HR §4 / Phase C2)', () => {
       providers: [
         HrMonthlyService,
         { provide: PrismaService, useValue: prisma },
+        { provide: ActivityLogService, useValue: { logHrEvent: jest.fn(async () => undefined) } },
       ],
     }).compile();
 

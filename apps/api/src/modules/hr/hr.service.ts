@@ -54,10 +54,13 @@ function todayDateOnly(): Date {
  * route param, bucket.isSystem partial-locks, bereavement 7-day
  * span) sit next to each other.
  *
- * Audit: HR writes feed ActivityLogService under category='admin'
- * with entityType identifying the resource (hr_settings, calendar_day,
- * absence_type, absence_record, bucket, hr_attachment). An audit-log
- * failure never breaks the business write.
+ * Audit: HR writes feed ActivityLogService under category='hr'
+ * (permissions round 3, 2026-11-22 — was 'admin'), action `hr.*`, with
+ * entityType identifying the resource (special_hour_bucket, hr_settings,
+ * absence_type, absence_record, employee_attachment, employee,
+ * bucket_eligibility) and `metadata.employeeId` naming the employee the
+ * row is about. Only `hr:read` holders can read these rows (GET
+ * /hr/audit). An audit-log failure never breaks the business write.
  */
 @Injectable()
 export class HrService {
@@ -721,6 +724,7 @@ export class HrService {
     this.writeAudit({
       actorId,
       action: 'hr.absence.created',
+      employeeId: userId,
       entityType: 'absence_record',
       entityId: created.id,
       entityName: `${type.nameHe}`,
@@ -818,6 +822,7 @@ export class HrService {
     this.writeAudit({
       actorId,
       action: 'hr.absence.updated',
+      employeeId: userId,
       entityType: 'absence_record',
       entityId: recordId,
       entityName: nextType.nameHe,
@@ -860,6 +865,7 @@ export class HrService {
     this.writeAudit({
       actorId,
       action: 'hr.absence.deleted',
+      employeeId: userId,
       entityType: 'absence_record',
       entityId: recordId,
       entityName: existing.absenceType.nameHe,
@@ -898,6 +904,7 @@ export class HrService {
     this.writeAudit({
       actorId: callerId,
       action: 'hr.absence.deleted',
+      employeeId: callerId,
       entityType: 'absence_record',
       entityId: recordId,
       entityName: existing.absenceType.nameHe,
@@ -957,6 +964,7 @@ export class HrService {
     this.writeAudit({
       actorId,
       action: 'hr.attachment.uploaded',
+      employeeId: userId,
       entityType: 'employee_attachment',
       entityId: created.id,
       entityName: originalName,
@@ -1006,6 +1014,7 @@ export class HrService {
     this.writeAudit({
       actorId,
       action: 'hr.attachment.deleted',
+      employeeId: userId,
       entityType: 'employee_attachment',
       entityId: attachmentId,
       entityName: row.fileName,
@@ -1155,10 +1164,19 @@ export class HrService {
     };
   }
 
-  async updateEmployee(id: number, dto: UpdateHrEmployeeDto) {
+  async updateEmployee(id: number, dto: UpdateHrEmployeeDto, actorId: number | null = null) {
     const existing = await this.prisma.user.findFirst({
       where: { id, userType: 'employee', deletedAt: null },
-      select: { id: true },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+        employmentType: true,
+        accountingEmployeeNumber: true,
+        dailyStandardHours: true,
+        employmentDate: true,
+        employmentEndDate: true,
+      },
     });
     if (!existing) throw new NotFoundException(`Employee ${id} not found`);
 
@@ -1179,6 +1197,24 @@ export class HrService {
         : null;
 
     await this.prisma.user.update({ where: { id }, data });
+
+    // Permissions round 3 (2026-11-22) — audit which HR fields changed.
+    // Before → after for plain fields; the payroll number is recorded
+    // as changed only (no value in the audit row).
+    const changes = diffEmployeeFields(existing, data);
+    const changedFields = Object.keys(changes);
+    if (changedFields.length > 0) {
+      this.writeAudit({
+        actorId,
+        action: 'hr.employee.updated',
+        entityType: 'employee',
+        entityId: id,
+        entityName: `${existing.firstName} ${existing.lastName}`.trim(),
+        employeeId: id,
+        changes: changes as Prisma.InputJsonValue,
+        description: `Updated HR fields of ${existing.firstName} ${existing.lastName} — ${changedFields.join(', ')}`,
+      });
+    }
     return this.getEmployee(id);
   }
 
@@ -1313,6 +1349,25 @@ export class HrService {
       },
     });
 
+    this.writeAudit({
+      actorId: createdById,
+      action: 'hr.eligibility.created',
+      entityType: 'bucket_eligibility',
+      entityId: created.id,
+      entityName: bucket.nameHe,
+      employeeId: userId,
+      changes: {
+        bucket: bucket.code,
+        dailyAmount: amount,
+        startDate: toIsoDate(startDate),
+        endDate: toIsoDate(endDate),
+        creditMode: dto.creditMode ?? null,
+      },
+      description:
+        `Granted "${bucket.nameHe}" (${bucket.code}) to ${user.firstName} ${user.lastName}` +
+        ` — ${amount}/day, ${toIsoDate(startDate)} → ${toIsoDate(endDate)}`,
+    });
+
     return {
       eligibility: {
         ...created,
@@ -1343,9 +1398,11 @@ export class HrService {
     userId: number,
     eligibilityId: number,
     dto: UpdateEligibilityDto,
+    actorId: number | null = null,
   ) {
     const existing = await this.prisma.employeeBucketEligibility.findFirst({
       where: { id: eligibilityId, userId },
+      include: { bucket: { select: { code: true, nameHe: true } } },
     });
     if (!existing)
       throw new NotFoundException(`Eligibility ${eligibilityId} not found for employee ${userId}`);
@@ -1376,13 +1433,32 @@ export class HrService {
       where: { id: eligibilityId },
       data,
     });
+
+    // Permissions round 3 (2026-11-22) — audit what changed.
+    const changes = diffEligibilityFields(existing, data);
+    const changedFields = Object.keys(changes);
+    if (changedFields.length > 0) {
+      this.writeAudit({
+        actorId,
+        action: 'hr.eligibility.updated',
+        entityType: 'bucket_eligibility',
+        entityId: eligibilityId,
+        entityName: existing.bucket?.nameHe ?? null,
+        employeeId: userId,
+        changes: changes as Prisma.InputJsonValue,
+        description:
+          `Updated eligibility "${existing.bucket?.nameHe ?? eligibilityId}" of employee ${userId}` +
+          ` — ${changedFields.join(', ')}`,
+      });
+    }
     const list = await this.listEligibilities(userId);
     return list.find((e) => e.id === eligibilityId) ?? null;
   }
 
-  async deactivateEligibility(userId: number, eligibilityId: number) {
+  async deactivateEligibility(userId: number, eligibilityId: number, actorId: number | null = null) {
     const existing = await this.prisma.employeeBucketEligibility.findFirst({
       where: { id: eligibilityId, userId },
+      include: { bucket: { select: { code: true, nameHe: true } } },
     });
     if (!existing)
       throw new NotFoundException(`Eligibility ${eligibilityId} not found for employee ${userId}`);
@@ -1390,7 +1466,120 @@ export class HrService {
       where: { id: eligibilityId },
       data: { active: false },
     });
+    if (existing.active) {
+      this.writeAudit({
+        actorId,
+        action: 'hr.eligibility.deactivated',
+        entityType: 'bucket_eligibility',
+        entityId: eligibilityId,
+        entityName: existing.bucket?.nameHe ?? null,
+        employeeId: userId,
+        severity: 'warn',
+        changes: { active: { from: true, to: false } },
+        description: `Deactivated eligibility "${existing.bucket?.nameHe ?? eligibilityId}" of employee ${userId}`,
+      });
+    }
     return { ok: true };
+  }
+
+  // ═══ HR audit (permissions round 3, 2026-11-22) ═════════════════════
+
+  /**
+   * GET /hr/audit — category `hr` activity rows, newest first, paged.
+   * Gated `hr:read` on the route (no admin bypass): HR audit rows are
+   * visible to HR only — not to department leads, not to an Admin
+   * without the grant.
+   *
+   * Filters: `from` / `to` (ISO date or date-time; a bare `to` date
+   * includes that whole day), `action` (prefix, e.g. `hr.absence`),
+   * `actorId` (who did it) and `employeeId` (who it is about —
+   * `metadata.employeeId`; rows written before round 3 don't carry it).
+   */
+  async listAudit(q: {
+    page?: number;
+    perPage?: number;
+    from?: string;
+    to?: string;
+    action?: string;
+    actorId?: number;
+    employeeId?: number;
+  }) {
+    const perPage = Math.min(Math.max(Number(q.perPage) || 50, 1), 200);
+    const page = Math.max(Number(q.page) || 1, 1);
+
+    const where: Prisma.ActivityLogWhereInput = { category: 'hr' };
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (q.from) {
+      const d = new Date(q.from);
+      if (Number.isNaN(d.getTime())) throw new BadRequestException('"from" must be a date (YYYY-MM-DD)');
+      createdAt.gte = d;
+    }
+    if (q.to) {
+      const d = new Date(q.to);
+      if (Number.isNaN(d.getTime())) throw new BadRequestException('"to" must be a date (YYYY-MM-DD)');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(q.to)) {
+        // Bare date — include the whole day.
+        createdAt.lt = new Date(d.getTime() + 24 * 60 * 60 * 1000);
+      } else {
+        createdAt.lte = d;
+      }
+    }
+    if (createdAt.gte || createdAt.lt || createdAt.lte) where.createdAt = createdAt;
+    const action = typeof q.action === 'string' ? q.action.trim() : '';
+    if (action) where.action = { startsWith: action };
+    if (q.actorId != null && Number.isInteger(Number(q.actorId))) where.userId = Number(q.actorId);
+    if (q.employeeId != null && Number.isInteger(Number(q.employeeId))) {
+      where.metadata = { path: '$.employeeId', equals: Number(q.employeeId) };
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.activityLog.findMany({
+        where,
+        skip: (page - 1) * perPage,
+        take: perPage,
+        orderBy: { createdAt: 'desc' },
+        include: { user: { select: { id: true, firstName: true, lastName: true } } },
+      }),
+      this.prisma.activityLog.count({ where }),
+    ]);
+
+    // Resolve the employee each row is about (one query for the page).
+    const employeeIds = Array.from(
+      new Set(
+        rows
+          .map((r) => (r.metadata as { employeeId?: unknown } | null)?.employeeId)
+          .filter((v): v is number => typeof v === 'number'),
+      ),
+    );
+    const employees = employeeIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: employeeIds } },
+          select: { id: true, firstName: true, lastName: true },
+        })
+      : [];
+    const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+    const data = rows.map((r) => {
+      const employeeId = (r.metadata as { employeeId?: unknown } | null)?.employeeId;
+      return {
+        id: r.id.toString(),
+        createdAt: r.createdAt,
+        action: r.action,
+        severity: r.severity,
+        entityType: r.entityType,
+        entityId: r.entityId,
+        entityName: r.entityName,
+        description: r.description,
+        changes: r.changes,
+        actor: r.user,
+        employee: typeof employeeId === 'number' ? employeeById.get(employeeId) ?? { id: employeeId, firstName: null, lastName: null } : null,
+      };
+    });
+
+    return {
+      data,
+      meta: { total, page, perPage, totalPages: Math.ceil(total / perPage) },
+    };
   }
 
   // ═══ Internal helpers ═══════════════════════════════════════════════
@@ -1424,8 +1613,12 @@ export class HrService {
   }
 
   /**
-   * Fire-and-forget audit write. Shares ActivityLogService with every
-   * other domain so /admin/activity-logs sees HR events too.
+   * Fire-and-forget audit write, category `hr` (permissions round 3,
+   * 2026-11-22). Only `hr:read` holders can read these rows — GET
+   * /hr/audit — and GET /admin/activity-logs hides them from everyone
+   * else. `employeeId` lands in `metadata.employeeId` so the HR audit
+   * tab can filter by employee; `changes` carries before → after for
+   * non-sensitive fields only.
    */
   private writeAudit(params: {
     actorId: number | null;
@@ -1435,10 +1628,11 @@ export class HrService {
     entityName?: string | null;
     description: string;
     severity?: 'info' | 'warn' | 'error' | 'critical';
+    employeeId?: number | null;
+    changes?: Prisma.InputJsonValue | null;
   }) {
     this.activityLog
-      .write({
-        category: 'admin',
+      .logHrEvent({
         action: params.action,
         description: params.description,
         actorUserId: params.actorId ?? null,
@@ -1446,7 +1640,58 @@ export class HrService {
         entityId: params.entityId ?? null,
         entityName: params.entityName ?? null,
         severity: params.severity ?? 'info',
+        changes: params.changes ?? null,
+        metadata: params.employeeId != null ? { employeeId: params.employeeId } : null,
       })
       .catch((e) => Sentry.captureException(e));
   }
+}
+
+// ─── Audit diff helpers (permissions round 3, 2026-11-22) ───────────────
+
+type AuditChange = { from: unknown; to: unknown } | 'changed';
+
+/** `Date` → `YYYY-MM-DD`. */
+function toIsoDate(v: Date): string {
+  return v.toISOString().slice(0, 10);
+}
+
+/** Normalize a value for comparison / the audit row (Decimal → number, Date → day). */
+function auditValue(v: unknown): unknown {
+  if (v == null) return null;
+  if (v instanceof Date) return toIsoDate(v);
+  if (typeof v === 'object' && typeof (v as { toNumber?: unknown }).toNumber === 'function') {
+    return (v as { toNumber: () => number }).toNumber();
+  }
+  return v;
+}
+
+/**
+ * Before → after for every field in `data` whose value actually
+ * changes. Fields in `sensitive` are recorded as 'changed' (no value).
+ */
+function diffFields(
+  existing: Record<string, unknown>,
+  data: Record<string, unknown>,
+  sensitive: ReadonlySet<string> = new Set(),
+): Record<string, AuditChange> {
+  const out: Record<string, AuditChange> = {};
+  for (const key of Object.keys(data)) {
+    const from = auditValue(existing[key]);
+    const to = auditValue(data[key]);
+    if (from === to) continue;
+    out[key] = sensitive.has(key) ? 'changed' : { from, to };
+  }
+  return out;
+}
+
+/** HR employee fields — the payroll number is recorded as changed only. */
+const SENSITIVE_EMPLOYEE_FIELDS: ReadonlySet<string> = new Set(['accountingEmployeeNumber']);
+
+function diffEmployeeFields(existing: Record<string, unknown>, data: Record<string, unknown>) {
+  return diffFields(existing, data, SENSITIVE_EMPLOYEE_FIELDS);
+}
+
+function diffEligibilityFields(existing: Record<string, unknown>, data: Record<string, unknown>) {
+  return diffFields(existing, data);
 }

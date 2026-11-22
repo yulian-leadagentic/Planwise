@@ -43,7 +43,11 @@ async function run(user: any, payload: unknown, type: 'http' | 'ws' = 'http') {
   return lastValueFrom(interceptor.intercept(ctx(user, type), { handle: () => of(payload) }));
 }
 
-/** The user list row `GET /users` returns (users.service findAll). */
+/**
+ * The user list row `GET /users` returns to an Admin / HR caller
+ * (account tier, users.service findAll — round 3 privacy). A directory
+ * caller never gets the labor category or the rate at all.
+ */
 function usersListPayload() {
   return {
     data: [

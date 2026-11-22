@@ -39,6 +39,22 @@ export interface CommitResult {
   updatedCount: number;
   skippedCount: number;
   errorCount: number;
+  /**
+   * Permissions round 3 (2026-11-22) — initial sign-in credentials of
+   * the accounts this commit created (users importer only). Returned
+   * ONCE in the commit response so the admin can hand them out; never
+   * written to the database, the import report or any log. Each user
+   * must change the password on first sign-in (`mustChangePassword`).
+   */
+  credentials?: ImportedCredential[];
+}
+
+/** One created account's initial sign-in — see `CommitResult.credentials`. */
+export interface ImportedCredential {
+  email: string;
+  firstName: string;
+  lastName: string;
+  password: string;
 }
 
 export interface EntityImporter<TData = unknown> {

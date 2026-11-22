@@ -62,8 +62,8 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   '/time': 'time',
   '/inbox': 'tasks',
   '/messages': 'tasks',
-  '/people': 'partners',
-  '/admin/employees': 'partners',
+  '/people': 'partners|hr', // round 3: partners:read OR hr:read (as GET /users)
+  '/admin/employees': 'partners|hr',
   // HR Phase A4 (2026-10-15) — the whole /hr/* subtree checks `hr:read`.
   // RolesGuard's NO_ADMIN_BYPASS (A1) blocks the admin shortcut on the
   // API side; this guard mirrors the same rule on the client so a role
@@ -88,15 +88,32 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
 
 const SORTED_PREFIXES = Object.keys(ROUTE_MODULE_MAP).sort((a, b) => b.length - a.length);
 
+/**
+ * Permissions round 3 (2026-11-22) — routes whose module the API checks
+ * WITHOUT the admin bypass, so the client must not wave an Admin through
+ * either. `/hr/audit`: HR audit rows are visible to hr:read holders only
+ * — not to an Admin without the HR grant (owner's decision). The rest of
+ * `/hr/*` keeps today's behaviour.
+ */
+const NO_ADMIN_BYPASS_ROUTES: Record<string, string> = {
+  '/hr/audit': 'hr',
+};
+
 export function RoutePermissionGuard({ children }: { children?: React.ReactNode }) {
   const location = useLocation();
   const { can, isAdmin } = usePermissions();
+
+  for (const [prefix, mod] of Object.entries(NO_ADMIN_BYPASS_ROUTES)) {
+    if (location.pathname === prefix || location.pathname.startsWith(prefix + '/')) {
+      if (!can(mod, 'read')) return <Navigate to="/" replace />;
+    }
+  }
 
   if (!isAdmin) {
     for (const prefix of SORTED_PREFIXES) {
       if (location.pathname === prefix || location.pathname.startsWith(prefix + '/')) {
         const mod = ROUTE_MODULE_MAP[prefix];
-        if (!can(mod, 'read')) {
+        if (!mod.split('|').some((m) => can(m, 'read'))) { // 'a|b' = read on a OR b
           return <Navigate to="/" replace />;
         }
         break;

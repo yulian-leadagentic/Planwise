@@ -369,12 +369,15 @@ export class TimeEntriesService {
   }
 
   async findOne(id: number) {
+    // Round 3 (2026-11-22): soft-deleted entries are gone for every
+    // reader. `task.projectId` rides along so the controller can apply
+    // the project-leader rule to entries whose own projectId is NULL.
     const entry = await this.prisma.timeEntry.findFirst({
-      where: { id },
+      where: { id, deletedAt: null },
       include: {
         user: { select: { id: true, firstName: true, lastName: true } },
         project: { select: { id: true, name: true } },
-        task: { select: { id: true, name: true } },
+        task: { select: { id: true, name: true, projectId: true } },
       },
     });
 
@@ -524,6 +527,7 @@ export class TimeEntriesService {
     const entries = await this.prisma.timeEntry.findMany({
       where: {
         userId,
+        deletedAt: null,
         date: { gte: dayStart, lte: dayEnd },
       },
       include: {
@@ -551,88 +555,296 @@ export class TimeEntriesService {
     };
   }
 
-  async getWeeklyGrid(userId: number, weekStartStr: string) {
-    if (!weekStartStr) {
-      return { weekStart: '', weekEnd: '', rows: [], dailyTotals: {}, weeklyTotal: 0 };
-    }
+  /**
+   * One user's week, day by day — the shared source of the week mode of
+   * `GET /time-entries/daily` and of `GET /time-entries/weekly`, so the
+   * two screens can't disagree.
+   *
+   * Per day:
+   *   • entries   — live entries (optionally one project's);
+   *   • presence  — clock records that are attendance (not absent /
+   *                 leave / sick placeholders);
+   *   • clocked   — minutes of the closed presence records, or null;
+   *   • expected  — the work-schedule shift, unless the work calendar
+   *                 says otherwise (a calendar day's `workingHours`, or
+   *                 0 on HOLIDAY / REST) or the day is a leave / sick
+   *                 record (0). No schedule → 0.
+   *
+   * The HR monthly review stays the authoritative computation; this is
+   * the employee's indicative view.
+   */
+  private async loadWeek(userId: number, weekStartStr: string, opts: { projectId?: number } = {}) {
     const weekStart = parseISO(weekStartStr);
+    if (Number.isNaN(weekStart.getTime())) {
+      throw new BadRequestException('weekStart must be a date (YYYY-MM-DD)');
+    }
     const weekEnd = addDays(weekStart, 6);
+    const dayKey = (d: Date) => format(d, 'yyyy-MM-dd');
 
-    // Use 1-day buffer on each side to handle timezone edge cases
-    const queryStart = addDays(weekStart, -1);
-    const queryEnd = addDays(weekEnd, 1);
+    // 1-day buffer each side for timezone edges; days are then keyed in
+    // local time and anything outside the 7 days is dropped.
+    const queryStart = startOfDay(addDays(weekStart, -1));
+    const queryEnd = endOfDay(addDays(weekEnd, 1));
+    const projectFilter =
+      opts.projectId != null
+        ? { OR: [{ projectId: opts.projectId }, { task: { projectId: opts.projectId } }] }
+        : {};
 
-    const allEntries = await this.prisma.timeEntry.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        date: { gte: startOfDay(queryStart), lte: endOfDay(queryEnd) },
-      },
-      include: {
-        project: { select: { id: true, name: true } },
-        task: { select: { id: true, name: true } },
-      },
-      orderBy: { date: 'asc' },
+    const [entries, clocks, schedules, calendarDays] = await Promise.all([
+      this.prisma.timeEntry.findMany({
+        where: { userId, deletedAt: null, date: { gte: queryStart, lte: queryEnd }, ...projectFilter },
+        include: {
+          project: { select: { id: true, name: true } },
+          task: {
+            select: {
+              id: true,
+              name: true,
+              code: true,
+              projectId: true,
+              budgetHours: true,
+              project: { select: { id: true, name: true } },
+              zone: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: [{ date: 'asc' }, { startTime: 'asc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.timeClock.findMany({
+        where: { userId, date: { gte: queryStart, lte: queryEnd } },
+        orderBy: { clockIn: 'asc' },
+      }),
+      this.prisma.workSchedule.findMany({
+        where: {
+          userId,
+          isActive: true,
+          effectiveFrom: { lte: endOfDay(weekEnd) },
+          OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: startOfDay(weekStart) } }],
+        },
+        orderBy: { effectiveFrom: 'desc' },
+      }),
+      this.prisma.calendarDay.findMany({
+        where: { date: { gte: queryStart, lte: queryEnd }, appliesTo: { in: ['all', 'employees_only'] } },
+        select: { date: true, type: true, workingHours: true },
+      }),
+    ]);
+
+    const NOT_PRESENCE = new Set(['absent', 'leave', 'sick']);
+    const days = Array.from({ length: 7 }, (_, i) => {
+      const day = addDays(weekStart, i);
+      const key = dayKey(day);
+      const dayEntries = entries.filter((e) => dayKey(new Date(e.date)) === key);
+      const dayClocks = clocks.filter((c) => dayKey(new Date(c.date)) === key);
+      const presence = dayClocks.filter((c) => !NOT_PRESENCE.has(c.status));
+      const onLeave = dayClocks.some((c) => c.status === 'leave' || c.status === 'sick');
+      const closed = presence.filter((c) => c.totalMinutes != null);
+      const clocked = closed.length > 0 ? closed.reduce((s, c) => s + (c.totalMinutes ?? 0), 0) : null;
+
+      const schedule =
+        schedules.find(
+          (s) =>
+            s.dayOfWeek === day.getDay() &&
+            s.effectiveFrom <= endOfDay(day) &&
+            (s.effectiveUntil == null || s.effectiveUntil >= startOfDay(day)),
+        ) ?? null;
+      const shiftMinutes = (() => {
+        if (!schedule) return 0;
+        const start = hhmmToMinutes(schedule.shiftStart);
+        const end = hhmmToMinutes(schedule.shiftEnd);
+        return start != null && end != null ? Math.max(0, end - start - schedule.breakMinutes) : 0;
+      })();
+      const calendar = calendarDays.find((c) => dayKey(new Date(c.date)) === key) ?? null;
+      // No schedule → nothing expected. Otherwise the work calendar wins
+      // (its working hours, or a day off), then leave / sick.
+      let expectedMinutes = shiftMinutes;
+      if (schedule && calendar?.workingHours != null) {
+        expectedMinutes = Math.round(Number(calendar.workingHours) * 60);
+      } else if (calendar && (calendar.type === 'HOLIDAY' || calendar.type === 'REST')) {
+        expectedMinutes = 0;
+      }
+      if (onLeave) expectedMinutes = 0;
+
+      return {
+        key,
+        entries: dayEntries,
+        logged: dayEntries.reduce((s, e) => s + e.minutes, 0),
+        presence,
+        clocked,
+        // A day off shows no shift at all.
+        schedule: schedule && expectedMinutes > 0 ? schedule : null,
+        expectedMinutes,
+      };
     });
+    return { weekStart, weekEnd, days };
+  }
 
-    // Build the 7 valid day keys for this week
-    const validDayKeys = new Set<string>();
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(weekStart, i);
-      validDayKeys.add(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  /** A day's attendance span: first clock-in, last clock-out (null while a record is open). */
+  private attendanceSpan(presence: Array<{ clockIn: Date; clockOut: Date | null }>) {
+    if (presence.length === 0) return null;
+    const clockIn = presence.reduce((min, c) => (c.clockIn < min ? c.clockIn : min), presence[0].clockIn);
+    const open = presence.some((c) => c.clockOut == null);
+    const clockOut = open
+      ? null
+      : presence.reduce<Date | null>((max, c) => (max == null || (c.clockOut as Date) > max ? c.clockOut : max), null);
+    return { clockIn, clockOut };
+  }
+
+  /**
+   * Week mode of `GET /time-entries/daily?weekStart=` — the shape the
+   * web's My Time page renders (`DailyBreakdown[]` in @amec/shared):
+   *
+   *   • clock      — the day's attendance in the TimeClock shape: the
+   *                  latest record, spanning the first clock-in to the
+   *                  last clock-out (null while one is open) with the
+   *                  day's clocked minutes — the same numbers as the
+   *                  weekly grid's `clock`. Leave / sick / absent
+   *                  placeholders are not a clock;
+   *   • expected   — the shift of the work schedule, null on a holiday,
+   *                  rest or leave day (see loadWeek);
+   *   • difference — logged minus clocked minutes (all of the day's
+   *                  closed attendance records); null when nothing was
+   *                  clocked;
+   *   • isBalanced — |difference| ≤ 15 minutes.
+   */
+  async getWeekDailyBreakdown(userId: number, weekStartStr: string) {
+    const { days } = await this.loadWeek(userId, weekStartStr);
+    return days.map((d) => {
+      const difference = d.clocked != null ? d.logged - d.clocked : null;
+      const span = this.attendanceSpan(d.presence);
+      return {
+        date: d.key,
+        clock: span
+          ? { ...d.presence[d.presence.length - 1], clockIn: span.clockIn, clockOut: span.clockOut, totalMinutes: d.clocked }
+          : null,
+        expected: d.schedule
+          ? {
+              shiftStart: d.schedule.shiftStart,
+              shiftEnd: d.schedule.shiftEnd,
+              breakMinutes: d.schedule.breakMinutes,
+              expectedMinutes: d.expectedMinutes,
+            }
+          : null,
+        entries: d.entries,
+        totalLogged: d.logged,
+        difference,
+        isBalanced: difference != null && Math.abs(difference) <= 15,
+      };
+    });
+  }
+
+  /**
+   * `GET /time-entries/weekly` — the shared `WeeklyGrid` shape
+   * (@amec/shared) rendered by the Weekly Grid (/time/grid), the My Time
+   * summary cards (/time/summary) and the Timesheet calendar (/time):
+   *
+   *   • rows        — one per task (`type: 'task'`) or per project for
+   *                   task-less legacy entries (`type: 'project'`);
+   *                   `days` has all 7 keys: null, or
+   *                   `{ id, minutes, entries }` where `id` is the first
+   *                   entry of the cell (the one the grid edits when the
+   *                   cell holds a single entry) and `entries` the full
+   *                   rows the Timesheet calendar draws;
+   *   • clock       — per day with attendance: first clock-in, last
+   *                   clock-out (null while one is open), clocked
+   *                   minutes, expected minutes;
+   *   • dailyTotals — all 7 days: logged, clocked (null if none), diff
+   *                   (logged − clocked, null if nothing clocked);
+   *   • weekSummary — totals; overtime / missing = net of worked −
+   *                   expected over the days BEFORE today (today isn't
+   *                   over), where worked = clocked minutes, or logged
+   *                   minutes on a day without a closed clock record.
+   *
+   * `projectId` narrows the rows and the logged totals to one project;
+   * clocked / expected minutes are attendance and stay whole.
+   */
+  async getWeeklyGrid(userId: number, weekStartStr: string, opts: { projectId?: number } = {}) {
+    const emptySummary = { totalLogged: 0, totalClocked: 0, totalExpected: 0, overtimeMinutes: 0, missingMinutes: 0 };
+    if (!weekStartStr) {
+      return { weekStart: '', rows: [], clock: {}, dailyTotals: {}, weekSummary: emptySummary };
+    }
+    const { weekStart, days } = await this.loadWeek(userId, weekStartStr, opts);
+    const dayKeys = days.map((d) => d.key);
+
+    type Entry = (typeof days)[number]['entries'][number];
+    const rowsByKey = new Map<string, { entries: Entry[]; first: Entry }>();
+    for (const d of days) {
+      for (const e of d.entries) {
+        const projectId = e.projectId ?? e.task?.projectId ?? null;
+        const key = e.taskId != null ? `t${e.taskId}` : `p${projectId ?? 0}`;
+        const bucket = rowsByKey.get(key);
+        if (bucket) bucket.entries.push(e);
+        else rowsByKey.set(key, { entries: [e], first: e });
+      }
     }
 
-    // Filter entries to only those whose date falls within the 7-day week
-    const entries = allEntries.filter((e) => {
-      const d = new Date(e.date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      return validDayKeys.has(key);
+    const rows = [...rowsByKey.values()].map(({ entries, first }) => {
+      const projectId = first.projectId ?? first.task?.projectId ?? undefined;
+      const projectName = first.project?.name ?? first.task?.project?.name ?? 'No Project';
+      const cells: Record<string, { id: number; minutes: number; entries: Entry[] } | null> = {};
+      for (const key of dayKeys) {
+        const inDay = entries.filter((e) => format(new Date(e.date), 'yyyy-MM-dd') === key);
+        cells[key] =
+          inDay.length === 0
+            ? null
+            : { id: inDay[0].id, minutes: inDay.reduce((s, e) => s + e.minutes, 0), entries: inDay };
+      }
+      const budget = first.task?.budgetHours;
+      return {
+        type: (first.taskId != null ? 'task' : 'project') as 'task' | 'project',
+        ...(first.taskId != null ? { taskId: first.taskId, taskName: first.task?.name ?? 'Task' } : {}),
+        ...(projectId != null ? { projectId } : {}),
+        projectName,
+        ...(first.task?.zone?.name ? { labelPath: `${projectName} / ${first.task.zone.name}` } : { labelPath: projectName }),
+        days: cells,
+        weekTotalMinutes: entries.reduce((s, e) => s + e.minutes, 0),
+        ...(budget != null ? { budgetHours: Number(budget) } : {}),
+      };
     });
+    rows.sort(
+      (a, b) =>
+        a.projectName.localeCompare(b.projectName) ||
+        String(a.taskName ?? '').localeCompare(String(b.taskName ?? '')),
+    );
 
-    const grid: Record<string, any> = {};
-
-    for (const entry of entries) {
-      const key = `${entry.projectId || 0}-${entry.taskId || 0}`;
-      if (!grid[key]) {
-        grid[key] = {
-          projectId: entry.projectId,
-          projectName: entry.project?.name || 'No Project',
-          taskId: entry.taskId,
-          taskName: entry.task?.name || 'No Task',
-          days: {},
-          totalMinutes: 0,
+    const clock: Record<string, { clockIn: string; clockOut: string | null; totalMinutes: number | null; expectedMinutes: number | null }> = {};
+    const dailyTotals: Record<string, { logged: number; clocked: number | null; diff: number | null }> = {};
+    const todayKey = format(new Date(), 'yyyy-MM-dd');
+    let totalLogged = 0;
+    let totalClocked = 0;
+    let totalExpected = 0;
+    let net = 0;
+    for (const d of days) {
+      const span = this.attendanceSpan(d.presence);
+      if (span) {
+        clock[d.key] = {
+          clockIn: span.clockIn.toISOString(),
+          clockOut: span.clockOut ? span.clockOut.toISOString() : null,
+          totalMinutes: d.clocked,
+          expectedMinutes: d.presence.find((c) => c.expectedMinutes != null)?.expectedMinutes ?? d.expectedMinutes,
         };
       }
-
-      // Use UTC-safe date key extraction to avoid timezone shifts
-      const d = new Date(entry.date);
-      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      if (!grid[key].days[dayKey]) {
-        grid[key].days[dayKey] = { minutes: 0, entries: [] };
-      }
-      grid[key].days[dayKey].minutes += entry.minutes;
-      grid[key].days[dayKey].entries.push(entry);
-      grid[key].totalMinutes += entry.minutes;
-    }
-
-    const dailyTotals: Record<string, number> = {};
-    for (let i = 0; i < 7; i++) {
-      const d = addDays(weekStart, i);
-      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      dailyTotals[dayKey] = entries
-        .filter((e) => {
-          const ed = new Date(e.date);
-          return ed.getFullYear() === d.getFullYear() && ed.getMonth() === d.getMonth() && ed.getDate() === d.getDate();
-        })
-        .reduce((sum, e) => sum + e.minutes, 0);
+      dailyTotals[d.key] = {
+        logged: d.logged,
+        clocked: d.clocked,
+        diff: d.clocked != null ? d.logged - d.clocked : null,
+      };
+      totalLogged += d.logged;
+      totalClocked += d.clocked ?? 0;
+      totalExpected += d.expectedMinutes;
+      if (d.key < todayKey) net += (d.clocked ?? d.logged) - d.expectedMinutes;
     }
 
     return {
       weekStart: format(weekStart, 'yyyy-MM-dd'),
-      weekEnd: format(weekEnd, 'yyyy-MM-dd'),
-      rows: Object.values(grid),
+      rows,
+      clock,
       dailyTotals,
-      weeklyTotal: entries.reduce((sum, e) => sum + e.minutes, 0),
+      weekSummary: {
+        totalLogged,
+        totalClocked,
+        totalExpected,
+        overtimeMinutes: Math.max(0, net),
+        missingMinutes: Math.max(0, -net),
+      },
     };
   }
 

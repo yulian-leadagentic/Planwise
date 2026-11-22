@@ -126,7 +126,9 @@ describe('/users/:id/seniorities writes need finance:write (B-14)', () => {
 
   it('the read stays on partners:read (its level cost is removed by the interceptor)', async () => {
     const { ctrl, seniority } = make();
-    await ctrl.listSeniorities(7);
+    // Round 3 (privacy) — the labor category is account-tier data: Admin,
+    // HR or the user himself (see users.service.spec.ts for the rest).
+    await ctrl.listSeniorities(ADMIN_NO_FINANCE, 7);
     expect(seniority.listForUser).toHaveBeenCalledWith(7);
   });
 });

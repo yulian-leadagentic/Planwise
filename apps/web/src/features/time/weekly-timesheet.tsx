@@ -750,7 +750,7 @@ function WeekView() {
 
     if (!raw) return map;
 
-    // Handle weekly grid format: { rows: [{ days: { "2026-04-14": { entries: [...] } } }] }
+    // Handle weekly grid format: { rows: [{ days: { "2026-04-14": { id, minutes, entries: [...] } | null } }] }
     if (raw.rows && Array.isArray(raw.rows)) {
       for (const row of raw.rows) {
         for (const [dateKey, dayData] of Object.entries(row.days ?? {})) {
@@ -770,10 +770,19 @@ function WeekView() {
     return map;
   }, [breakdownData]);
 
-  // Calculate daily totals — use grid dailyTotals if available, else sum from entries
+  // Calculate daily totals — use grid dailyTotals if available, else sum
+  // from entries. The API returns the shared WeeklyGrid shape
+  // (`{ logged, clocked, diff }` per day); a bare number is the
+  // pre-2026-11-22 shape, still accepted.
   const dailyTotals = useMemo(() => {
     const raw = breakdownData as any;
-    if (raw?.dailyTotals) return raw.dailyTotals as Record<string, number>;
+    if (raw?.dailyTotals) {
+      const totals: Record<string, number> = {};
+      for (const [date, t] of Object.entries(raw.dailyTotals as Record<string, any>)) {
+        totals[date] = typeof t === 'number' ? t : Number(t?.logged ?? 0);
+      }
+      return totals;
+    }
     const totals: Record<string, number> = {};
     for (const [date, entries] of entriesByDay.entries()) {
       totals[date] = entries.reduce((s: number, e: any) => s + (e.minutes ?? 0), 0);
@@ -781,7 +790,10 @@ function WeekView() {
     return totals;
   }, [breakdownData, entriesByDay]);
 
-  const weekTotal = (breakdownData as any)?.weeklyTotal ?? Object.values(dailyTotals).reduce((s, m) => s + (typeof m === 'number' ? m : 0), 0);
+  const weekTotal =
+    (breakdownData as any)?.weekSummary?.totalLogged ??
+    (breakdownData as any)?.weeklyTotal ??
+    Object.values(dailyTotals).reduce((s, m) => s + (typeof m === 'number' ? m : 0), 0);
   const todayKey = format(new Date(), 'yyyy-MM-dd');
 
   // ─── Untimed vs timed split ────────────────────────────────────────

@@ -26,9 +26,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { canSeeFinance as callerCanSeeFinance } from '../../common/finance/finance-access';
 import { PermissionDeniedException, permissionDenied } from '../../common/errors/permission-denied';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 
 import { ExcelParserService } from './excel-parser.service';
-import { UsersImporterService } from './importers/users-importer.service';
+import { UsersImporterService, toReportJson } from './importers/users-importer.service';
 import { EntityImporter } from './importers/importer.types';
 import * as Sentry from '@sentry/node';
 
@@ -50,6 +51,7 @@ export class DataImportController {
     private readonly parser: ExcelParserService,
     private readonly usersImporter: UsersImporterService,
     private readonly activityLog: ActivityLogService,
+    private readonly projectAccess: ProjectAccessService,
   ) {}
 
   /**
@@ -219,7 +221,7 @@ export class DataImportController {
       },
     });
 
-    let result;
+    let result: Awaited<ReturnType<EntityImporter['commit']>>;
     try {
       result = await importer.commit({
         importId: importRecord.id,
@@ -284,7 +286,23 @@ export class DataImportController {
       });
     } catch (e) { Sentry.captureException(e); /* swallow — audit failure never fails the commit */ }
 
-    return { import: updated, summary: result };
+    // Imported users can land in org units (home unit), which changes
+    // the manager → subordinate map ProjectAccessService memoizes.
+    if (target === 'users' && result.createdCount > 0) {
+      this.projectAccess.invalidateSubordinateCache();
+    }
+
+    // Permissions round 3 (2026-11-22) — the initial passwords of the
+    // created accounts are returned ONCE, here, and never stored (not in
+    // the import report, not in the audit row above, not in a log: no
+    // interceptor or the exception filter writes response bodies). The
+    // summary keeps only the counts.
+    const { credentials, ...summary } = result;
+    return {
+      import: updated,
+      summary,
+      ...(target === 'users' ? { credentials: credentials ?? [] } : {}),
+    };
   }
 
   // ─── History ───────────────────────────────────────────────────────
@@ -326,10 +344,20 @@ export class DataImportController {
         reason: 'NOT_OWNER',
       });
     }
-    return this.prisma.dataImportRow.findMany({
+    const rows = await this.prisma.dataImportRow.findMany({
       where: { importId: id },
       orderBy: { rowIndex: 'asc' },
     });
+    // Permissions round 3 — defence in depth: never hand out an initial
+    // password or a pay rate from the report, even from a row written
+    // before the importer stopped storing them.
+    return rows.map((r) => ({
+      ...r,
+      afterJson:
+        r.afterJson && typeof r.afterJson === 'object' && !Array.isArray(r.afterJson)
+          ? toReportJson(r.afterJson as Record<string, unknown>)
+          : r.afterJson,
+    }));
   }
 
   // ─── Rollback ──────────────────────────────────────────────────────
@@ -350,6 +378,19 @@ export class DataImportController {
         reason: 'NOT_OWNER',
       });
     }
+    // Permissions round 3 (2026-11-22) — only the users importer can
+    // undo itself. A contacts import links and enriches EXISTING
+    // partners (domains, worker_of edges, professions, project roles)
+    // without recording a before-image, so deleting what it touched
+    // would destroy data it didn't create. Say so plainly instead of
+    // the old "ships in M2/M3" 400 from getImporter.
+    if (imp.target !== 'users') {
+      throw new BadRequestException({
+        code: 'ROLLBACK_NOT_SUPPORTED',
+        message: `${imp.target === 'contacts' ? 'Contact' : 'Partner'} imports can't be rolled back automatically. Fix or remove the records from the Contacts page.`,
+        details: { target: imp.target },
+      });
+    }
     if (imp.status === 'rolled_back') {
       throw new BadRequestException('This import has already been rolled back.');
     }
@@ -364,6 +405,8 @@ export class DataImportController {
       where: { id },
       data: { status: 'rolled_back', rolledBackAt: new Date() },
     });
+    // Deleted users leave the org tree — drop the memoized subordinates.
+    if (result.deletedCount > 0) this.projectAccess.invalidateSubordinateCache();
 
     return { import: { id, status: 'rolled_back' }, ...result };
   }

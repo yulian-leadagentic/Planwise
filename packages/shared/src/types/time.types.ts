@@ -110,7 +110,12 @@ export interface WeeklyGridRow {
   taskName?: string;
   projectName: string;
   labelPath?: string;
-  days: Record<string, { id: number; minutes: number } | null>;
+  /**
+   * All 7 days of the week. `id` is the cell's first entry (the one the
+   * Weekly Grid edits when the cell holds exactly one entry); `entries`
+   * are the cell's full entries, drawn by the /time calendar.
+   */
+  days: Record<string, { id: number; minutes: number; entries?: TimeEntry[] } | null>;
   weekTotalMinutes: number;
   budgetHours?: number;
 }
@@ -130,4 +135,11 @@ export interface TeamClockDashboard {
   notYet: { user: { id: number; firstName: string; lastName: string }; expectedShiftStart: string }[];
   late: (TimeClock & { user: { id: number; firstName: string; lastName: string } })[];
   onLeave: (TimeClock & { user: { id: number; firstName: string; lastName: string } })[];
+  /**
+   * Permissions round 3 (2026-11-22) — who the buckets cover:
+   * `allEmployees` for hr:read, otherwise the caller + the employees he
+   * manages; `visibleOthers` = how many people besides the caller
+   * (null when `allEmployees`). Optional for older API builds.
+   */
+  scope?: { allEmployees: boolean; visibleOthers: number | null };
 }

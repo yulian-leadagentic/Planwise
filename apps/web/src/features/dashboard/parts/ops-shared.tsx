@@ -44,7 +44,20 @@ export function OpsAvatar({ firstName, lastName, size = 24 }: { firstName?: stri
   );
 }
 
-export function OpsLoadBar({ used, capacity }: { used: number; capacity: number }) {
+/**
+ * `used: null` = hours the caller may not see (permissions round 3 —
+ * logged hours only for employees he manages): an empty track and "—",
+ * never a fake 0%.
+ */
+export function OpsLoadBar({ used, capacity }: { used: number | null | undefined; capacity: number }) {
+  if (used == null) {
+    return (
+      <div className="flex items-center gap-1.5" title="Hours are visible only for employees you manage">
+        <div className="flex-1 h-[4px] bg-slate-100 dark:bg-slate-800 rounded-full min-w-[40px]" />
+        <span className="font-mono tabular-nums text-[11px] font-bold min-w-[30px] text-right text-slate-300 dark:text-slate-600">—</span>
+      </div>
+    );
+  }
   const pct = capacity > 0 ? Math.round((used / capacity) * 100) : 0;
   const color =
     pct > 110 ? 'bg-red-600'

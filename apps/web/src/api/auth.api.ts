@@ -1,5 +1,6 @@
 import client from './client';
 import type { ApiResponse, User } from '@/types';
+import type { AuthUser } from '@/stores/auth.store';
 
 export interface LoginPayload {
   email: string;
@@ -8,7 +9,8 @@ export interface LoginPayload {
 
 export interface LoginResponse {
   accessToken: string;
-  user: User;
+  /** Carries `mustChangePassword` (permissions round 3). */
+  user: AuthUser;
 }
 
 export interface ForgotPasswordPayload {
@@ -43,14 +45,15 @@ export const authApi = {
   forgotPassword: (payload: ForgotPasswordPayload) =>
     client.post<ApiResponse<{ message: string }>>('/auth/forgot-password', payload).then((r) => r.data.data),
 
+  // A correct code returns a one-time reset token (15 minutes) for /auth/reset-password.
   verifyOtp: (payload: VerifyOtpPayload) =>
-    client.post<ApiResponse<{ valid: boolean }>>('/auth/verify-otp', payload).then((r) => r.data.data),
+    client.post<ApiResponse<{ resetToken: string }>>('/auth/verify-otp', payload).then((r) => r.data.data),
 
   resetPassword: (payload: ResetPasswordPayload) =>
     client.post<ApiResponse<{ message: string }>>('/auth/reset-password', payload).then((r) => r.data.data),
 
   getMe: () =>
-    client.get<ApiResponse<User>>('/auth/me').then((r) => r.data.data),
+    client.get<ApiResponse<AuthUser>>('/auth/me').then((r) => r.data.data),
 
   updateMe: (payload: Partial<User>) =>
     client.patch<ApiResponse<User>>('/auth/me', payload).then((r) => r.data.data),

@@ -19,9 +19,38 @@ import { buildCostRateResolver, isRateableOutcome } from '../projects/cost-rate-
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { isAdminUser, userHasModulePermission } from '../../common/guards/roles.guard';
 import { canEditPeople, canManageEmployees, isAdminLevelRole, USER_FINANCE_FIELDS } from './user-write-policy';
-import { assertFinanceFieldWrites } from '../../common/finance/finance-access';
-import { PermissionDeniedException } from '../../common/errors/permission-denied';
+import {
+  buildUserSelect,
+  canSeeAccountDirectory,
+  canWritePersonalFields,
+  findPersonalFieldChanges,
+  USER_PERSONAL_FIELD_LABELS,
+  USER_PERSONAL_SELECT,
+  USER_PERSONAL_WRITE_FIELDS,
+  userFieldAccess,
+  UserPersonalWriteField,
+} from './user-visibility';
+import { assertFinanceFieldWrites, canSeeFinance } from '../../common/finance/finance-access';
+import { PermissionDeniedException, joinLabels } from '../../common/errors/permission-denied';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import * as Sentry from '@sentry/node';
+
+/**
+ * The stored row PATCH / DELETE /users/:id check their rules against
+ * (protected fields, personal-tier change detection, audit). Internal —
+ * never returned to a caller (responses go through `findOne`).
+ */
+const EXISTING_USER_SELECT = {
+  id: true,
+  code: true,
+  email: true,
+  roleId: true,
+  isActive: true,
+  orgUnitId: true,
+  businessPartnerId: true,
+  role: { select: { id: true, name: true } },
+  ...USER_PERSONAL_SELECT,
+} as const;
 
 /** What a PATCH /users/:id actually changes among the protected fields. */
 interface ProtectedChanges {
@@ -52,6 +81,10 @@ export class UsersService implements OnModuleInit {
     private userSeniorities: UserSenioritiesService,
     private bpService: BusinessPartnersService,
     private activityLog: ActivityLogService,
+    // Round 3 — the manager → subordinates memo must be cleared when a
+    // user's home org unit / active state changes, or a user is added
+    // or removed (OrgUnitService does the same for its own writes).
+    private projectAccess: ProjectAccessService,
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -285,6 +318,9 @@ export class UsersService implements OnModuleInit {
     // Permissions round 2 — a pay rate or a labor category (cost tier)
     // on create needs finance:write.
     await assertFinanceFieldWrites(actor, dto, USER_FINANCE_FIELDS, null);
+    // Round 3 (privacy) — employment / personal details need hr:write
+    // (an Admin without `hr` can neither see nor set them).
+    this.assertPersonalFieldWrites(dto, null, actor);
 
     const existing = await this.prisma.user.findFirst({ where: { email: dto.email } });
     if (existing) {
@@ -415,32 +451,19 @@ export class UsersService implements OnModuleInit {
         userType: derivedUserType,
         code,
         password: hashedPassword,
+        // Permissions round 3 (2026-11-22) — the creator chose this
+        // password, so the new user must set his own on first sign-in.
+        mustChangePassword: true,
         businessPartnerId,
         employmentDate: dto.employmentDate ? new Date(dto.employmentDate) : undefined,
         employmentEndDate: dto.employmentEndDate ? new Date(dto.employmentEndDate) : undefined,
       },
-      select: {
-        id: true,
-        code: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        userType: true,
-        position: true,
-        // Retire-User.department Step 3/3 (2026-09-28) — the free-text
-        // `department` column is gone. OrgUnit is now the sole source
-        // of truth for org-tree membership.
-        orgUnitId: true,
-        orgUnit: { select: { id: true, name: true } },
-        companyName: true,
-        roleId: true,
-        isActive: true,
-        createdAt: true,
-        businessPartnerId: true,
-        role: true,
-      },
+      // Round 3 — the response is shaped per caller by `findOne` below;
+      // this select only feeds the audit row.
+      select: { id: true, email: true, isActive: true },
     });
+    // A new home-unit member changes some manager's subordinate set.
+    this.projectAccess.invalidateSubordinateCache();
 
     // 5) M17 — Labor Category single source. If the DTO carried a
     // seniorityLevelId, seed the first UserSeniority history row so
@@ -485,11 +508,36 @@ export class UsersService implements OnModuleInit {
       },
     });
 
-    return user;
+    return this.findOne(user.id, actor);
   }
 
-  async findAll(query: QueryUsersDto) {
-    const where: Prisma.UserWhereInput = {};
+  /**
+   * `GET /users` — round 3 (privacy): every caller gets the directory
+   * tier; Admin / HR (`hr:read`) also the account tier; HR also the
+   * personal tier (see user-visibility.ts). A list never applies the
+   * "himself" rule per row — the user reads his own record through
+   * `GET /users/:id` or `/auth/me`. Only Admin / HR may list inactive
+   * users or filter by access role.
+   */
+  async findAll(query: QueryUsersDto, actor: any) {
+    const accountDirectory = canSeeAccountDirectory(actor);
+    if (!accountDirectory && query.isActive !== undefined && query.isActive !== true) {
+      throw new PermissionDeniedException('Only an Admin or HR can list inactive users.', {
+        field: 'isActive',
+        reason: 'ADMIN_OR_HR_ONLY',
+      });
+    }
+    if (!accountDirectory && query.roleId) {
+      throw new PermissionDeniedException('Only an Admin or HR can filter people by access role.', {
+        field: 'roleId',
+        reason: 'ADMIN_OR_HR_ONLY',
+      });
+    }
+    const access = { ...userFieldAccess(actor), roleModules: false };
+
+    // Soft-deleted rows never surface (same rule as /hr/employees and the
+    // JWT strategy).
+    const where: Prisma.UserWhereInput = { deletedAt: null };
 
     if (query.userType) where.userType = query.userType;
     if (query.roleId) where.roleId = query.roleId;
@@ -528,46 +576,18 @@ export class UsersService implements OnModuleInit {
         skip: query.skip,
         take: query.take,
         orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          code: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          // T3.3 — Hebrew names must be returned so the People edit modal
-          // can pre-fill the form with the current values. Without these,
-          // the modal would always render empty Hebrew fields even when
-          // the row had values, making it look like the column is unset.
-          firstNameHe: true,
-          lastNameHe: true,
-          phone: true,
-          avatarUrl: true,
-          userType: true,
-          position: true,
-          // Retire-User.department Step 3/3 — OrgUnit is the sole source
-          // of truth; free-text `department` retired in this commit.
-          orgUnitId: true,
-          orgUnit: { select: { id: true, name: true } },
-          companyName: true,
-          // M4a.4 — employment fields surfaced on the Employees list/edit.
-          dailyStandardHours: true,
-          employmentDate: true,
-          employmentEndDate: true,
-          seniorityLevelId: true,
-          seniorityLevel: { select: { id: true, code: true, name: true, defaultHourlyCost: true, currency: true } },
-          isActive: true,
-          lastLoginAt: true,
-          createdAt: true,
-          roleId: true,
-          role: { select: { id: true, name: true } },
-          // QA4 JT-3b-2 (2026-09-29) — surface the linked BP id so the
-          // People edit modal can render + persist Qualifications
-          // (`business_partner_professions`) alongside Position.
-          businessPartnerId: true,
-        },
-      }),
+        // Round 3 — tiers per caller (user-visibility.ts). The edit modal
+        // loads the personal tier from GET /users/:id, not from this list.
+        select: buildUserSelect(access) as Prisma.UserSelect,
+      }) as Promise<any[]>,
       this.prisma.user.count({ where }),
     ]);
+
+    // Directory-tier callers get the rows as selected — no role name, no
+    // rate (and the cost resolver isn't run for them).
+    if (!access.account) {
+      return { data, meta: this.pageMeta(query, total) };
+    }
 
     // QA3 round-3 item 7 — compute each user's CURRENT effective hourly
     // rate ("today"). Same resolver the cost engine uses, so the value
@@ -575,9 +595,12 @@ export class UsersService implements OnModuleInit {
     // paths would bill for a right-now entry. `rateSource` tags each
     // value with the winning layer so the FE can render an "override"
     // pill when applicable. Non-employees keep null/null.
-    const employeeIds = data
-      .filter((u: any) => u.userType === 'employee')
-      .map((u: any) => u.id);
+    // Round 3 — computed only for Admin / HR callers who also hold
+    // finance:read (the interceptor would remove it for anyone else).
+    const withRates = canSeeFinance(actor);
+    const employeeIds = withRates
+      ? data.filter((u: any) => u.userType === 'employee').map((u: any) => u.id)
+      : [];
     const resolver = employeeIds.length === 0
       ? null
       : await buildCostRateResolver(this.prisma, employeeIds);
@@ -585,6 +608,7 @@ export class UsersService implements OnModuleInit {
 
     // Flatten role so the response matches the shared UserListItem shape
     const flat = data.map((u: any) => {
+      if (!withRates) return { ...u, roleName: u.role?.name ?? null };
       const outcome = resolver && u.userType === 'employee'
         ? resolver.resolve(u.id, today)
         : null;
@@ -605,61 +629,47 @@ export class UsersService implements OnModuleInit {
       };
     });
 
+    return { data: flat, meta: this.pageMeta(query, total) };
+  }
+
+  private pageMeta(query: QueryUsersDto, total: number) {
     return {
-      data: flat,
-      meta: {
-        total,
-        page: query.page ?? 1,
-        perPage: query.perPage ?? 20,
-        totalPages: Math.ceil(total / (query.perPage ?? 20)),
-      },
+      total,
+      page: query.page ?? 1,
+      perPage: query.perPage ?? 20,
+      totalPages: Math.ceil(total / (query.perPage ?? 20)),
     };
   }
 
-  async findOne(id: number) {
+  /**
+   * `GET /users/:id` (and the POST / PATCH responses) — round 3
+   * (privacy): directory tier for everyone; account tier for Admin, HR
+   * (`hr:read`) and the user himself; personal tier for HR and the user
+   * himself; the role's permission matrix (`role.roleModules`) for Admin
+   * and the user himself only.
+   */
+  async findOne(id: number, actor: any) {
     const user = await this.prisma.user.findFirst({
-      where: { id },
-      select: {
-        id: true,
-        code: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        // T3.3 — Hebrew names; see findAll's note for the rationale.
-        firstNameHe: true,
-        lastNameHe: true,
-        phone: true,
-        avatarUrl: true,
-        userType: true,
-        position: true,
-        // Retire-User.department Step 3/3 — OrgUnit only.
-        orgUnitId: true,
-        orgUnit: { select: { id: true, name: true } },
-        companyName: true,
-        taxId: true,
-        address: true,
-        website: true,
-        // M4a.4 — employment fields needed by the Employees edit modal.
-        dailyStandardHours: true,
-        employmentDate: true,
-        employmentEndDate: true,
-        roleId: true,
-        isActive: true,
-        lastLoginAt: true,
-        createdAt: true,
-        businessPartnerId: true,
-        role: {
-          include: {
-            roleModules: { include: { module: true } },
-          },
-        },
-      },
+      where: { id, deletedAt: null },
+      select: buildUserSelect(userFieldAccess(actor, id)) as Prisma.UserSelect,
     });
 
     if (!user) {
       throw new NotFoundException('User not found');
     }
 
+    return user;
+  }
+
+  /** The stored row the write rules compare against (never returned). */
+  private async findExisting(id: number) {
+    const user = await this.prisma.user.findFirst({
+      where: { id, deletedAt: null },
+      select: EXISTING_USER_SELECT,
+    });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
     return user;
   }
 
@@ -683,8 +693,11 @@ export class UsersService implements OnModuleInit {
         { module: 'partners', action: 'write' },
       );
     }
-    const existing = await this.findOne(id);
+    const existing = await this.findExisting(id);
     const protectedChanges = await this.assertProtectedFieldWrites(existing, dto, actor);
+    // Round 3 (privacy) — employment / personal details change only with
+    // hr:write; the stored value sent back is dropped silently.
+    const unchangedPersonal = this.assertPersonalFieldWrites(dto, existing, actor);
     // Permissions round 2 — changing the pay rate (`salaryHourly`) or
     // the labor category (`seniorityLevelId`, the cost tier) needs
     // finance:write; sending the stored value back passes.
@@ -696,9 +709,27 @@ export class UsersService implements OnModuleInit {
     );
 
     const data: any = { ...dto };
+    for (const field of unchangedPersonal) {
+      delete data[field];
+    }
+    // `employerOrgId` (inherited from CreateUserDto) is not a User column:
+    // on create it wires a `worker_of` partner relationship to the
+    // employer organization. Copied into this update it made Prisma throw
+    // (500). It is dropped here — changing someone's employer goes
+    // through the partner relationships, not PATCH /users/:id.
+    delete data.employerOrgId;
+    // `businessPartnerId` (also inherited from CreateUserDto) is dropped
+    // too: create validates it (exists, person partner, not linked to
+    // another login) but a raw update skipped all of that and could
+    // re-point the login at any partner. The web never sends it on edit.
+    delete data.businessPartnerId;
 
     if (dto.password) {
       data.password = await bcrypt.hash(dto.password, 12);
+      // Permissions round 3 (2026-11-22) — an Admin who sets someone
+      // else's password knows it: that user must choose a new one on
+      // next sign-in. Setting your own clears the flag.
+      data.mustChangePassword = actor?.id !== id;
     }
 
     // Phase 4 · Stage 1c — the DTO field `userType` is read-only from
@@ -760,30 +791,18 @@ export class UsersService implements OnModuleInit {
       delete data.seniorityLevelId;
     }
 
-    const updated = await this.prisma.user.update({
+    // Round 3 — the response is shaped per caller by `findOne` at the end
+    // (a `partners:write` editor without HR no longer gets employment
+    // dates back).
+    await this.prisma.user.update({
       where: { id },
       data,
-      select: {
-        id: true,
-        code: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        avatarUrl: true,
-        userType: true,
-        position: true,
-        // Retire-User.department Step 3/3 — OrgUnit only.
-        orgUnitId: true,
-        orgUnit: { select: { id: true, name: true } },
-        companyName: true,
-        dailyStandardHours: true,
-        employmentDate: true,
-        employmentEndDate: true,
-        isActive: true,
-        role: { select: { id: true, name: true } },
-      },
+      select: { id: true },
     });
+    // Home unit / active state feed the manager → subordinates memo.
+    if (protectedChanges.orgUnitId || protectedChanges.isActive) {
+      this.projectAccess.invalidateSubordinateCache();
+    }
 
     // M17 — after the direct update, route `seniorityLevelId` through
     // the history service if it was on the DTO. `null` clears — since
@@ -863,7 +882,7 @@ export class UsersService implements OnModuleInit {
 
     await this.auditProtectedChanges(existing, protectedChanges, actor);
 
-    return updated;
+    return this.findOne(id, actor);
   }
 
   async remove(id: number, actor: any) {
@@ -878,11 +897,13 @@ export class UsersService implements OnModuleInit {
     if (actor?.id === id) {
       throw new PermissionDeniedException("You can't delete your own account.", { reason: 'SELF' });
     }
-    const existing = await this.findOne(id);
+    const existing = await this.findExisting(id);
     if (!isAdminUser(actor) && (await this.isAdminLevelUser(id))) {
       throw new PermissionDeniedException('Only an Admin can delete an Admin user.', { reason: 'ADMIN_ONLY' });
     }
     await this.prisma.user.delete({ where: { id } });
+    // A removed user may have been some manager's subordinate.
+    this.projectAccess.invalidateSubordinateCache();
     await this.activityLog.logSecurityEvent({
       action: 'user.delete',
       description: `Deleted user ${existing.email}`,
@@ -913,7 +934,14 @@ export class UsersService implements OnModuleInit {
    * Returns what actually changes, for the audit rows.
    */
   private async assertProtectedFieldWrites(
-    existing: { id: number; email: string | null; roleId: number; isActive: boolean; orgUnitId?: number | null },
+    existing: {
+      id: number;
+      email: string | null;
+      roleId: number;
+      isActive: boolean;
+      orgUnitId?: number | null;
+      code?: string | null;
+    },
     dto: UpdateUserDto,
     actor: any,
   ): Promise<ProtectedChanges> {
@@ -943,6 +971,13 @@ export class UsersService implements OnModuleInit {
     }
     if (emailChanged && !isAdmin && !isHr) {
       throw denied("Only an Admin or HR can change a user's email address.", 'email');
+    }
+    // Round 3 (privacy) — the employee number is account-tier data only
+    // Admin / HR see, so only they change it.
+    const codeChanged =
+      dto.code !== undefined && ((dto.code ?? '').trim() || null) !== (existing.code ?? null);
+    if (codeChanged && !isAdmin && !isHr) {
+      throw denied("Only an Admin or HR can change a user's employee number.", 'code');
     }
     if (activeChanged && !isAdmin) {
       if (!isHr) {
@@ -990,6 +1025,41 @@ export class UsersService implements OnModuleInit {
       nextEmail: emailChanged ? (dto.email ?? null) : null,
       nextOrgUnitId: orgUnitChanged ? (dto.orgUnitId ?? null) : null,
     };
+  }
+
+  /**
+   * Round 3 (privacy) — personal-tier fields (employment dates, daily
+   * standard hours, employee category, tax ID, address, website) change
+   * only with `hr:write`; an Admin without `hr` cannot see them, so he
+   * cannot change them either. `existing` null = create (any non-empty
+   * value is a change). Sending the stored value back passes: the
+   * returned fields (sent, unchanged, caller without hr:write) are
+   * dropped from the write by the caller.
+   */
+  private assertPersonalFieldWrites(
+    dto: Record<string, any>,
+    existing: Record<string, any> | null,
+    actor: any,
+  ): UserPersonalWriteField[] {
+    if (canWritePersonalFields(actor)) return [];
+    const sent = USER_PERSONAL_WRITE_FIELDS.filter(
+      (f) => Object.prototype.hasOwnProperty.call(dto, f) && dto[f] !== undefined,
+    );
+    if (sent.length === 0) return [];
+    const changed = findPersonalFieldChanges(dto, existing);
+    if (changed.length > 0) {
+      const labels = changed.map((f) => USER_PERSONAL_FIELD_LABELS[f]);
+      throw new PermissionDeniedException(
+        `You can't change ${joinLabels(labels)} — only HR can change employment and personal details. Ask HR.`,
+        {
+          module: 'hr',
+          action: 'write',
+          field: changed[0],
+          ...(changed.length > 1 ? { fields: changed } : {}),
+        },
+      );
+    }
+    return sent;
   }
 
   /** One `security` activity row per protected field that changed. */

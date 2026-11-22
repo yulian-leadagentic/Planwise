@@ -129,8 +129,10 @@ export function OperationsDashboardPage() {
     // member level, so clicking a card on the Team tab narrows the
     // visible people without changing the dept grouping.
     const cardMember = (m: any) => {
-      if (cardFilter === 'overloaded') return m.capacity > 0 && m.hoursWeek > m.capacity;
-      if (cardFilter === 'available') return m.capacity > 0 && m.hoursWeek < m.capacity * 0.7;
+      // hoursWeek is null for people whose hours the caller may not see
+      // (permissions round 3) — they match neither card.
+      if (cardFilter === 'overloaded') return m.hoursWeek != null && m.capacity > 0 && m.hoursWeek > m.capacity;
+      if (cardFilter === 'available') return m.hoursWeek != null && m.capacity > 0 && m.hoursWeek < m.capacity * 0.7;
       return true;
     };
     if (!q && cardFilter !== 'overloaded' && cardFilter !== 'available') return departments;
@@ -603,9 +605,11 @@ export function OperationsDashboardPage() {
                     {isExp && (
                       <div className="border-t border-slate-200 dark:border-slate-700">
                         {members.map((member: any) => {
-                          const pct = member.capacity > 0 ? Math.round(member.hoursWeek / member.capacity * 100) : 0;
-                          const isOver = pct > 100;
-                          const isLow = pct < 60;
+                          // null = hours hidden from this caller (round 3) → no load badges, "—".
+                          const hasHours = member.hoursWeek != null;
+                          const pct = hasHours && member.capacity > 0 ? Math.round(member.hoursWeek / member.capacity * 100) : 0;
+                          const isOver = hasHours && pct > 100;
+                          const isLow = hasHours && pct < 60;
                           const isMExp = !!expandedMembers[member.id];
                           const memberTasks: any[] = member.taskList ?? [];
                           const hasTasks = memberTasks.length > 0;
@@ -637,7 +641,7 @@ export function OperationsDashboardPage() {
                                   <span className="w-5 h-5 rounded-[5px] bg-red-50 flex items-center justify-center text-[10px] font-bold text-red-600 font-mono tabular-nums shrink-0">{member.overdueTasks}</span>
                                 )}
                                 <span className={cn('text-[13px] font-bold font-mono tabular-nums shrink-0', isOver ? 'text-red-600' : isLow ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-200')}>
-                                  {member.hoursWeek}h<span className="text-[11px] text-slate-400 dark:text-slate-500 font-normal">/{member.capacity}h</span>
+                                  {hasHours ? `${member.hoursWeek}h` : '—'}<span className="text-[11px] text-slate-400 dark:text-slate-500 font-normal">/{member.capacity}h</span>
                                 </span>
                                 <div className="w-[70px] shrink-0"><OpsLoadBar used={member.hoursWeek} capacity={member.capacity} /></div>
                               </button>

@@ -54,6 +54,33 @@ export interface ImportRecord {
   user?: { id: number; firstName: string; lastName: string; email: string };
 }
 
+/**
+ * Permissions round 3 (2026-11-22) — initial sign-in of an account the
+ * users import created. Returned ONCE by the commit call and never
+ * stored server-side: the wizard's Done step is the only place it can
+ * be seen or downloaded.
+ */
+export interface ImportedCredential {
+  email: string;
+  firstName: string;
+  lastName: string;
+  password: string;
+}
+
+export interface CommitSummary {
+  createdCount: number;
+  updatedCount: number;
+  skippedCount: number;
+  errorCount: number;
+}
+
+export interface CommitResponse {
+  import: ImportRecord;
+  summary: CommitSummary;
+  /** Users imports only — see ImportedCredential. */
+  credentials?: ImportedCredential[];
+}
+
 export interface ImportRowRecord {
   id: number;
   importId: number;
@@ -62,6 +89,20 @@ export interface ImportRowRecord {
   entityId: number | null;
   errorMessage: string | null;
   afterJson: Record<string, any> | null;
+}
+
+/**
+ * The API's global ResponseInterceptor wraps every payload as
+ * `{ success: true, data }`; axios puts that envelope on `response.data`.
+ * Unwrap defensively (same helper as contacts-import.api.ts) — before
+ * this, every call below returned the envelope and the wizard / history
+ * pages read `undefined` fields.
+ */
+function unwrap<T>(res: { data: unknown }): T {
+  const body = res.data;
+  return (
+    body && typeof body === 'object' && 'success' in body && 'data' in body ? (body as { data: unknown }).data : body
+  ) as T;
 }
 
 export const dataImportApi = {
@@ -74,10 +115,10 @@ export const dataImportApi = {
     const form = new FormData();
     form.append('file', file);
     return client
-      .post<ValidationResponse>(`/data-import/validate/${target}`, form, {
+      .post(`/data-import/validate/${target}`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
-      .then((r) => r.data);
+      .then((r) => unwrap<ValidationResponse>(r));
   },
 
   /** Upload + actually persist. Caller passes the validated payload's
@@ -88,28 +129,24 @@ export const dataImportApi = {
     form.append('mode', mode);
     if (notes) form.append('notes', notes);
     return client
-      .post<{ import: ImportRecord; summary: { createdCount: number; updatedCount: number; skippedCount: number; errorCount: number } }>(
-        `/data-import/commit/${target}`,
-        form,
-        { headers: { 'Content-Type': 'multipart/form-data' } },
-      )
-      .then((r) => r.data);
+      .post(`/data-import/commit/${target}`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then((r) => unwrap<CommitResponse>(r));
   },
 
   history: (target?: ImportTarget) =>
     client
-      .get<ImportRecord[]>('/data-import/history', { params: target ? { target } : {} })
-      .then((r) => r.data),
+      .get('/data-import/history', { params: target ? { target } : {} })
+      .then((r) => unwrap<ImportRecord[]>(r)),
 
   historyRows: (importId: number) =>
     client
-      .get<ImportRowRecord[]>(`/data-import/history/${importId}/rows`)
-      .then((r) => r.data),
+      .get(`/data-import/history/${importId}/rows`)
+      .then((r) => unwrap<ImportRowRecord[]>(r)),
 
   rollback: (importId: number) =>
     client
-      .post<{ import: { id: number; status: ImportStatus }; deletedCount: number; restoredCount: number }>(
-        `/data-import/history/${importId}/rollback`,
-      )
-      .then((r) => r.data),
+      .post(`/data-import/history/${importId}/rollback`)
+      .then((r) =>
+        unwrap<{ import: { id: number; status: ImportStatus }; deletedCount: number; restoredCount: number }>(r),
+      ),
 };

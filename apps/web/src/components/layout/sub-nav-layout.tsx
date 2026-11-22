@@ -24,7 +24,8 @@ export interface SubNavItem {
   label: string;
   href: string;
   icon: LucideIcon;
-  /** Permission module string. Anything left null shows to all users. */
+  /** Permission module string. Anything left null shows to all users.
+   *  `'a|b'` = read on a OR b (same convention as ROUTE_MODULE_MAP). */
   module?: string;
   /** Optional grouping — items with the same group name render under
    *  that heading. Groups appear in first-seen order. */
@@ -45,7 +46,9 @@ export function SubNavLayout({ title, description, items, homeHref, homeLabel = 
   const { can, isAdmin } = usePermissions();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  const visible = items.filter((it) => isAdmin || !it.module || can(it.module, 'read'));
+  const visible = items.filter(
+    (it) => isAdmin || !it.module || it.module.split('|').some((m) => can(m, 'read')),
+  );
 
   // Group items in first-seen order. Ungrouped items go into an unnamed
   // bucket that renders as a flat list at the top with no header.

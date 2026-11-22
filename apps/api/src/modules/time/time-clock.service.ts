@@ -1,18 +1,28 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { differenceInMinutes, startOfDay, endOfDay, format, parseISO } from 'date-fns';
+import { differenceInMinutes, startOfDay, endOfDay, parseISO } from 'date-fns';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import {
+  EmployeeScopeService,
+  VisibleUserIds,
+  notInManagerChain,
+} from '../../common/services/employee-scope.service';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { ClockInDto } from './dto/clock-in.dto';
 import { ClockOutDto } from './dto/clock-out.dto';
 import * as Sentry from '@sentry/node';
+
+/** The request user acting on someone's attendance (id + roleModules). */
+type AttendanceActor = { id: number } & Record<string, any>;
 
 @Injectable()
 export class TimeClockService {
   constructor(
     private prisma: PrismaService,
     private readonly activityLog: ActivityLogService,
+    private readonly employeeScope: EmployeeScopeService,
   ) {}
 
   async clockIn(userId: number, dto: ClockInDto) {
@@ -94,7 +104,10 @@ export class TimeClockService {
         projectId: null,
         entityType: 'time_clock',
         entityId: record.id,
-        description: `Clocked in` + (isLate ? ` (${lateMinutes} min late)` : ''),
+        // Round 3 (2026-11-22): no lateness in the general activity log
+        // (department leads read it). Lateness stays on the record
+        // (isLate / lateMinutes), behind the attendance rules.
+        description: 'Clocked in',
       });
     } catch (e) { Sentry.captureException(e); /* swallow */ }
 
@@ -133,7 +146,6 @@ export class TimeClockService {
     });
 
     try {
-      const hours = Math.max(0, totalMinutes) / 60;
       await this.activityLog.write({
         category: 'time',
         action: 'time.clock.out',
@@ -141,8 +153,10 @@ export class TimeClockService {
         projectId: null,
         entityType: 'time_clock',
         entityId: closed.id,
-        description: `Clocked out — ${hours.toFixed(2)}h` +
-          (overtimeMinutes > 0 ? ` (+${(overtimeMinutes / 60).toFixed(2)}h overtime)` : ''),
+        // Round 3 (2026-11-22): no hours worked or overtime in the
+        // general activity log — that is attendance data and department
+        // leads read the log. The numbers stay on the clock record.
+        description: 'Clocked out',
       });
     } catch (e) { Sentry.captureException(e); /* swallow */ }
 
@@ -183,17 +197,25 @@ export class TimeClockService {
   }
 
   /**
-   * Team-wide "today" dashboard powering /admin/clock-dashboard.
-   * Returns the four buckets the UI renders: who's currently clocked in,
-   * who has a schedule today but hasn't clocked in yet, who clocked in
-   * late, and who is on leave/sick/absent for the day.
+   * Team-wide "today" dashboard powering /time/clock-dashboard and
+   * /admin/clock-dashboard. Returns the four buckets the UI renders:
+   * who's currently clocked in, who has a schedule today but hasn't
+   * clocked in yet, who clocked in late, and who is on leave/sick/absent
+   * for the day.
+   *
+   * Permissions round 3 (2026-11-22): only employees in `visible`
+   * (EmployeeScopeService.visibleUserIds — `'all'` for hr:read, else
+   * self + current subordinates), the "not yet" list built from work
+   * schedules included. `scope` tells the page whether the caller sees
+   * everyone and how many people besides himself. Missing `visible` =
+   * nobody (fail closed).
    *
    * Kept intentionally simple: a single pass per bucket, no joins more
    * than one level deep, no overtime/break math (the page only shows
    * names + state). Late = TimeClock.isLate flag on a clocked_in record.
    * On leave = TimeClock with status in (absent|leave|sick).
    */
-  async getTeamDashboardToday() {
+  async getTeamDashboardToday(visible: VisibleUserIds = [], callerId?: number) {
     const today = startOfDay(new Date());
     const todayEnd = endOfDay(new Date());
     const dayOfWeek = new Date().getDay();
@@ -205,9 +227,18 @@ export class TimeClockService {
       avatarUrl: true,
     } as const;
 
+    const userFilter = visible === 'all' ? {} : { userId: { in: visible } };
+    const scope = {
+      allEmployees: visible === 'all',
+      visibleOthers: visible === 'all' ? null : visible.filter((id) => id !== callerId).length,
+    };
+    if (visible !== 'all' && visible.length === 0) {
+      return { clockedIn: [], notYet: [], late: [], onLeave: [], scope };
+    }
+
     // Records for today, joined with user — one query, partitioned in JS.
     const records = await this.prisma.timeClock.findMany({
-      where: { date: { gte: today, lte: todayEnd } },
+      where: { date: { gte: today, lte: todayEnd }, ...userFilter },
       include: { user: { select: userSelect } },
       orderBy: { clockIn: 'asc' },
     });
@@ -220,8 +251,8 @@ export class TimeClockService {
       (r) => r.status === 'absent' || r.status === 'leave' || r.status === 'sick',
     );
 
-    // "Not yet" = users with an active schedule for this day-of-week
-    // who don't have any TimeClock row today.
+    // "Not yet" = visible users with an active schedule for this
+    // day-of-week who don't have any TimeClock row today.
     const schedulesToday = await this.prisma.workSchedule.findMany({
       where: {
         dayOfWeek,
@@ -229,6 +260,7 @@ export class TimeClockService {
         effectiveFrom: { lte: new Date() },
         OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: new Date() } }],
         user: { isActive: true },
+        ...userFilter,
       },
       include: { user: { select: userSelect } },
     });
@@ -237,7 +269,7 @@ export class TimeClockService {
       .filter((s) => !userIdsWithRecord.has(s.userId))
       .map((s) => ({ user: s.user, expectedShiftStart: s.shiftStart }));
 
-    return { clockedIn, notYet, late, onLeave };
+    return { clockedIn, notYet, late, onLeave, scope };
   }
 
   async getDashboardToday(userId: number) {
@@ -250,7 +282,7 @@ export class TimeClockService {
         orderBy: { clockIn: 'asc' },
       }),
       this.prisma.timeEntry.findMany({
-        where: { userId, date: { gte: today, lte: todayEnd } },
+        where: { userId, deletedAt: null, date: { gte: today, lte: todayEnd } },
         include: {
           project: { select: { id: true, name: true } },
           task: { select: { id: true, name: true } },
@@ -287,9 +319,21 @@ export class TimeClockService {
     };
   }
 
-  async getHistory(userId: number, from: string, to: string) {
+  /**
+   * Clock records in a date range. Round 3 (2026-11-22): the controller
+   * decides who the caller may see — a `userId` it already checked with
+   * canViewEmployee, or (no userId) every user in `visible`. Missing
+   * `visible` = nobody (fail closed).
+   */
+  async getHistory(
+    userId: number | null | undefined,
+    from: string,
+    to: string,
+    visible: VisibleUserIds = [],
+  ) {
     const where: any = {};
     if (userId) where.userId = Number(userId);
+    else if (visible !== 'all') where.userId = { in: visible };
     if (from) where.date = { ...where.date, gte: parseISO(from) };
     if (to) where.date = { ...where.date, lte: parseISO(to) };
 
@@ -303,22 +347,32 @@ export class TimeClockService {
     });
   }
 
-  async editRecord(id: number, editorId: number, data: any) {
+  /**
+   * Edit someone else's clock record. Round 3 (2026-11-22): `hr:write`
+   * or the manager chain (EmployeeScopeService.canEditAttendance), never
+   * one's own record. An edit clears the approval — the approver signed
+   * off on different times.
+   */
+  async editRecord(id: number, editor: AttendanceActor, data: any) {
     const record = await this.prisma.timeClock.findUnique({ where: { id } });
     if (!record) {
       throw new NotFoundException('Time clock record not found');
     }
+    await this.assertCanEditAttendance(editor, record.userId);
 
+    const body = data ?? {};
     const updateData: any = {
       status: 'edited',
-      editedBy: editorId,
-      editedReason: data.reason,
+      editedBy: editor.id,
+      editedReason: body.reason,
+      approvedBy: null,
+      approvedAt: null,
     };
 
-    if (data.clockIn) updateData.clockIn = new Date(data.clockIn);
-    if (data.clockOut) updateData.clockOut = new Date(data.clockOut);
-    if (data.breakMinutes !== undefined) updateData.breakMinutes = data.breakMinutes;
-    if (data.note !== undefined) updateData.note = data.note;
+    if (body.clockIn) updateData.clockIn = new Date(body.clockIn);
+    if (body.clockOut) updateData.clockOut = new Date(body.clockOut);
+    if (body.breakMinutes !== undefined) updateData.breakMinutes = body.breakMinutes;
+    if (body.note !== undefined) updateData.note = body.note;
 
     // Recalculate totals
     const clockIn = updateData.clockIn || record.clockIn;
@@ -334,15 +388,41 @@ export class TimeClockService {
     return this.prisma.timeClock.update({ where: { id }, data: updateData });
   }
 
-  async approveRecord(id: number, approverId: number) {
+  /**
+   * Round 3 (2026-11-22): the record must exist (404); `hr:approve` or
+   * the manager chain (EmployeeScopeService.canApproveAttendance); never
+   * the record's own employee.
+   */
+  async approveRecord(id: number, approver: AttendanceActor) {
+    const record = await this.prisma.timeClock.findUnique({
+      where: { id },
+      select: { id: true, userId: true },
+    });
+    if (!record) {
+      throw new NotFoundException('Time clock record not found');
+    }
+    if (record.userId === approver.id) {
+      throw new PermissionDeniedException(
+        "You can't approve your own attendance record — your manager or HR approves it.",
+        { reason: 'SELF_APPROVAL' },
+      );
+    }
+    if (!(await this.employeeScope.canApproveAttendance(approver, record.userId))) {
+      throw notInManagerChain('attendance', 'approve');
+    }
     return this.prisma.timeClock.update({
       where: { id },
-      data: { approvedBy: approverId, approvedAt: new Date() },
+      data: { approvedBy: approver.id, approvedAt: new Date() },
     });
   }
 
-  async markAbsent(userId: number, dateStr: string, note?: string) {
+  /** Round 3 (2026-11-22): same rule as editRecord — hr:write or the manager chain, never oneself. */
+  async markAbsent(actor: AttendanceActor, userId: number, dateStr: string, note?: string) {
+    await this.assertCanEditAttendance(actor, userId);
     const date = startOfDay(parseISO(dateStr));
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException('date must be a date (YYYY-MM-DD)');
+    }
 
     const existing = await this.prisma.timeClock.findFirst({
       where: { userId, date },
@@ -362,6 +442,18 @@ export class TimeClockService {
         totalMinutes: 0,
       },
     });
+  }
+
+  private async assertCanEditAttendance(actor: AttendanceActor, targetUserId: number): Promise<void> {
+    if (targetUserId === actor.id) {
+      throw new PermissionDeniedException(
+        "You can't change your own attendance record — ask your manager or HR.",
+        { reason: 'SELF_EDIT' },
+      );
+    }
+    if (!(await this.employeeScope.canEditAttendance(actor, targetUserId))) {
+      throw notInManagerChain('attendance', 'change');
+    }
   }
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)

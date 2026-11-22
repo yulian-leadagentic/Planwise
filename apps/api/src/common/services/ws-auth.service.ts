@@ -67,7 +67,12 @@ export class WsAuthService {
     if (!Number.isInteger(userId) || userId <= 0) return null;
 
     try {
-      return await loadAuthenticatedUser(this.prisma, userId);
+      const user = await loadAuthenticatedUser(this.prisma, userId);
+      // Permissions round 3 (2026-11-22) — same rule as JwtAuthGuard: a
+      // user who still has to replace the password someone else chose
+      // gets no live channel until he does.
+      if (user?.mustChangePassword) return null;
+      return user;
     } catch (err) {
       this.logger.warn(`ws auth user lookup failed: ${(err as Error).message}`);
       return null;

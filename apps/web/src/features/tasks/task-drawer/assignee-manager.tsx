@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { X, UserPlus, Search } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
-import client from '@/api/client';
+import { usersApi } from '@/api/users.api';
 import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
 import { projectsApi, type AssigneeCandidate } from '@/api/projects.api';
@@ -47,12 +47,11 @@ export function AssigneeManager({
   // Fallback for personal (no-project) tasks — the endpoint above is
   // project-scoped, so a personal task can't use it. We keep the
   // org-wide /users source for that path only.
+  // Every active user (all pages) — a bare GET /users returned only the
+  // first 20, so most people were missing from this picker.
   const { data: allUsers = [] } = useQuery({
-    queryKey: queryKeys.users.list(),
-    queryFn: () => client.get('/users').then((r) => {
-      const d = r.data?.data ?? r.data;
-      return Array.isArray(d) ? d : d?.data ?? [];
-    }),
+    queryKey: queryKeys.users.allActive(),
+    queryFn: () => usersApi.listAllActive(),
     staleTime: 5 * 60 * 1000,
     enabled: showPicker && !projectId,
   });

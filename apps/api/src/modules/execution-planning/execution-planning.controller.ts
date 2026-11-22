@@ -8,6 +8,7 @@ import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
+import { EmployeeScopeService } from '../../common/services/employee-scope.service';
 import { canSeeFinance } from '../../common/finance/finance-access';
 
 @ApiTags('Execution Planning')
@@ -18,24 +19,28 @@ export class ExecutionPlanningController {
   constructor(
     private readonly eps: ExecutionPlanningService,
     private readonly access: ProjectAccessService,
+    private readonly employeeScope: EmployeeScopeService,
   ) {}
 
   // ─── Workload ───────────────────────────────────────────────────────────
 
+  // Permissions round 3 (2026-11-22): the workload carries the person's
+  // logged hours per day, so it follows the timesheet rule — self, hr:read
+  // or the manager chain. Admin is no longer an exception.
   @Get('workload/user/:userId')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get user workload (planned vs capacity per day)' })
-  getUserWorkload(
+  async getUserWorkload(
     @CurrentUser() user: any,
     @Param('userId', ParseIntPipe) userId: number,
     @Query('from') from: string,
     @Query('to') to: string,
   ) {
-    // Only admins can see arbitrary users' workload; everyone else only their own
-    if (user.id !== userId && !isAdminUser(user)) {
-      throw new PermissionDeniedException("You can only view your own workload. Other people's workload is for Admins.", {
-        reason: 'NOT_OWNER',
-      });
+    if (user.id !== userId && !(await this.employeeScope.canViewEmployee(user, userId))) {
+      throw new PermissionDeniedException(
+        'You can only view your own workload and the workload of employees you manage.',
+        { reason: 'NOT_IN_MANAGER_CHAIN' },
+      );
     }
     return this.eps.getUserWorkload(userId, from, to);
   }
@@ -57,7 +62,9 @@ export class ExecutionPlanningController {
     @Query('to') to: string,
   ) {
     await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
-    return this.eps.getProjectWorkload(projectId, from, to);
+    // Round 3: logged (actual) hours only for members the caller may see.
+    const visible = await this.employeeScope.visibleUserIds(user);
+    return this.eps.getProjectWorkload(projectId, from, to, visible);
   }
 
   // ─── Feasibility ────────────────────────────────────────────────────────
@@ -181,8 +188,15 @@ export class ExecutionPlanningController {
     // Permissions round 2 (B-11) — `canSeeFinance` decides whether the
     // at-risk rows carry budget / budgetUsed / budgetPct and the budget
     // risk factor (all of them go together).
+    // Round 3 (2026-11-22) — `visibleUserIds` decides whose weekly
+    // logged hours the team rows carry (others: null).
     return this.eps.getOperationsDashboard(
-      { id: user.id, isAdmin: isAdminUser(user), canSeeFinance: canSeeFinance(user) },
+      {
+        id: user.id,
+        isAdmin: isAdminUser(user),
+        canSeeFinance: canSeeFinance(user),
+        visibleUserIds: await this.employeeScope.visibleUserIds(user),
+      },
       myDeptOnly,
     );
   }

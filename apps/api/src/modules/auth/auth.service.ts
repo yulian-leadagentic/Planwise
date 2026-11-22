@@ -11,7 +11,25 @@ import * as crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { attachMergedPermissions } from './strategies/jwt.strategy';
+import { renderPasswordResetEmail } from './password-reset-email';
+
+/** Forgot-password code lifetime (the e-mail says the same). */
+const OTP_TTL_MINUTES = 10;
+/** Reset-token lifetime after a correct code. */
+const RESET_TOKEN_TTL_MINUTES = 15;
+/** Wrong codes allowed before the code is burned. */
+const OTP_MAX_ATTEMPTS = 5;
+/** Shortest password a user may choose for himself. */
+const MIN_PASSWORD_LENGTH = 8;
+
+/**
+ * One answer for every verify-otp failure (no pending code, expired,
+ * wrong, too many attempts) so the endpoint can't be used to learn
+ * whether an address has an account (permissions round 3).
+ */
+const INVALID_CODE_MESSAGE = 'The code is invalid or has expired. Check it, or request a new one.';
 
 function requireSecret(config: ConfigService, key: string): string {
   const value = config.get<string>(key);
@@ -27,7 +45,23 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    private notifications: NotificationsService,
   ) {}
+
+  /**
+   * Permissions round 3 (2026-11-22) — forgot-password secrets (the
+   * 6-digit code and the reset token) are stored as HMAC-SHA256 in
+   * `users.otp_code`, never in plain text. Keyed with the refresh-token
+   * secret so a leaked table can't be brute-forced offline (a 6-digit
+   * code is only 10^6 guesses). The `kind` prefix keeps a code hash from
+   * ever matching a reset-token lookup and vice versa.
+   */
+  private hashResetSecret(kind: 'otp' | 'reset', value: string): string {
+    return crypto
+      .createHmac('sha256', requireSecret(this.configService, 'JWT_REFRESH_SECRET'))
+      .update(`${kind}:${value}`)
+      .digest('hex');
+  }
 
   async validateUser(email: string, password: string): Promise<any> {
     // First: lightweight credential check (no JOINs). We also pull the
@@ -145,6 +179,10 @@ export class AuthService {
         roleModules: merged.roleModules,
         // §14 — convenience flag; mirrors the server guard's check.
         isAdmin: merged.isAdmin,
+        // Permissions round 3 — the web routes to "Set a new password"
+        // before anything else while this is true; every other route
+        // answers 403 PASSWORD_CHANGE_REQUIRED.
+        mustChangePassword: user.mustChangePassword === true,
       },
     };
   }
@@ -160,19 +198,44 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  /**
+   * POST /auth/forgot-password. Permissions round 3 (2026-11-22) — the
+   * code is now actually e-mailed (NotificationsService.sendEmail, SMTP
+   * from MAIL_*; every attempt lands in email_logs) and stored only as a
+   * hash. The caller gets the same answer whether or not the address
+   * has an account: unknown / inactive / SSO-only addresses return
+   * silently, and the e-mail goes out in the background so the response
+   * time doesn't tell either.
+   */
   async forgotPassword(email: string) {
-    const user = await this.prisma.user.findFirst({ where: { email, isActive: true } });
+    if (typeof email !== 'string' || !email.trim()) return;
+    const user = await this.prisma.user.findFirst({
+      where: { email: email.trim(), isActive: true, deletedAt: null },
+      select: { id: true, email: true, firstName: true, password: true },
+    });
     if (!user) return; // Silent fail for security
+    // SSO-only accounts have no local password to reset — sign-in goes
+    // through the identity provider.
+    if (user.password === null) return;
 
     const otpCode = crypto.randomInt(100000, 1000000).toString();
-    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    const otpExpiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { otpCode, otpExpiresAt, otpAttempts: 0 },
+      data: { otpCode: this.hashResetSecret('otp', otpCode), otpExpiresAt, otpAttempts: 0 },
     });
 
-    // TODO: Send email with OTP via mailer service
+    const message = renderPasswordResetEmail({
+      firstName: user.firstName,
+      code: otpCode,
+      minutes: OTP_TTL_MINUTES,
+    });
+    // Not awaited — see the method comment. sendEmail never throws; the
+    // catch is belt and braces.
+    void this.notifications
+      .sendEmail({ to: user.email, template: 'password-reset-code', ...message })
+      .catch(() => undefined);
   }
 
   async verifyOtp(email: string, code: string) {
@@ -181,36 +244,36 @@ export class AuthService {
     });
 
     if (!user || !user.otpCode || !user.otpExpiresAt) {
-      throw new BadRequestException('Invalid OTP request');
+      throw new BadRequestException(INVALID_CODE_MESSAGE);
     }
 
-    if (user.otpAttempts >= 5) {
+    if (user.otpAttempts >= OTP_MAX_ATTEMPTS) {
       await this.prisma.user.update({
         where: { id: user.id },
         data: { otpCode: null, otpExpiresAt: null, otpAttempts: 0 },
       });
-      throw new BadRequestException('Maximum OTP attempts exceeded. Please request a new code.');
+      throw new BadRequestException(INVALID_CODE_MESSAGE);
     }
 
     if (new Date() > user.otpExpiresAt) {
-      throw new BadRequestException('OTP has expired');
+      throw new BadRequestException(INVALID_CODE_MESSAGE);
     }
 
-    if (user.otpCode !== code) {
+    if (!safeEqualHex(user.otpCode, this.hashResetSecret('otp', String(code ?? '')))) {
       await this.prisma.user.update({
         where: { id: user.id },
         data: { otpAttempts: { increment: 1 } },
       });
-      throw new BadRequestException('Invalid OTP code');
+      throw new BadRequestException(INVALID_CODE_MESSAGE);
     }
 
-    // Clear OTP and generate reset token
+    // Burn the code; store only the hash of the one-time reset token.
     const resetToken = uuidv4();
     await this.prisma.user.update({
       where: { id: user.id },
       data: {
-        otpCode: resetToken, // Reuse field to store reset token
-        otpExpiresAt: new Date(Date.now() + 15 * 60 * 1000), // 15 minutes
+        otpCode: this.hashResetSecret('reset', resetToken),
+        otpExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MINUTES * 60 * 1000),
         otpAttempts: 0,
       },
     });
@@ -221,7 +284,7 @@ export class AuthService {
   async resetPassword(resetToken: string, newPassword: string) {
     const user = await this.prisma.user.findFirst({
       where: {
-        otpCode: resetToken,
+        otpCode: this.hashResetSecret('reset', String(resetToken ?? '')),
         otpExpiresAt: { gt: new Date() },
         isActive: true,
       },
@@ -239,6 +302,8 @@ export class AuthService {
         otpCode: null,
         otpExpiresAt: null,
         otpAttempts: 0,
+        // The user chose this password himself (proved the mailbox).
+        mustChangePassword: false,
       },
     });
   }
@@ -262,6 +327,8 @@ export class AuthService {
         orgUnitId: true,
         orgUnit: { select: { id: true, name: true } },
         companyName: true,
+        // Permissions round 3 — drives the forced "Set a new password" screen.
+        mustChangePassword: true,
         role: {
           include: {
             roleModules: { include: { module: true } },
@@ -332,6 +399,12 @@ export class AuthService {
   }
 
   async changePassword(userId: number, currentPassword: string, newPassword: string) {
+    if (typeof newPassword !== 'string' || newPassword.length < MIN_PASSWORD_LENGTH) {
+      throw new BadRequestException(`The new password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+    }
+    if (typeof currentPassword !== 'string' || !currentPassword) {
+      throw new BadRequestException('Enter your current password.');
+    }
     const user = await this.prisma.user.findFirst({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
@@ -350,11 +423,16 @@ export class AuthService {
     if (!isValid) {
       throw new BadRequestException('Current password is incorrect');
     }
+    // A forced change must actually replace the password someone else chose.
+    if (newPassword === currentPassword) {
+      throw new BadRequestException('Choose a new password that is different from the current one.');
+    }
 
     const hashedPassword = await bcrypt.hash(newPassword, 12);
     await this.prisma.user.update({
       where: { id: userId },
-      data: { password: hashedPassword },
+      // Permissions round 3 — the user chose it himself: clear the flag.
+      data: { password: hashedPassword, mustChangePassword: false },
     });
   }
 
@@ -371,5 +449,15 @@ export class AuthService {
       data: { avatarUrl },
       select: { id: true, avatarUrl: true },
     });
+  }
+}
+
+/** Constant-time comparison of two hex digests (false on any length mismatch). */
+function safeEqualHex(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+  } catch {
+    return false;
   }
 }

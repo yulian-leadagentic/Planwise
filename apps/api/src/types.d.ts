@@ -1,4 +1,7 @@
 declare module 'pdfkit';
+// nodemailer ships no typings (no @types/nodemailer in the lockfile);
+// NotificationsService narrows the transport to the one method it uses.
+declare module 'nodemailer';
 declare module 'socket.io' {
   export class Server {
     to(room: string): { emit(event: string, data: any): void };

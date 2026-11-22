@@ -1,10 +1,12 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { Coins, Lock, Plus, X } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePermissions } from '@/hooks/use-permissions';
 import { notify } from '@/lib/notify';
 import client from '@/api/client';
-import type { UserListItem } from '@/types';
+import { usersApi } from '@/api/users.api';
+import { queryKeys } from '@/lib/query-keys';
+import type { User, UserListItem } from '@/types';
 import { SeniorityHistorySection } from './seniority-history-section';
 import { UserRateModal } from './user-rate-modal';
 import { Modal } from '@/components/shared/modal';
@@ -22,17 +24,47 @@ import { cn } from '@/lib/utils';
  *
  * Returns a partial map keyed by form field so <Field error> wiring stays
  * flat. Password is not editable here (dedicated Reset flow).
+ * `requireRole` — only when the viewer can see the access role at all
+ * (permissions round 3: account tier, Admin / HR).
  */
 function validateEdit(
   form: { firstName: string; lastName: string; email: string; roleId: string },
+  requireRole: boolean,
 ): Partial<Record<'firstName' | 'lastName' | 'email' | 'roleId', string>> {
   const errs: Partial<Record<'firstName' | 'lastName' | 'email' | 'roleId', string>> = {};
   if (!form.firstName.trim()) errs.firstName = 'First name is required.';
   if (!form.lastName.trim()) errs.lastName = 'Last name is required.';
   if (!form.email.trim()) errs.email = 'Email is required.';
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errs.email = 'Enter a valid email address.';
-  if (!form.roleId) errs.roleId = 'Access Role is required.';
+  if (requireRole && !form.roleId) errs.roleId = 'Access Role is required.';
   return errs;
+}
+
+/** The personal-tier employment fields this modal edits (HR data). */
+interface PersonalForm {
+  employmentDate: string;
+  employmentEndDate: string;
+  dailyStandardHours: string;
+}
+
+// M4a.4 — toDateInput slices ISO to YYYY-MM-DD so <input type=date> accepts it.
+const toDateInput = (v: string | null | undefined) => (v ? String(v).slice(0, 10) : '');
+
+/**
+ * Personal-tier values from `GET /users/:id`, or null when the response
+ * didn't carry them (the API omits the tier for callers who may not see
+ * it). Never built from the list row: the list doesn't carry this tier
+ * for most viewers, and defaulting an absent value into the form used to
+ * overwrite a real end date with 9999-12-31 on save.
+ */
+function toPersonalForm(detail: User | undefined): PersonalForm | null {
+  if (!detail || !('employmentDate' in detail)) return null;
+  return {
+    employmentDate: toDateInput(detail.employmentDate),
+    employmentEndDate: toDateInput(detail.employmentEndDate),
+    // Decimal arrives as "8.40" — normalise so the edit diff is stable.
+    dailyStandardHours: detail.dailyStandardHours != null ? String(Number(detail.dailyStandardHours)) : '',
+  };
 }
 
 export function EditPersonModal({
@@ -79,6 +111,34 @@ export function EditPersonModal({
   const showHrTab =
     (user.userType === 'employee' || user.userType === 'both') &&
     can('hr', 'read');
+  // Permissions round 3 (privacy, 2026-11-22) — mirrors the API's field
+  // tiers (users/user-visibility.ts):
+  //   • account tier (access role, active state, labor category) →
+  //     Admin or HR (hr:read); hidden for everyone else;
+  //   • personal tier (employment dates, daily standard hours) → HR
+  //     (hr:read) or the person himself sees it, only hr:write changes it
+  //     (no Admin bypass). For employees it lives in the HR tab (which
+  //     edits it through /hr/employees/:id); the Details tab shows it
+  //     only when there is no HR tab (external users, or your own
+  //     record without HR access).
+  const canSeeAccount = isAdmin || can('hr', 'read');
+  const canEditPersonal = can('hr', 'write');
+  const showPersonal = (can('hr', 'read') || isSelf) && !showHrTab;
+  const { data: detail, isLoading: detailLoading, isError: detailError } = useQuery({
+    queryKey: queryKeys.users.detail(user.id),
+    queryFn: () => usersApi.get(user.id),
+    enabled: showPersonal,
+    staleTime: 0,
+  });
+  const initialPersonal = useMemo(() => (showPersonal ? toPersonalForm(detail) : null), [detail, showPersonal]);
+  const [personal, setPersonal] = useState<PersonalForm | null>(null);
+  // Seed the personal fields once, when GET /users/:id arrives; a later
+  // refetch must not wipe what the viewer is typing.
+  useEffect(() => {
+    if (initialPersonal && personal === null) setPersonal(initialPersonal);
+  }, [initialPersonal, personal]);
+  const patchPersonal = (k: keyof PersonalForm, v: string) =>
+    setPersonal((p) => (p ? { ...p, [k]: v } : p));
   type EditTab = 'details' | 'hr';
   const [activeTab, setActiveTab] = useState<EditTab>('details');
   const tabItems = useMemo<TabItem<EditTab>[]>(() => {
@@ -90,8 +150,6 @@ export function EditPersonModal({
     }
     return items;
   }, [showHrTab]);
-  // M4a.4 — toDateInput slices ISO to YYYY-MM-DD so <input type=date> accepts it.
-  const toDateInput = (v: string | null | undefined) => (v ? String(v).slice(0, 10) : '');
   const initialForm = useMemo(() => ({
     email: user.email ?? '',
     firstName: user.firstName ?? '',
@@ -106,12 +164,12 @@ export function EditPersonModal({
     // fallback is retired with the column.
     orgUnitId: (((user as any).orgUnitId ?? (user as any).orgUnit?.id) ?? '') as number | '',
     companyName: user.companyName ?? '',
-    employmentDate: toDateInput((user as any).employmentDate),
-    employmentEndDate: toDateInput((user as any).employmentEndDate) || '9999-12-31',
-    dailyStandardHours:
-      (user as any).dailyStandardHours != null ? String((user as any).dailyStandardHours) : '',
+    // Round 3 — the employment fields are no longer pre-filled from the
+    // list row (see toPersonalForm): they load from GET /users/:id.
     seniorityLevelId: ((user as any).seniorityLevelId ?? '') as number | '',
-    isActive: user.isActive,
+    // Account tier — absent for viewers who may not see it (the checkbox
+    // is hidden for them then).
+    isActive: user.isActive === true,
   }), [user]);
   const [form, setForm] = useState(initialForm);
   // People UX M5 — inline errors keyed by field.
@@ -121,13 +179,36 @@ export function EditPersonModal({
       if (k in errors) setErrors((prev) => ({ ...prev, [k]: undefined }));
       return { ...f, [k]: v };
     });
+  // Round 3 — the employment fields to send: only those that were loaded
+  // (from GET /users/:id) AND changed, and only with hr:write.
+  const personalChanges = useMemo(() => {
+    const out: Record<string, string | number | null> = {};
+    if (!canEditPersonal || !personal || !initialPersonal) return out;
+    if (personal.employmentDate !== initialPersonal.employmentDate) {
+      out.employmentDate = personal.employmentDate || null;
+    }
+    if (personal.employmentEndDate !== initialPersonal.employmentEndDate) {
+      out.employmentEndDate = personal.employmentEndDate || null;
+    }
+    // NOT NULL column — an emptied field is "no change", not a clear.
+    if (
+      personal.dailyStandardHours !== initialPersonal.dailyStandardHours &&
+      personal.dailyStandardHours.trim() !== ''
+    ) {
+      out.dailyStandardHours = Number(personal.dailyStandardHours);
+    }
+    return out;
+  }, [canEditPersonal, personal, initialPersonal]);
   // People UX M1 — dirty flag for the shared Modal's discard-changes
   // guard. Any field diverging from the initial values counts.
   const isDirty = useMemo(() => {
-    return (Object.keys(initialForm) as Array<keyof typeof initialForm>).some(
-      (k) => (form as any)[k] !== (initialForm as any)[k],
+    return (
+      Object.keys(personalChanges).length > 0 ||
+      (Object.keys(initialForm) as Array<keyof typeof initialForm>).some(
+        (k) => form[k] !== initialForm[k],
+      )
     );
-  }, [form, initialForm]);
+  }, [form, initialForm, personalChanges]);
   // Focus the first editable field on open — the shared Modal's own
   // "first focusable" would land on the close-X button.
   const firstFieldRef = useRef<HTMLInputElement>(null);
@@ -135,8 +216,12 @@ export function EditPersonModal({
   const update = useMutation({
     mutationFn: (payload: any) => client.patch(`/users/${user.id}`, payload).then((r) => r.data),
     onSuccess: () => {
+      // ['users'] also covers this person's GET /users/:id detail.
       queryClient.invalidateQueries({ queryKey: ['users'] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'roles'] });
+      if (Object.keys(personalChanges).length > 0) {
+        queryClient.invalidateQueries({ queryKey: ['hr', 'employees'] });
+      }
       notify.success('Person updated', { code: 'USER-UPDATE-200' });
       onClose();
     },
@@ -145,15 +230,15 @@ export function EditPersonModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const errs = validateEdit(form);
+    const errs = validateEdit(form, canSeeAccount);
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
     // Protected fields (email / roleId / isActive) are sent only when
     // they actually changed, so a viewer without the right can still
     // save the rest of the form.
     const emailChanged = form.email !== initialForm.email;
-    const roleChanged = form.roleId !== initialForm.roleId;
-    const activeChanged = form.isActive !== initialForm.isActive;
+    const roleChanged = canSeeAccount && form.roleId !== initialForm.roleId;
+    const activeChanged = canSeeAccount && form.isActive !== initialForm.isActive;
     const orgUnitChanged = form.orgUnitId !== initialForm.orgUnitId;
     update.mutate({
       ...(emailChanged ? { email: form.email } : {}),
@@ -171,9 +256,11 @@ export function EditPersonModal({
       // it changed.
       ...(orgUnitChanged ? { orgUnitId: form.orgUnitId === '' ? null : Number(form.orgUnitId) } : {}),
       companyName: form.companyName || undefined,
-      employmentDate: form.employmentDate || undefined,
-      employmentEndDate: form.employmentEndDate || undefined,
-      dailyStandardHours: form.dailyStandardHours ? Number(form.dailyStandardHours) : undefined,
+      // Round 3 — employment fields: only those loaded from
+      // GET /users/:id AND changed, and only with hr:write. (They used
+      // to be sent always, pre-filled from the list row with a
+      // 9999-12-31 end-date default.)
+      ...personalChanges,
       ...(activeChanged ? { isActive: form.isActive } : {}),
     });
   };
@@ -326,6 +413,9 @@ export function EditPersonModal({
             onChange={(e) => patch('email', e.target.value)}
           />
           <div className="grid grid-cols-2 gap-4">
+            {/* Round 3 — the access role is account-tier data (Admin /
+                HR); other editors neither see nor send it. */}
+            {canSeeAccount && (
             <SelectField
               label="Access Role (primary · legacy)"
               name="roleId"
@@ -341,6 +431,7 @@ export function EditPersonModal({
                 <option key={r.id} value={r.id}>{r.name}</option>
               ))}
             </SelectField>
+            )}
             <TextField
               label="Telephone"
               name="phone"
@@ -410,11 +501,15 @@ export function EditPersonModal({
               ))}
             </SelectField>
           </div>
-          {/* Seniority History — replaces the single-level dropdown. */}
+          {/* Seniority History — replaces the single-level dropdown.
+              Round 3 — the labor category is account-tier data: Admin /
+              HR only (GET /users/:id/seniorities answers 403 otherwise). */}
+          {canSeeAccount && (
           <SeniorityHistorySection
             userId={user.id}
             seniorityLevels={seniorityLevels}
           />
+          )}
           {/* QA3 round-3 item 3a — Cost rate override entry point. */}
           {showCostOverride && (
             <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/60 p-3 flex items-center justify-between">
@@ -440,34 +535,52 @@ export function EditPersonModal({
               </button>
             </div>
           )}
-          {/* M4a.4 — Employment fields */}
-          <div className="grid grid-cols-3 gap-4">
-            <TextField
-              label="Start date"
-              name="employmentDate"
-              type="date"
-              value={form.employmentDate}
-              onChange={(e) => patch('employmentDate', e.target.value)}
-            />
-            <TextField
-              label="End date"
-              name="employmentEndDate"
-              type="date"
-              value={form.employmentEndDate}
-              onChange={(e) => patch('employmentEndDate', e.target.value)}
-            />
-            <TextField
-              label="Daily standard hours"
-              name="dailyStandardHours"
-              type="number"
-              step="0.25"
-              min={0}
-              max={24}
-              value={form.dailyStandardHours}
-              onChange={(e) => patch('dailyStandardHours', e.target.value)}
-              placeholder="e.g. 8"
-            />
-          </div>
+          {/* M4a.4 — Employment fields. Round 3 (privacy) — HR data,
+              loaded from GET /users/:id (never from the list row); see
+              `showPersonal` for who sees it here and `canEditPersonal`
+              for who may change it. */}
+          {showPersonal && (
+            detailLoading ? (
+              <p className="text-[11px] font-medium text-slate-400 dark:text-slate-500">Loading employment details…</p>
+            ) : detailError ? (
+              <p className="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+                Employment details could not be loaded — they are left unchanged.
+              </p>
+            ) : personal ? (
+              <div className="grid grid-cols-3 gap-4">
+                <TextField
+                  label="Start date"
+                  name="employmentDate"
+                  type="date"
+                  disabled={!canEditPersonal}
+                  value={personal.employmentDate}
+                  onChange={(e) => patchPersonal('employmentDate', e.target.value)}
+                />
+                <TextField
+                  label="End date"
+                  name="employmentEndDate"
+                  type="date"
+                  disabled={!canEditPersonal}
+                  value={personal.employmentEndDate}
+                  onChange={(e) => patchPersonal('employmentEndDate', e.target.value)}
+                />
+                <TextField
+                  label="Daily standard hours"
+                  name="dailyStandardHours"
+                  type="number"
+                  step="0.25"
+                  min={0}
+                  max={24}
+                  disabled={!canEditPersonal}
+                  hint={canEditPersonal ? undefined : 'HR only'}
+                  hintTone="muted"
+                  value={personal.dailyStandardHours}
+                  onChange={(e) => patchPersonal('dailyStandardHours', e.target.value)}
+                  placeholder="e.g. 8"
+                />
+              </div>
+            ) : null
+          )}
           {isPartner && (
             <TextField
               label="Organization Name"
@@ -476,6 +589,8 @@ export function EditPersonModal({
               onChange={(e) => patch('companyName', e.target.value)}
             />
           )}
+          {/* Round 3 — active state is account-tier data (Admin / HR). */}
+          {canSeeAccount && (
           <label
             className={cn(
               'flex items-center gap-2 pt-1',
@@ -496,6 +611,7 @@ export function EditPersonModal({
               </span>
             )}
           </label>
+          )}
         </form>
       </Modal>
       {/* People UX U1 (E-01) — rendered as a sibling of the outer Modal,

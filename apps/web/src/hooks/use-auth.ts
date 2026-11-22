@@ -14,7 +14,11 @@ export function useLogin() {
     onSuccess: (data) => {
       setAuth(data.accessToken, data.user);
       navigate('/');
-      notify.success('Welcome back!', { code: 'AUTH-CREATE-200' });
+      // A forced password change (permissions round 3) shows its own
+      // screen first; skip the greeting until the user is really in.
+      if (!data.user.mustChangePassword) {
+        notify.success('Welcome back!', { code: 'AUTH-CREATE-200' });
+      }
     },
     onError: (err: any) => {
       notify.apiError(err, 'Invalid email or password');
@@ -99,10 +103,15 @@ export function useForgotPassword() {
   return useMutation({
     mutationFn: (payload: ForgotPasswordPayload) => authApi.forgotPassword(payload),
     onSuccess: () => {
-      notify.success('OTP sent to your email', { code: 'AUTH-CREATE-200' });
+      // Same wording whether or not the address has an account — the API
+      // never says which (permissions round 3).
+      notify.info('Check your email', {
+        description: 'If an account exists for that address, we sent it a 6-digit code. It expires in 10 minutes.',
+        code: 'AUTH-CREATE-200',
+      });
     },
     onError: (err: any) => {
-      notify.apiError(err, 'Failed to send OTP');
+      notify.apiError(err, "Couldn't send the code");
     },
   });
 }
