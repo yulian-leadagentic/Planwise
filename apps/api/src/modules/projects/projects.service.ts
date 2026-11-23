@@ -802,6 +802,16 @@ export class ProjectsService {
     });
   }
 
+  /** Stored org unit — the Admin-only org-unit check compares against it. */
+  async getOrgUnitId(id: number): Promise<number | null> {
+    const row = await this.prisma.project.findFirst({
+      where: { id, deletedAt: null },
+      select: { orgUnitId: true },
+    });
+    if (!row) throw new NotFoundException('Project not found');
+    return row.orgUnitId ?? null;
+  }
+
   async update(id: number, dto: UpdateProjectDto, actorUserId?: number) {
     await this.findOne(id);
     const { memberIds, projectTypeIds, ...rest } = dto;

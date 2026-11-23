@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { MessageSquare, Send, Reply, Pencil, Trash2, AtSign, ChevronDown, ChevronRight, CheckCircle, Sparkles, XCircle, Users, UserPlus, Search, Check, Paperclip, FileText, X } from 'lucide-react';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied, getPermissionMessage } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import { useMessages, useCreateMessage, useDeleteMessage, useUpdateMessage } from '@/hooks/use-messages';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { useAuthStore } from '@/stores/auth.store';
@@ -646,6 +647,9 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
   const currentUserId = useAuthStore((s) => s.user?.id);
   const author = message.author;
   const isOwn = !!currentUserId && author?.id === currentUserId;
+  // Round 4C-2: the server says who may delete (author, project leader
+  // or Admin); older payloads without the flag fall back to the author.
+  const canDelete: boolean = typeof message.canDelete === 'boolean' ? message.canDelete : isOwn;
   const isSystem = message.type === 'system';
   const replyCount = message._count?.replies ?? message.replies?.length ?? 0;
 
@@ -762,9 +766,9 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
             </div>
           )}
 
-          {/* Actions — Edit/Delete only rendered for the author of the
-              message so viewers never see affordances they can't use
-              (server also rejects, but hiding is the friendlier UX). */}
+          {/* Actions — Edit for the author only; Delete where the server's
+              `canDelete` allows it, so viewers never see affordances they
+              can't use (server also rejects). */}
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <button
               onClick={() => setShowReply(!showReply)}
@@ -773,25 +777,25 @@ function MessageItem({ message, entityType, entityId, depth = 0 }: {
               <Reply className="h-3 w-3" aria-hidden="true" />Reply
             </button>
             {isOwn && !editing && (
-              <>
-                <button
-                  onClick={() => { setEditContent(message.content ?? ''); setEditing(true); }}
-                  className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-blue-600"
-                  aria-label="Edit your message"
-                  title="Edit"
-                >
-                  <Pencil className="h-3 w-3" aria-hidden="true" />Edit
-                </button>
-                <button
-                  onClick={handleDelete}
-                  disabled={deleteMessage.isPending}
-                  className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-red-600 disabled:opacity-50"
-                  aria-label="Delete your message"
-                  title="Delete"
-                >
-                  <Trash2 className="h-3 w-3" aria-hidden="true" />Delete
-                </button>
-              </>
+              <button
+                onClick={() => { setEditContent(message.content ?? ''); setEditing(true); }}
+                className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-blue-600"
+                aria-label="Edit your message"
+                title="Edit"
+              >
+                <Pencil className="h-3 w-3" aria-hidden="true" />Edit
+              </button>
+            )}
+            {canDelete && !editing && (
+              <button
+                onClick={handleDelete}
+                disabled={deleteMessage.isPending}
+                className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-red-600 disabled:opacity-50"
+                aria-label={isOwn ? 'Delete your message' : 'Delete message'}
+                title="Delete"
+              >
+                <Trash2 className="h-3 w-3" aria-hidden="true" />Delete
+              </button>
             )}
             {replyCount > 0 && depth === 0 && (
               <button
@@ -934,8 +938,11 @@ function ThreadActions({ messageId, entityType, entityId, isResolved }: {
 // ─── Message Panel (main component) ─────────────────────────────────────────
 
 export function MessagePanel({ entityType, entityId }: MessagePanelProps) {
-  const { data, isLoading } = useMessages(entityType, entityId);
+  const { data, isLoading, error } = useMessages(entityType, entityId);
   const messages = (data as any)?.data ?? [];
+  // Round 4: a 403 shows the server's reason instead of an empty thread
+  // with an active composer.
+  const denied = isPermissionDenied(error);
   // QA4 A1: header pill counts authored messages only. The thread
   // still renders system events (`type==='system'`) so `messages` is
   // untouched, but `meta.total` from the API is now authored-only —
@@ -957,10 +964,12 @@ export function MessagePanel({ entityType, entityId }: MessagePanelProps) {
       </div>
 
       {/* Composer at top */}
-      <MessageComposer entityType={entityType} entityId={entityId} />
+      {!denied && <MessageComposer entityType={entityType} entityId={entityId} />}
 
       {/* Messages */}
-      {isLoading ? (
+      {denied ? (
+        <NoAccess what={`this ${entityType}'s discussion`} message={getPermissionMessage(error)} />
+      ) : isLoading ? (
         <div className="py-6 text-center text-sm text-slate-400 dark:text-slate-500">Loading messages...</div>
       ) : messages.length === 0 ? (
         <div className="py-6 text-center text-sm text-slate-400 dark:text-slate-500">

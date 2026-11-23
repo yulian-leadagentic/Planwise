@@ -13,7 +13,10 @@ async function main() {
     { name: 'Time', route: '/time', icon: 'Clock', sortOrder: 3 },
     { name: 'Projects', route: '/projects', icon: 'FolderKanban', sortOrder: 4 },
     { name: 'Contracts', route: '/contracts', icon: 'FileText', sortOrder: 5 },
-    { name: 'People', route: '/people', icon: 'Users', sortOrder: 6 },
+    // Round 4 — 'Partners' / '/partners' is what RolesGuard and the web
+    // check (`partners:*`), as in migrations 20260329054000 and
+    // 20260501020000. 'People' / '/people' granted nothing.
+    { name: 'Partners', route: '/partners', icon: 'Briefcase', sortOrder: 6 },
     { name: 'Reports', route: '/reports', icon: 'BarChart3', sortOrder: 7 },
     { name: 'Templates', route: '/templates', icon: 'Copy', sortOrder: 8 },
     { name: 'Admin', route: '/admin', icon: 'Settings', sortOrder: 9 },
@@ -112,10 +115,6 @@ async function main() {
   if (!managerRole) {
     managerRole = await prisma.role.create({ data: { name: 'Manager', description: 'Project and team management' } });
   }
-  let employeeRole = await prisma.role.findFirst({ where: { name: 'Employee' } });
-  if (!employeeRole) {
-    employeeRole = await prisma.role.create({ data: { name: 'Employee', description: 'Standard employee access' } });
-  }
   let partnerRole = await prisma.role.findFirst({ where: { name: 'Partner' } });
   if (!partnerRole) {
     partnerRole = await prisma.role.create({ data: { name: 'Partner', description: 'External partner access' } });
@@ -129,16 +128,20 @@ async function main() {
   // rows DON'T get canRead on HR — HR Manager + HR Clerk are the two
   // seeded roles that may see employee personal/medical data, and the
   // guard's NO_ADMIN_BYPASS blocks admins from inheriting read via the
-  // role-name shortcut. Admins still get a full-permission row below;
-  // they just need to hold it explicitly. Other modules follow the
-  // standard four-role default matrix.
+  // role-name shortcut, so an Admin holds HR only when it is granted
+  // explicitly (the §14 grid gives Admin neither HR nor Finance).
+  //
+  // Round 4 (2026-11-23) — Admin and Employee are no longer in this
+  // loop: their grants come from the §14 grid below, the same grid
+  // seed-runner.js writes, so both seeders agree. The old Employee row
+  // gave read on every module (Contracts, Reports, Templates, People
+  // and the sub-modules). Manager and Partner are legacy roles that only
+  // this seeder creates.
   const ADMIN_ONLY_MODULES = new Set(['Organization', 'HR']);
   for (const mod of modules) {
     const isAdminOnly = ADMIN_ONLY_MODULES.has(mod.name);
     const perms = [
-      { roleId: adminRole.id, moduleId: mod.id, canRead: true, canWrite: true, canDelete: true, canApprove: true, canExport: true },
       { roleId: managerRole.id, moduleId: mod.id, canRead: !isAdminOnly, canWrite: !isAdminOnly && mod.name !== 'Admin', canDelete: false, canApprove: !isAdminOnly && ['Time', 'Tasks', 'Time Approval', 'Task Approval'].includes(mod.name), canExport: !isAdminOnly && ['Reports'].includes(mod.name) },
-      { roleId: employeeRole.id, moduleId: mod.id, canRead: !isAdminOnly && mod.name !== 'Admin', canWrite: !isAdminOnly && ['Tasks', 'Time'].includes(mod.name), canDelete: false, canApprove: false, canExport: false },
       { roleId: partnerRole.id, moduleId: mod.id, canRead: !isAdminOnly && ['Dashboard', 'Tasks', 'Time', 'Projects'].includes(mod.name), canWrite: !isAdminOnly && ['Tasks', 'Time'].includes(mod.name), canDelete: false, canApprove: false, canExport: false },
     ];
     for (const p of perms) {
@@ -482,7 +485,7 @@ async function main() {
         Time:      { R: true, W: true, D: true, A: true, E: true },
         Projects:  { R: true, W: true, D: true, A: true, E: true },
         Contracts: { R: true, W: true, D: true, A: true, E: true },
-        People:    { R: true, W: true, D: true, A: true, E: true },
+        Partners:  { R: true, W: true, D: true, A: true, E: true },
         Reports:   { R: true, E: true },
         Templates: { R: true, W: true, D: true, A: true, E: true },
         Admin:     { R: true, W: true, D: true, A: true, E: true },
@@ -544,7 +547,7 @@ async function main() {
         Time:      { R: true, A: true },
         Projects:  { R: true, W: true, D: true },
         Contracts: { R: true, W: true },
-        People:    { R: true },
+        Partners:  { R: true },
         Reports:   { R: true, E: true },
         Templates: { R: true },
       },
@@ -569,7 +572,7 @@ async function main() {
         Time:      { R: true },
         Projects:  { R: true },
         Contracts: { R: true },
-        People:    { R: true },
+        Partners:  { R: true },
         Reports:   { R: true },
       },
     },

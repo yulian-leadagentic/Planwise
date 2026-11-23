@@ -7,6 +7,11 @@ interface NoAccessProps {
   /** Second sentence. Defaults to the same hint the API's permission messages end with. */
   hint?: string;
   /**
+   * Full text that replaces "You don't have access to {what}. {hint}" —
+   * e.g. the server's own reason from `getPermissionMessage(error)`.
+   */
+  message?: string;
+  /**
    * `inline` (default) — a small note inside a section, card or modal.
    * `page` — a centred block that replaces a whole page's content.
    */
@@ -24,6 +29,7 @@ interface NoAccessProps {
 export function NoAccess({
   what,
   hint = 'Ask your administrator for access.',
+  message,
   variant = 'inline',
   className,
 }: NoAccessProps) {
@@ -34,8 +40,8 @@ export function NoAccess({
           <Lock className="h-[18px] w-[18px] text-amber-600 dark:text-amber-400" aria-hidden="true" />
         </div>
         <h3 className="mt-3 text-[15px] font-bold text-slate-900 dark:text-slate-100">No access</h3>
-        <p className="mt-1 max-w-sm text-[13px] text-slate-500 dark:text-slate-400">
-          You don&apos;t have access to {what}. {hint}
+        <p dir="auto" className="mt-1 max-w-sm text-[13px] text-slate-500 dark:text-slate-400">
+          {message ?? <>You don&apos;t have access to {what}. {hint}</>}
         </p>
       </div>
     );
@@ -50,9 +56,13 @@ export function NoAccess({
       )}
     >
       <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
-      <p className="text-xs text-slate-500 dark:text-slate-400">
-        <span className="font-medium text-slate-700 dark:text-slate-200">You don&apos;t have access to {what}.</span>{' '}
-        {hint}
+      <p dir="auto" className="text-xs text-slate-500 dark:text-slate-400">
+        {message ?? (
+          <>
+            <span className="font-medium text-slate-700 dark:text-slate-200">You don&apos;t have access to {what}.</span>{' '}
+            {hint}
+          </>
+        )}
       </p>
     </div>
   );

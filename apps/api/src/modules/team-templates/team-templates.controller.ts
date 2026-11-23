@@ -13,6 +13,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { TeamTemplatesService } from './team-templates.service';
 
 /**
@@ -25,13 +26,19 @@ import { TeamTemplatesService } from './team-templates.service';
  * Gated by `partners:write` — same permission the Team-tab add flow
  * uses, so an admin who can add a person to a project's team can
  * apply a template of them.
+ *
+ * Round 4 (2026-11-23): applying a template changes the team, so it is
+ * also leader-or-Admin on the target project.
  */
 @ApiTags('Team Templates')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('team-templates')
 export class TeamTemplatesController {
-  constructor(private readonly service: TeamTemplatesService) {}
+  constructor(
+    private readonly service: TeamTemplatesService,
+    private readonly access: ProjectAccessService,
+  ) {}
 
   @Post(':templateId/apply')
   @RequirePermissions({ module: 'partners', action: 'write' })
@@ -48,6 +55,7 @@ export class TeamTemplatesController {
     if (!Number.isFinite(projectId) || projectId <= 0) {
       throw new BadRequestException('projectId is required (positive integer)');
     }
+    await this.access.assertProjectManage(user, projectId);
     return this.service.apply(templateId, projectId, user?.id);
   }
 }

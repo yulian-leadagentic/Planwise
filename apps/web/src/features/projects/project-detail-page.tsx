@@ -30,13 +30,14 @@ import { useAuthStore } from '@/stores/auth.store';
 import { usePermissions } from '@/hooks/use-permissions';
 import { PresenceIndicator } from '@/components/shared/presence-indicator';
 import { cn } from '@/lib/utils';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied } from '@/lib/notify';
 import client from '@/api/client';
 import { getInitials, formatShortDate } from './project-detail/utils';
 import type { Tab } from './project-detail/types';
 import { ProjectCloseControl } from './project-detail/project-close-control';
 import { ProjectPrevNext } from './project-detail/project-prev-next';
 import { ProjectInfoTab } from './project-detail/project-info-tab';
+import { ProjectUnavailable } from './project-detail/project-unavailable';
 import { TeamTab } from './project-detail/team-tab';
 import { ProjectStatusEditor } from './project-detail/project-status-editor';
 import { ProjectCategoryEditor } from './project-detail/project-category-editor';
@@ -65,7 +66,7 @@ export function ProjectDetailPage() {
   const [showAddMember, setShowAddMember] = useState(false);
   const [showDiscussionDrawer, setShowDiscussionDrawer] = useState(false);
 
-  const { data: project, isLoading } = useProject(projectId);
+  const { data: project, isLoading, error: projectError } = useProject(projectId);
   const { data: members } = useProjectMembers(projectId);
   const currentUserId = useAuthStore((s) => s.user?.id);
   // Finance permission — gates the Cost tab visibility. Backend
@@ -120,7 +121,8 @@ export function ProjectDetailPage() {
   }, [tabFromUrl, lastTab, setSearchParams]);
 
   if (isLoading) return <PageSkeleton />;
-  if (!project) return <p className="py-8 text-center text-slate-400 dark:text-slate-500">Project not found</p>;
+  // Round 4: a 403 shows the No-access card; a 404 stays "Project not found".
+  if (!project || isPermissionDenied(projectError)) return <ProjectUnavailable error={projectError} />;
 
   const leader = members?.find((m) => m.role?.toLowerCase() === 'leader' || m.role?.toLowerCase() === 'project leader');
   const memberCount = members?.length ?? 0;

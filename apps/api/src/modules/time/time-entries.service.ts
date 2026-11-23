@@ -147,14 +147,8 @@ export class TimeEntriesService {
     // half-empty). Belt-and-suspenders: aggregations now also resolve
     // project membership via task.projectId, but keeping this column
     // populated keeps the data clean for any future direct queries.
-    let projectId = dto.projectId;
-    if (!projectId && dto.taskId) {
-      const t = await this.prisma.task.findUnique({
-        where: { id: dto.taskId },
-        select: { projectId: true },
-      });
-      if (t?.projectId != null) projectId = t.projectId;
-    }
+    // Round 4 (D-08) — an explicit projectId must be the task's project.
+    const projectId = await this.resolveEntryProject(dto.taskId, dto.projectId);
 
     // QA4 B4: after the task-derivation step every entry must have a
     // resolvable project. Personal tasks (task.projectId=null) can't
@@ -233,6 +227,30 @@ export class TimeEntriesService {
     return entry;
   }
 
+  /**
+   * Round 4 (D-08) — an entry's project follows its task. Returns the
+   * task's project; a different explicit `projectId` is a 400. A task
+   * without a project (or no task) keeps the explicit value.
+   */
+  private async resolveEntryProject(
+    taskId: number | null | undefined,
+    projectId: number | null | undefined,
+  ): Promise<number | null | undefined> {
+    if (taskId == null) return projectId;
+    const t = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: { projectId: true },
+    });
+    if (t?.projectId == null) return projectId;
+    if (projectId != null && projectId !== t.projectId) {
+      throw new BadRequestException({
+        code: 'TIME_ENTRY_PROJECT_MISMATCH',
+        message: "The selected task belongs to a different project than the one chosen for this time entry.",
+      });
+    }
+    return t.projectId;
+  }
+
   private async syncTaskCompletion(taskId: number) {
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
@@ -277,61 +295,6 @@ export class TimeEntriesService {
     await this.prisma.task.update({
       where: { id: taskId },
       data: { completionPct: pct },
-    });
-  }
-
-  async batchCreate(userId: number, entries: CreateTimeEntryDto[]) {
-    // Pre-resolve task -> projectId for any entry that has a taskId but
-    // no explicit projectId, so the batch creates have project_id
-    // populated. Same belt-and-suspenders rationale as create().
-    const taskIdsNeedingLookup = Array.from(new Set(
-      entries
-        .filter((e) => e.taskId && !e.projectId)
-        .map((e) => e.taskId as number),
-    ));
-    const taskProjectMap = new Map<number, number>();
-    if (taskIdsNeedingLookup.length > 0) {
-      const tasks = await this.prisma.task.findMany({
-        where: { id: { in: taskIdsNeedingLookup } },
-        select: { id: true, projectId: true },
-      });
-      // Task.projectId is now nullable (personal tasks). Only cache the
-       // resolved mapping when the task IS tied to a project.
-      for (const t of tasks) {
-        if (t.projectId != null) taskProjectMap.set(t.id, t.projectId);
-      }
-    }
-
-    const data = entries.map((dto) => {
-      const dp = dto.date.split('-').map(Number);
-      const resolvedProjectId =
-        dto.projectId ?? (dto.taskId ? taskProjectMap.get(dto.taskId) ?? null : null);
-      return {
-        userId,
-        timeClockId: dto.timeClockId ?? null,
-        projectId: resolvedProjectId,
-        taskId: dto.taskId ?? null,
-        date: new Date(dp[0], dp[1] - 1, dp[2]),
-        minutes: dto.minutes,
-        note: dto.note ?? null,
-        isBillable: dto.isBillable ?? true,
-      };
-    });
-
-    await this.prisma.timeEntry.createMany({ data });
-
-    // Return the created entries
-    return this.prisma.timeEntry.findMany({
-      where: {
-        userId,
-        date: { in: data.map((d) => d.date) },
-      },
-      include: {
-        project: { select: { id: true, name: true } },
-        task: { select: { id: true, name: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: data.length,
     });
   }
 
@@ -436,6 +399,15 @@ export class TimeEntriesService {
       );
     }
 
+    // Round 4 (D-08) — a new task or project keeps the entry's project
+    // equal to its task's project. Echoed unchanged values pass as-is.
+    const bindingChanged =
+      (dto.taskId != null && dto.taskId !== existing.taskId) ||
+      (dto.projectId != null && dto.projectId !== existing.projectId);
+    const projectIdPatch = bindingChanged
+      ? await this.resolveEntryProject(dto.taskId ?? existing.taskId, dto.projectId)
+      : dto.projectId;
+
     // Explicit column whitelist (mirrors create() ~176). Spreading
     // ...dto pulls the non-column control flag `confirmOverlap` into
     // Prisma's update input, which trips the *checked* variant where
@@ -447,7 +419,7 @@ export class TimeEntriesService {
       where: { id },
       data: {
         timeClockId: dto.timeClockId,
-        projectId: dto.projectId,
+        projectId: projectIdPatch,
         taskId: dto.taskId,
         date: dto.date ? mergedDate : undefined,
         startTime: dto.startTime,

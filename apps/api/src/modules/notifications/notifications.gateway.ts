@@ -9,10 +9,15 @@ import { Server, Socket } from 'socket.io';
 import { Logger } from '@nestjs/common';
 
 import { WsAuthService } from '../../common/services/ws-auth.service';
+import { socketCorsOrigins } from '../../common/ws-cors';
 
+/**
+ * The bell's live channel: Socket.IO default path `/socket.io`,
+ * namespace `/notifications` (the web connects to `<api>/notifications`).
+ */
 @WebSocketGateway({
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: socketCorsOrigins(),
     credentials: true,
   },
   namespace: '/notifications',

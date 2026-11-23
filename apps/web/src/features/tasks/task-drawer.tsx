@@ -4,7 +4,8 @@ import { X, Clock, MessageSquare, Trash2, FileText } from 'lucide-react';
 import { TaskFilesTab } from '@/features/tasks/task-files-tab';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied, getPermissionMessage } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import { tasksApi } from '@/api/tasks.api';
 import { queryKeys } from '@/lib/query-keys';
 // Shared colour maps used by <StatusBadge> / <PriorityBadge>. Imported
@@ -59,7 +60,7 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
   );
   const drawerRef = useRef<HTMLDivElement>(null);
 
-  const { data: task, isLoading } = useQuery({
+  const { data: task, isLoading, error: taskError } = useQuery({
     queryKey: queryKeys.tasks.detail(taskId!),
     queryFn: () => tasksApi.get(taskId!),
     enabled: !!taskId,
@@ -243,6 +244,11 @@ export function TaskDrawer({ taskId, onClose, hideTimeTab = false }: TaskDrawerP
 
         {isLoading ? (
           <div className="flex-1 flex items-center justify-center text-sm text-slate-400 dark:text-slate-500">Loading task...</div>
+        ) : !task && isPermissionDenied(taskError) ? (
+          // Round 4: a 403 is "no access", not "not found".
+          <div className="flex-1 flex items-center justify-center px-5">
+            <NoAccess variant="page" what="this task" message={getPermissionMessage(taskError)} />
+          </div>
         ) : !task ? (
           <div className="flex-1 flex items-center justify-center text-sm text-slate-400 dark:text-slate-500">Task not found</div>
         ) : (

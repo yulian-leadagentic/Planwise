@@ -21,7 +21,8 @@ import {
   toLeaderView,
 } from '../../common/services/employee-scope.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CreateTimeEntryDto } from './dto/create-time-entry.dto';
@@ -35,7 +36,15 @@ export class TimeEntriesController {
     private readonly timeEntriesService: TimeEntriesService,
     private readonly monthly: HrMonthlyService,
     private readonly employeeScope: EmployeeScopeService,
+    private readonly access: ProjectAccessService,
   ) {}
+
+  /** Round 4 (D-08) — binding an entry to a task or project needs access to it. */
+  private async assertEntryBinding(user: any, taskId?: number | null, projectId?: number | null) {
+    const admin = isAdminUser(user);
+    if (taskId != null) await this.access.assertTaskAccess(user.id, taskId, admin);
+    if (projectId != null) await this.access.assertProjectAccess(user.id, projectId, admin);
+  }
 
   /**
    * Round 3 (2026-11-22) — `?userId=` of someone else needs
@@ -58,17 +67,13 @@ export class TimeEntriesController {
   @OwnData()
   @RequirePermissions({ module: 'time', action: 'write' })
   @ApiOperation({ summary: 'Create a time entry' })
-  create(@CurrentUser() user: any, @Body() dto: CreateTimeEntryDto) {
+  async create(@CurrentUser() user: any, @Body() dto: CreateTimeEntryDto) {
+    await this.assertEntryBinding(user, dto.taskId, dto.projectId);
     return this.timeEntriesService.create(user.id, dto);
   }
 
-  @Post('batch')
-  @OwnData()
-  @RequirePermissions({ module: 'time', action: 'write' })
-  @ApiOperation({ summary: 'Create multiple time entries at once' })
-  batchCreate(@CurrentUser() user: any, @Body('entries') entries: CreateTimeEntryDto[]) {
-    return this.timeEntriesService.batchCreate(user.id, entries);
-  }
+  // `POST /time-entries/batch` was removed in round 4 (D-08): no access
+  // or overlap checks, and nothing in the web called it.
 
   /**
    * List time entries for the current user, optionally filtered by task,
@@ -201,11 +206,20 @@ export class TimeEntriesController {
   @OwnData()
   @RequirePermissions({ module: 'time', action: 'write' })
   @ApiOperation({ summary: 'Update a time entry' })
-  update(
+  async update(
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Partial<CreateTimeEntryDto>,
   ) {
+    // Only a changed binding is checked: the timesheet echoes both ids.
+    if (dto?.taskId != null || dto?.projectId != null) {
+      const existing = await this.timeEntriesService.findOne(id);
+      await this.assertEntryBinding(
+        user,
+        dto.taskId != null && dto.taskId !== existing.taskId ? dto.taskId : null,
+        dto.projectId != null && dto.projectId !== existing.projectId ? dto.projectId : null,
+      );
+    }
     return this.timeEntriesService.update(id, dto, user.id);
   }
 

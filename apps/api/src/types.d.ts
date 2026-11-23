@@ -5,6 +5,8 @@ declare module 'nodemailer';
 declare module 'socket.io' {
   export class Server {
     to(room: string): { emit(event: string, data: any): void };
+    /** The sockets in a room (the messaging gateway re-checks each before a broadcast). */
+    in(room: string): { fetchSockets(): Promise<Socket[]> };
     emit(event: string, data: any): void;
   }
   export class Socket {

@@ -12,9 +12,12 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { OrgUnitService } from '../../common/services/org-unit.service';
+import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * Org-tree admin surface. Every endpoint is gated by the `org` module
@@ -39,7 +42,39 @@ import { OrgUnitService } from '../../common/services/org-unit.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller()
 export class OrgUnitsController {
-  constructor(private readonly orgUnits: OrgUnitService) {}
+  constructor(
+    private readonly orgUnits: OrgUnitService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  /**
+   * Round 4 (review fix) — the same self-check PATCH /users/:id has: a
+   * unit grants project access (same unit, and the manager chain), so a
+   * non-Admin may not move HIMSELF to another unit, or make HIMSELF a
+   * unit's manager. Sending the stored value back is no change and
+   * passes. Admins are not limited.
+   */
+  private async assertNotSelfOrgUnit(actor: any, userId: number, orgUnitId: number | null): Promise<void> {
+    if (isAdminUser(actor) || actor?.id !== userId) return;
+    const me = await this.prisma.user.findFirst({ where: { id: userId }, select: { orgUnitId: true } });
+    if ((me?.orgUnitId ?? null) === orgUnitId) return;
+    throw new PermissionDeniedException("You can't change your own department. Ask an Admin.", {
+      field: 'orgUnitId',
+      reason: 'SELF',
+    });
+  }
+
+  private async assertNotSelfManager(actor: any, unitId: number | null, managerUserId: number | null): Promise<void> {
+    if (isAdminUser(actor) || managerUserId == null || actor?.id !== Number(managerUserId)) return;
+    if (unitId != null) {
+      const unit = await this.prisma.orgUnit.findFirst({ where: { id: unitId }, select: { managerUserId: true } });
+      if (unit?.managerUserId === Number(managerUserId)) return;
+    }
+    throw new PermissionDeniedException("You can't make yourself the manager of a unit. Ask an Admin.", {
+      field: 'managerUserId',
+      reason: 'SELF',
+    });
+  }
 
   @Get('org-units')
   @RequirePermissions({ module: 'org', action: 'read' })
@@ -59,6 +94,7 @@ export class OrgUnitsController {
   @RequirePermissions({ module: 'org', action: 'write' })
   @ApiOperation({ summary: 'Create a unit (optionally under a parent, optionally with a manager)' })
   async create(
+    @CurrentUser() user: any,
     @Body() body: {
       name: string;
       code?: string | null;
@@ -68,6 +104,7 @@ export class OrgUnitsController {
       assignableToProjects?: boolean;
     },
   ) {
+    await this.assertNotSelfManager(user, null, body.managerUserId ?? null);
     return this.orgUnits.create({
       name: body.name,
       code: body.code ?? null,
@@ -114,9 +151,11 @@ export class OrgUnitsController {
   @RequirePermissions({ module: 'org', action: 'write' })
   @ApiOperation({ summary: 'Set (or clear) the single manager for a unit' })
   async setManager(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { userId: number | null },
   ) {
+    await this.assertNotSelfManager(user, id, body.userId ?? null);
     // ONE manager per unit. Pass null to clear.
     return this.orgUnits.setManager(id, body.userId ?? null);
   }
@@ -137,9 +176,11 @@ export class OrgUnitsController {
   @RequirePermissions({ module: 'org', action: 'write' })
   @ApiOperation({ summary: "Assign a user to a home unit (or clear with orgUnitId=null)" })
   async assignUser(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { orgUnitId: number | null },
   ) {
+    await this.assertNotSelfOrgUnit(user, id, body.orgUnitId ?? null);
     // ONE home unit per person. Pass orgUnitId=null to unlink —
     // ProjectAccessService then treats them as pre-org-access
     // (no subordinate widen). Routed through the service so the

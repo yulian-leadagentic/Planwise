@@ -17,9 +17,10 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiConsumes, ApiBody } from '@nestjs/swagger';
 
-import { BusinessPartnersService } from './business-partners.service';
+import { BusinessPartnersService, PartnerProjectScope } from './business-partners.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
 import { AuditInterceptor } from '../../common/interceptors/audit.interceptor';
@@ -37,14 +38,24 @@ import { ImportBusinessPartnersDto } from './dto/import-business-partners.dto';
 export class BusinessPartnersController {
   constructor(
     private readonly service: BusinessPartnersService,
+    private readonly access: ProjectAccessService,
   ) {}
+
+  /**
+   * Round 4 (review fix) — a partner's project rows (Team-tab roles and
+   * the `withProjects` list column) show only projects the caller has
+   * access to; an Admin sees them all.
+   */
+  private projectScope(user: any): Promise<PartnerProjectScope> {
+    return this.access.getAccessibleProjectIds(user.id, isAdminUser(user));
+  }
 
   @Get()
   @RequirePermissions({ module: 'partners', action: 'read' })
   @ApiPaginated()
   @ApiOperation({ summary: 'List business partners (people + organizations) with filters' })
-  findAll(@Query() query: QueryBusinessPartnersDto) {
-    return this.service.findAll(query);
+  async findAll(@CurrentUser() user: any, @Query() query: QueryBusinessPartnersDto) {
+    return this.service.findAll(query, await this.projectScope(user));
   }
 
   @Post()
@@ -57,8 +68,8 @@ export class BusinessPartnersController {
   @Get(':id')
   @RequirePermissions({ module: 'partners', action: 'read' })
   @ApiOperation({ summary: 'Get a business partner with roles + relationships' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.service.findOne(id, await this.projectScope(user));
   }
 
   /**
@@ -78,12 +89,12 @@ export class BusinessPartnersController {
   @Patch(':id')
   @RequirePermissions({ module: 'partners', action: 'write' })
   @ApiOperation({ summary: 'Update a business partner' })
-  update(
+  async update(
     @CurrentUser() user: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateBusinessPartnerDto,
   ) {
-    return this.service.update(id, dto, user.id);
+    return this.service.update(id, dto, user.id, await this.projectScope(user));
   }
 
   @Delete(':id')

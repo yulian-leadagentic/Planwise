@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma, MessageEntityType, MessageType } from '@prisma/client';
 
@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { QueryMessagesDto } from './dto/query-messages.dto';
+import { MessageAccessService, MessageViewer, ThreadRef, parseEntityType } from './message-access.service';
 
 const authorSelect = {
   id: true,
@@ -27,9 +28,47 @@ export class MessagesService {
   constructor(
     private prisma: PrismaService,
     private eventEmitter: EventEmitter2,
+    private msgAccess: MessageAccessService,
   ) {}
 
-  async create(userId: number, dto: CreateMessageDto) {
+  /** Loads a live message or throws 404. */
+  private async loadMessage(id: number) {
+    const message = await this.prisma.message.findFirst({ where: { id, deletedAt: null } });
+    if (!message) throw new NotFoundException('Message not found');
+    return message;
+  }
+
+  /** Creates one notification and pushes it to the bell socket. */
+  private async notify(data: Prisma.NotificationUncheckedCreateInput) {
+    const notification = await this.prisma.notification.create({ data });
+    this.eventEmitter.emit('notification.created', notification);
+  }
+
+  async create(viewer: MessageViewer, dto: CreateMessageDto) {
+    const userId = viewer.id;
+
+    // Round 4: a new thread needs access to its entity. A reply needs
+    // access to the thread (entity access, or a mention in it), and its
+    // parent must be in the same discussion.
+    let parentId: number | null = null;
+    let parentRef: (ThreadRef & { authorId: number | null }) | null = null;
+    if (dto.parentId) {
+      const parent = await this.prisma.message.findFirst({
+        where: { id: dto.parentId, deletedAt: null },
+        select: { id: true, parentId: true, entityType: true, entityId: true, authorId: true },
+      });
+      if (!parent) throw new NotFoundException('The message you are replying to was not found');
+      if (parent.entityType !== dto.entityType || parent.entityId !== dto.entityId) {
+        throw new BadRequestException('A reply must be posted in the same discussion as the message it answers.');
+      }
+      await this.msgAccess.assertThreadAccess(viewer, parent);
+      // Threads are one level deep: a reply to a reply joins the thread.
+      parentId = await this.msgAccess.threadRootId(parent);
+      parentRef = parent;
+    } else {
+      await this.msgAccess.assertEntityAccess(viewer, dto.entityType, dto.entityId);
+    }
+
     // Attachments are stashed inside the metadata JSON column. Reusing
     // metadata avoids a schema migration and keeps the existing UI
     // readers (which spread metadata into a single object) working as
@@ -45,7 +84,7 @@ export class MessagesService {
       data: {
         entityType: dto.entityType,
         entityId: dto.entityId,
-        parentId: dto.parentId || null,
+        parentId,
         authorId: userId,
         type: 'user',
         content: dto.content,
@@ -54,51 +93,55 @@ export class MessagesService {
       include: messageInclude,
     });
 
-    // Create mentions
+    // Mentions: anyone active in the company. The mention row is what
+    // grants the mentioned user read + reply on this thread.
     if (dto.mentionedUserIds && dto.mentionedUserIds.length > 0) {
-      const uniqueIds = [...new Set(dto.mentionedUserIds)];
-      await this.prisma.messageMention.createMany({
-        data: uniqueIds.map((uid) => ({ messageId: message.id, userId: uid })),
-        skipDuplicates: true,
+      const requested = [...new Set(dto.mentionedUserIds)];
+      const active = await this.prisma.user.findMany({
+        where: { id: { in: requested }, isActive: true, deletedAt: null },
+        select: { id: true },
       });
-
-      // Create notifications for mentioned users
-      await this.prisma.notification.createMany({
-        data: uniqueIds
-          .filter((uid) => uid !== userId)
-          .map((uid) => ({
-            userId: uid,
-            type: 'mention',
-            title: 'You were mentioned',
-            body: dto.content.substring(0, 200),
-            entityType: dto.entityType,
-            entityId: dto.entityId,
-            actorId: userId,
-            messageId: message.id,
-          })),
-      });
-    }
-
-    // If it's a reply, notify the parent author
-    if (dto.parentId) {
-      const parent = await this.prisma.message.findUnique({
-        where: { id: dto.parentId },
-        select: { authorId: true },
-      });
-      if (parent?.authorId && parent.authorId !== userId) {
-        await this.prisma.notification.create({
-          data: {
-            userId: parent.authorId,
-            type: 'reply',
-            title: 'New reply to your message',
-            body: dto.content.substring(0, 200),
-            entityType: dto.entityType,
-            entityId: dto.entityId,
-            actorId: userId,
-            messageId: message.id,
-          },
+      const uniqueIds = active.map((u) => u.id);
+      if (uniqueIds.length > 0) {
+        await this.prisma.messageMention.createMany({
+          data: uniqueIds.map((uid) => ({ messageId: message.id, userId: uid })),
+          skipDuplicates: true,
         });
       }
+
+      for (const uid of uniqueIds.filter((id) => id !== userId)) {
+        await this.notify({
+          userId: uid,
+          type: 'mention',
+          title: 'You were mentioned',
+          body: dto.content.substring(0, 200),
+          entityType: dto.entityType,
+          entityId: dto.entityId,
+          actorId: userId,
+          messageId: message.id,
+        });
+      }
+    }
+
+    // If it's a reply, notify the author of the message replied to —
+    // only while he can still see the thread (the body quotes the reply).
+    const parentAuthorId = parentRef?.authorId;
+    if (
+      parentRef &&
+      parentAuthorId &&
+      parentAuthorId !== userId &&
+      (await this.msgAccess.userCanSeeThread(parentAuthorId, parentRef))
+    ) {
+      await this.notify({
+        userId: parentAuthorId,
+        type: 'reply',
+        title: 'New reply to your message',
+        body: dto.content.substring(0, 200),
+        entityType: dto.entityType,
+        entityId: dto.entityId,
+        actorId: userId,
+        messageId: message.id,
+      });
     }
 
     // Re-fetch with mentions included
@@ -122,24 +165,41 @@ export class MessagesService {
 
   // ─── Resolved/Unresolved thread management ──────────────────────────────
 
-  async resolveThread(messageId: number, userId: number) {
+  /**
+   * Round 4 (review fix) — a mention lets a user read and reply in the
+   * thread, nothing more: resolving or reopening it needs access to the
+   * project (403 NOT_PROJECT_MEMBER for a mention-only viewer).
+   */
+  private async assertCanResolve(viewer: MessageViewer, message: ThreadRef): Promise<void> {
+    const { viaMention } = await this.msgAccess.assertThreadAccess(viewer, message);
+    if (viaMention) {
+      throw new PermissionDeniedException(
+        'You were mentioned in this thread, so you can read and reply to it. Only project members can resolve or reopen it.',
+        { module: 'projects', reason: 'NOT_PROJECT_MEMBER' },
+      );
+    }
+  }
+
+  async resolveThread(messageId: number, viewer: MessageViewer) {
     const message = await this.prisma.message.findFirst({
       where: { id: messageId, deletedAt: null, parentId: null },
     });
     if (!message) throw new NotFoundException('Thread not found');
+    await this.assertCanResolve(viewer, message);
 
     return this.prisma.message.update({
       where: { id: messageId },
-      data: { metadata: { ...(message.metadata as any ?? {}), resolved: true, resolvedBy: userId, resolvedAt: new Date().toISOString() } },
+      data: { metadata: { ...(message.metadata as any ?? {}), resolved: true, resolvedBy: viewer.id, resolvedAt: new Date().toISOString() } },
       include: messageInclude,
     });
   }
 
-  async unresolveThread(messageId: number) {
+  async unresolveThread(messageId: number, viewer: MessageViewer) {
     const message = await this.prisma.message.findFirst({
       where: { id: messageId, deletedAt: null, parentId: null },
     });
     if (!message) throw new NotFoundException('Thread not found');
+    await this.assertCanResolve(viewer, message);
 
     const meta = { ...(message.metadata as any ?? {}) };
     delete meta.resolved;
@@ -155,16 +215,17 @@ export class MessagesService {
 
   // ─── Search across all discussions ──────────────────────────────────────
 
-  async search(query: string, userId: number, options?: { entityType?: string; page?: number; perPage?: number }) {
+  async search(query: string, viewer: MessageViewer, options?: { entityType?: string; page?: number; perPage?: number }) {
     const page = options?.page ?? 1;
     const perPage = options?.perPage ?? 20;
     const skip = (page - 1) * perPage;
 
-    const where: Prisma.MessageWhereInput = {
+    // Round 4: only messages in threads the viewer can see.
+    const where = await this.msgAccess.scopeWhere(viewer, {
       deletedAt: null,
       content: { contains: query },
-      ...(options?.entityType ? { entityType: options.entityType as MessageEntityType } : {}),
-    };
+      ...(options?.entityType ? { entityType: parseEntityType(options.entityType) } : {}),
+    });
 
     const [data, total] = await Promise.all([
       this.prisma.message.findMany({
@@ -185,26 +246,31 @@ export class MessagesService {
 
   // ─── Analytics / KPI data ───────────────────────────────────────────────
 
-  async getAnalytics(projectId?: number) {
-    const where: Prisma.MessageWhereInput = {
+  async getAnalytics(viewer: MessageViewer, projectId?: number) {
+    // Round 4: every figure covers only the threads the viewer can see.
+    const where = await this.msgAccess.scopeWhere(viewer, {
       deletedAt: null,
       ...(projectId ? { entityType: 'project', entityId: projectId } : {}),
-    };
+    });
 
     const [totalMessages, totalThreads, unresolvedThreads, mentionCount, recentActivity] = await Promise.all([
       this.prisma.message.count({ where }),
-      this.prisma.message.count({ where: { ...where, parentId: null } }),
+      this.prisma.message.count({ where: { AND: [where, { parentId: null }] } }),
       this.prisma.message.count({
         where: {
-          ...where,
-          parentId: null,
-          OR: [
-            { metadata: { equals: Prisma.DbNull } },
-            { metadata: { path: 'resolved', equals: Prisma.AnyNull } },
+          AND: [
+            where,
+            { parentId: null },
+            {
+              OR: [
+                { metadata: { equals: Prisma.DbNull } },
+                { metadata: { path: 'resolved', equals: Prisma.AnyNull } },
+              ],
+            },
           ],
         },
       }),
-      this.prisma.messageMention.count(),
+      this.prisma.messageMention.count({ where: { message: where } }),
       this.prisma.message.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -215,7 +281,7 @@ export class MessagesService {
 
     // Calculate average response time for threads with replies
     const threadsWithReplies = await this.prisma.message.findMany({
-      where: { ...where, parentId: null, replies: { some: { deletedAt: null } } },
+      where: { AND: [where, { parentId: null, replies: { some: { deletedAt: null } } }] },
       select: {
         createdAt: true,
         replies: { select: { createdAt: true }, orderBy: { createdAt: 'asc' }, take: 1 },
@@ -239,8 +305,7 @@ export class MessagesService {
     const urgentKeywords = ['urgent', 'blocker', 'critical', 'ASAP', 'deadline', 'overdue', 'stuck', 'blocked', 'דחוף', 'חסום'];
     const urgentMessages = await this.prisma.message.count({
       where: {
-        ...where,
-        OR: urgentKeywords.map((kw) => ({ content: { contains: kw } })),
+        AND: [where, { OR: urgentKeywords.map((kw) => ({ content: { contains: kw } })) }],
       },
     });
 
@@ -257,7 +322,9 @@ export class MessagesService {
 
   // ─── AI Features (keyword-based MVP) ────────────────────────────────────
 
-  async suggestRecipients(entityType: MessageEntityType, entityId: number) {
+  async suggestRecipients(viewer: MessageViewer, entityTypeRaw: string, entityId: number) {
+    const entityType = parseEntityType(entityTypeRaw);
+    await this.msgAccess.assertEntityAccess(viewer, entityType, entityId);
     // Suggest users who are: members/assignees + recent thread participants
     const participants: number[] = [];
 
@@ -301,7 +368,7 @@ export class MessagesService {
     });
   }
 
-  async summarizeThread(messageId: number) {
+  async summarizeThread(messageId: number, viewer: MessageViewer) {
     const thread = await this.prisma.message.findFirst({
       where: { id: messageId, parentId: null, deletedAt: null },
       include: {
@@ -315,6 +382,7 @@ export class MessagesService {
     });
 
     if (!thread) throw new NotFoundException('Thread not found');
+    await this.msgAccess.assertThreadAccess(viewer, thread);
 
     // Build summary (keyword-based MVP — production would use LLM)
     const allMessages = [thread, ...thread.replies];
@@ -365,20 +433,28 @@ export class MessagesService {
    * messages only (parentId IS NULL) to match the per-task badge —
    * which shows the conversation count, not the reply count.
    */
-  async countByEntities(entityType: string, entityIds: number[]): Promise<Record<number, number>> {
+  async countByEntities(
+    viewer: MessageViewer,
+    entityTypeRaw: string,
+    entityIds: number[],
+  ): Promise<Record<number, number>> {
     if (entityIds.length === 0) return {};
+    const entityType = parseEntityType(entityTypeRaw);
+    // Round 4: an entity the viewer can't open counts only the threads
+    // he is mentioned in (usually 0).
+    const where = await this.msgAccess.scopeWhere(viewer, {
+      deletedAt: null,
+      parentId: null,
+      // QA4 A1: badge counts authored (user) messages only —
+      // system/activity events live in the same table but must not
+      // turn the task-row bubble blue.
+      type: MessageType.user,
+      entityType,
+      entityId: { in: entityIds },
+    });
     const rows = await this.prisma.message.groupBy({
       by: ['entityId'],
-      where: {
-        deletedAt: null,
-        parentId: null,
-        // QA4 A1: badge counts authored (user) messages only —
-        // system/activity events live in the same table but must not
-        // turn the task-row bubble blue.
-        type: MessageType.user,
-        entityType: entityType as MessageEntityType,
-        entityId: { in: entityIds },
-      },
+      where,
       _count: { entityId: true },
     });
     const map: Record<number, number> = {};
@@ -387,14 +463,37 @@ export class MessagesService {
     return map;
   }
 
-  async findByEntity(dto: QueryMessagesDto) {
-    const where: Prisma.MessageWhereInput = {
+  async findByEntity(dto: QueryMessagesDto, viewer: MessageViewer) {
+    let where: Prisma.MessageWhereInput = {
       deletedAt: null,
       parentId: null, // top-level messages only
     };
 
-    if (dto.entityType) where.entityType = dto.entityType as MessageEntityType;
+    const entityType = dto.entityType ? parseEntityType(dto.entityType) : undefined;
+    if (entityType) where.entityType = entityType;
     if (dto.entityId) where.entityId = dto.entityId;
+
+    // Round 4: one entity → its threads when the viewer has access,
+    // otherwise only the threads he is mentioned in (403 when none).
+    // No entity → every thread the viewer can see.
+    if (entityType && dto.entityId) {
+      try {
+        await this.msgAccess.assertEntityAccess(viewer, entityType, dto.entityId);
+      } catch (err) {
+        if (!(err instanceof ForbiddenException || err instanceof NotFoundException)) throw err;
+        const mentioned = await this.msgAccess.mentionedThreadIds(viewer.id);
+        const threads = mentioned.length
+          ? await this.prisma.message.findMany({
+              where: { ...where, id: { in: mentioned } },
+              select: { id: true },
+            })
+          : [];
+        if (threads.length === 0) throw err;
+        where = { ...where, id: { in: threads.map((t) => t.id) } };
+      }
+    } else {
+      where = await this.msgAccess.scopeWhere(viewer, where);
+    }
 
     // QA4 A1: the thread renderer needs both user + system rows, so
     // `data` is NEVER filtered by type here. `meta.total` however is
@@ -402,9 +501,10 @@ export class MessagesService {
     // the discussion sidebar / panel header reflects real activity.
     // Callers can force a stricter data filter by passing `type`
     // explicitly (e.g. an admin export of user messages only).
-    const dataWhere: Prisma.MessageWhereInput = { ...where };
-    if (dto.type) dataWhere.type = dto.type as MessageType;
-    const countWhere: Prisma.MessageWhereInput = { ...where, type: MessageType.user };
+    const dataWhere: Prisma.MessageWhereInput = dto.type
+      ? { AND: [where, { type: dto.type as MessageType }] }
+      : where;
+    const countWhere: Prisma.MessageWhereInput = { AND: [where, { type: MessageType.user }] };
 
     const [data, total] = await Promise.all([
       this.prisma.message.findMany({
@@ -426,7 +526,7 @@ export class MessagesService {
     ]);
 
     return {
-      data,
+      data: await this.withCanDelete(viewer, data),
       meta: {
         total,
         page: dto.page ?? 1,
@@ -436,7 +536,7 @@ export class MessagesService {
     };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, viewer: MessageViewer) {
     const message = await this.prisma.message.findFirst({
       where: { id, deletedAt: null },
       include: {
@@ -450,16 +550,33 @@ export class MessagesService {
     });
 
     if (!message) throw new NotFoundException('Message not found');
-    return message;
+    await this.msgAccess.assertThreadAccess(viewer, message);
+    const [withFlag] = await this.withCanDelete(viewer, [message]);
+    return withFlag;
   }
 
-  async update(id: number, userId: number, content: string) {
-    const message = await this.prisma.message.findFirst({
-      where: { id, deletedAt: null },
-    });
+  /**
+   * Adds `canDelete` to each message and its replies (author, project
+   * leader or Admin — the DELETE rule) so the web shows Delete only
+   * where the server accepts it.
+   */
+  private async withCanDelete<
+    T extends { authorId: number | null; entityType: MessageEntityType; entityId: number; replies?: R[] },
+    R extends { authorId: number | null; entityType: MessageEntityType; entityId: number },
+  >(viewer: MessageViewer, messages: T[]) {
+    const all = messages.flatMap((m) => [m, ...(m.replies ?? [])]);
+    const canDelete = await this.msgAccess.deletePredicate(viewer, all);
+    return messages.map((m) => ({
+      ...m,
+      canDelete: canDelete(m),
+      ...(m.replies ? { replies: m.replies.map((r) => ({ ...r, canDelete: canDelete(r) })) } : {}),
+    }));
+  }
 
-    if (!message) throw new NotFoundException('Message not found');
-    if (message.authorId !== userId) {
+  async update(id: number, viewer: MessageViewer, content: string) {
+    const message = await this.loadMessage(id);
+    await this.msgAccess.assertThreadAccess(viewer, message);
+    if (message.authorId !== viewer.id) {
       throw new PermissionDeniedException('You can only edit your own messages.', { reason: 'NOT_OWNER' });
     }
 
@@ -470,15 +587,20 @@ export class MessagesService {
     });
   }
 
-  async remove(id: number, userId: number) {
-    const message = await this.prisma.message.findFirst({
-      where: { id, deletedAt: null },
-    });
+  /** Round 4: the author, the project leader or an Admin may delete. */
+  async remove(id: number, viewer: MessageViewer) {
+    const message = await this.loadMessage(id);
+    const { projectId } = await this.msgAccess.assertThreadAccess(viewer, message);
 
-    if (!message) throw new NotFoundException('Message not found');
-    // Allow author or admin to delete
-    if (message.authorId !== userId) {
-      // TODO: check admin role
+    const allowed =
+      viewer.isAdmin ||
+      message.authorId === viewer.id ||
+      (projectId != null && (await this.msgAccess.isProjectLeader(viewer.id, projectId)));
+    if (!allowed) {
+      throw new PermissionDeniedException(
+        'Only the author, the project leader or an administrator can delete this message.',
+        { reason: 'NOT_OWNER' },
+      );
     }
 
     await this.prisma.message.update({
@@ -489,14 +611,20 @@ export class MessagesService {
     return { message: 'Message deleted' };
   }
 
-  async getInbox(userId: number, page = 1, perPage = 20) {
+  async getInbox(viewer: MessageViewer, page = 1, perPage = 20) {
     const skip = (page - 1) * perPage;
+    const userId = viewer.id;
 
     // Surface a thread (top-level message) when the user is connected to it:
     //   - mentioned in the parent OR any reply
     //   - authored the parent (so a starter sees their own thread)
     //   - replied to the thread
-    const where: Prisma.MessageWhereInput = {
+    // Round 4: and only while he can still see it (project access or a
+    // mention), so a removed member loses the project's other threads.
+    // `canOpenEntity` = he has access to the entity itself; false means
+    // he sees the thread only through a mention (the web opens the
+    // discussion drawer instead of the project page).
+    const { where, canOpen } = await this.msgAccess.scope(viewer, {
       deletedAt: null,
       parentId: null,
       OR: [
@@ -505,7 +633,7 @@ export class MessagesService {
         { replies: { some: { authorId: userId, deletedAt: null } } },
         { replies: { some: { mentions: { some: { userId } }, deletedAt: null } } },
       ],
-    };
+    });
 
     const [data, total] = await Promise.all([
       this.prisma.message.findMany({
@@ -527,7 +655,7 @@ export class MessagesService {
     ]);
 
     return {
-      data,
+      data: data.map((m) => ({ ...m, canOpenEntity: canOpen(m.entityType, m.entityId) })),
       meta: { total, page, perPage, totalPages: Math.ceil(total / perPage) },
     };
   }

@@ -199,7 +199,7 @@ describe('GET /time-entries/weekly — controller', () => {
   function make(canView: boolean) {
     const svc: any = { getWeeklyGrid: jest.fn(async () => ({})) };
     const scope: any = { assertCanViewEmployee: jest.fn(async () => { if (!canView) throw new ForbiddenException(); }) };
-    return { ctrl: new TimeEntriesController(svc, {} as any, scope), svc, scope };
+    return { ctrl: new TimeEntriesController(svc, {} as any, scope, {} as any), svc, scope };
   }
 
   it('passes ?projectId= through as a number', async () => {

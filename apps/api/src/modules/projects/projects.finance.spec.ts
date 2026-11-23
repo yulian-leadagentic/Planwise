@@ -131,7 +131,9 @@ describe('POST / PATCH /projects (B-13 / B-15)', () => {
       setLeader: jest.fn(async () => ({ ...row, leader: { id: 7 } })),
       getMoneySnapshot: jest.fn(async () => stored),
     };
-    return { ctrl: new ProjectsController(projectsService, {} as any), projectsService };
+    // Round 4: PATCH and the leader route are leader-or-Admin; PM is the leader here.
+    const access: any = { assertProjectManage: jest.fn(async () => undefined) };
+    return { ctrl: new ProjectsController(projectsService, access), projectsService };
   }
 
   it('PATCH with a changed budget and no finance:write → 403, nothing written', async () => {

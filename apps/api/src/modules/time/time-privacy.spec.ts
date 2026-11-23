@@ -354,7 +354,7 @@ function makeEntries(entry: any = null) {
       return entry;
     }),
   };
-  const controller = new TimeEntriesController(svc, {} as any, scope);
+  const controller = new TimeEntriesController(svc, {} as any, scope, {} as any);
   return { controller, svc };
 }
 

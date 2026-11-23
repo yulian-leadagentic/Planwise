@@ -17,7 +17,9 @@ import { Prisma } from '@prisma/client';
 
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { extractEligibilityRule } from '../projects/role-eligibility';
 
@@ -45,7 +47,10 @@ interface UpsertProjectRoleTypeDto {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('admin/project-role-types')
 export class ProjectRoleTypesController {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private readonly access: ProjectAccessService,
+  ) {}
 
   @Get()
   @RequirePermissions({ module: 'admin/project-role-types', action: 'read' })
@@ -142,6 +147,7 @@ export class ProjectRoleTypesController {
   @RequirePermissions({ module: 'partners', action: 'read' })
   @ApiOperation({ summary: 'List parties for a project role, annotated with eligibility + reasons' })
   async eligibleParties(
+    @CurrentUser() user: any,
     @Param('code') rawCode: string,
     @Query() query: { projectId?: string },
   ) {
@@ -180,6 +186,9 @@ export class ProjectRoleTypesController {
     const projectIdNum = query.projectId ? Number(query.projectId) : NaN;
     let alreadyAssigned: Set<number> = new Set();
     if (Number.isFinite(projectIdNum) && projectIdNum > 0) {
+      // Round 4 (review fix) — the exclusion list reveals the project's
+      // team, so the caller needs access to that project.
+      await this.access.assertProjectAccess(user.id, projectIdNum, isAdminUser(user));
       const now = new Date();
       const existing = await this.prisma.projectPartnerRole.findMany({
         where: {

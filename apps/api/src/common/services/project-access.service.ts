@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PermissionDeniedException } from '../errors/permission-denied';
+import { isAdminUser } from '../guards/roles.guard';
 
 /** What the caller tried to open — only changes the wording of the 403. */
 type AccessSubject = 'project' | 'task' | 'zone';
@@ -20,6 +22,19 @@ function notProjectMember(subject: AccessSubject): PermissionDeniedException {
     module: 'projects',
     reason: 'NOT_PROJECT_MEMBER',
   });
+}
+
+/** Round 4: the team, leader, settings, close and delete are leader-or-Admin. */
+function notProjectLeader(): PermissionDeniedException {
+  return new PermissionDeniedException(
+    "Only the project leader or an administrator can change this project's team or settings.",
+    { module: 'projects', reason: 'NOT_PROJECT_LEADER' },
+  );
+}
+
+/** An active partner-role row: the same window the Team tab shows. */
+function activePartnerRoleWhere(now: Date): Prisma.ProjectPartnerRoleWhereInput {
+  return { status: 'active', validFrom: { lte: now }, validTo: { gt: now } };
 }
 
 /**
@@ -42,6 +57,20 @@ function notProjectMember(subject: AccessSubject): PermissionDeniedException {
  * managers gets an empty subordinate set, which short-circuits every
  * hierarchy-aware branch below. Behaviour there is bit-for-bit
  * identical to the pre-feature access checks.
+ *
+ * The access rule (permissions round 4, 2026-11-23). A user has access
+ * to a project when any of these holds:
+ *   1. Admin (`isAdminUser`).
+ *   2. Leader or creator.
+ *   3. A ProjectMember row.
+ *   4. An active ProjectPartnerRole whose party is the user's own
+ *      BusinessPartner (the Team tab).
+ *   5. Assignee of any live task of the project (gives the whole project).
+ *   6. Home OrgUnit equals the project's OrgUnit (exact match).
+ *   7. Manager, at any depth, of a user admitted by 2–5.
+ * Every admitted user has full read and write. Managing the project
+ * (team, leader, settings, close, delete) is leader-or-Admin:
+ * `assertProjectManage`.
  */
 @Injectable()
 export class ProjectAccessService {
@@ -86,16 +115,9 @@ export class ProjectAccessService {
   }
 
   /**
-   * Throws ForbiddenException if `userId` is not a member of `projectId`
-   * and is not an admin. Throws NotFoundException if the project
-   * does not exist (or is soft-deleted).
-   *
-   * If direct membership fails, before throwing we widen the check to
-   * hierarchical access: if any of the caller's subordinates (from
-   * their managed org-unit subtree) is a member of / leader of /
-   * creator of the project, the caller is allowed. Callers with no
-   * managed units get an empty subordinate set → identical rejection
-   * behaviour to the pre-feature version.
+   * Throws PermissionDeniedException (403, NOT_PROJECT_MEMBER) unless the
+   * access rule above admits `userId` to `projectId`. Throws
+   * NotFoundException if the project does not exist (or is soft-deleted).
    */
   async assertProjectAccess(
     userId: number,
@@ -114,29 +136,20 @@ export class ProjectAccessService {
   ): Promise<void> {
     if (this.adminBypass(isAdmin)) return;
 
+    // Rule 2 (leader / creator) and rule 6 (org unit) read this one row.
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, deletedAt: null },
-      select: { id: true, leaderId: true, createdBy: true, departmentId: true },
+      select: { id: true, leaderId: true, createdBy: true, orgUnitId: true },
     });
     if (!project) throw new NotFoundException('Project not found');
 
     if (project.leaderId === userId || project.createdBy === userId) return;
 
-    const membership = await this.prisma.projectMember.findFirst({
-      where: { projectId, userId },
-      select: { id: true },
-    });
-    if (membership) return;
+    // Rules 3–5: member row, partner role, task assignee.
+    if (await this.anyUserOnProject([userId], projectId)) return;
 
-    // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit-based
-    // backup access. `User.department` (the free-text string) is now
-    // retired, so the legacy department-name fallback that used to run
-    // alongside this OrgUnit check is gone.
-    const projectForAccess = await this.prisma.project.findFirst({
-      where: { id: projectId, deletedAt: null },
-      select: { orgUnitId: true },
-    });
-    const projectOrgUnitId = projectForAccess?.orgUnitId ?? null;
+    // Rule 6: exact org-unit match.
+    const projectOrgUnitId = project.orgUnitId ?? null;
     if (projectOrgUnitId != null) {
       const caller = await this.prisma.user.findUnique({
         where: { id: userId },
@@ -145,20 +158,103 @@ export class ProjectAccessService {
       if (caller?.orgUnitId === projectOrgUnitId) return;
     }
 
-    // Hierarchical fallback — a manager whose subordinate touches the
-    // project (as member / leader / creator) inherits access.
+    // Rule 7: a manager of someone admitted by rules 2–5.
     const subs = await this.getSubordinateUserIds(userId);
     if (subs.length > 0) {
       if (project.leaderId != null && subs.includes(project.leaderId)) return;
       if (project.createdBy != null && subs.includes(project.createdBy)) return;
-      const subMembership = await this.prisma.projectMember.findFirst({
-        where: { projectId, userId: { in: subs } },
-        select: { id: true },
-      });
-      if (subMembership) return;
+      if (await this.anyUserOnProject(subs, projectId)) return;
     }
 
     throw notProjectMember(subject);
+  }
+
+  /**
+   * Rules 3–5 for a set of users: any of them has a ProjectMember row,
+   * an active partner role through his own BusinessPartner, or an
+   * assignment on a live task of the project.
+   */
+  private async anyUserOnProject(userIds: number[], projectId: number): Promise<boolean> {
+    if (userIds.length === 0) return false;
+
+    const membership = await this.prisma.projectMember.findFirst({
+      where: { projectId, userId: { in: userIds } },
+      select: { id: true },
+    });
+    if (membership) return true;
+
+    const partnerRole = await this.prisma.projectPartnerRole.findFirst({
+      where: {
+        projectId,
+        ...activePartnerRoleWhere(new Date()),
+        party: { user: { id: { in: userIds } } },
+      },
+      select: { id: true },
+    });
+    if (partnerRole) return true;
+
+    const assignment = await this.prisma.taskAssignee.findFirst({
+      where: { userId: { in: userIds }, deletedAt: null, task: { projectId, deletedAt: null } },
+      select: { id: true },
+    });
+    return assignment != null;
+  }
+
+  /**
+   * Project ids where any of `userIds` is leader, creator, member,
+   * active partner-role holder or assignee of a live task (rules 2–5).
+   */
+  private async projectIdsOfUsers(userIds: number[]): Promise<number[]> {
+    if (userIds.length === 0) return [];
+    const [memberships, led, partnerRoles, assignedTasks] = await Promise.all([
+      this.prisma.projectMember.findMany({
+        where: { userId: { in: userIds } },
+        select: { projectId: true },
+      }),
+      this.prisma.project.findMany({
+        where: {
+          OR: [{ leaderId: { in: userIds } }, { createdBy: { in: userIds } }],
+          deletedAt: null,
+        },
+        select: { id: true },
+      }),
+      this.prisma.projectPartnerRole.findMany({
+        where: { ...activePartnerRoleWhere(new Date()), party: { user: { id: { in: userIds } } } },
+        select: { projectId: true },
+      }),
+      this.prisma.task.findMany({
+        where: {
+          deletedAt: null,
+          projectId: { not: null },
+          assignees: { some: { userId: { in: userIds }, deletedAt: null } },
+        },
+        select: { projectId: true },
+        distinct: ['projectId'],
+      }),
+    ]);
+    const ids = new Set<number>();
+    for (const m of memberships ?? []) ids.add(m.projectId);
+    for (const p of led ?? []) ids.add(p.id);
+    for (const r of partnerRoles ?? []) ids.add(r.projectId);
+    for (const t of assignedTasks ?? []) if (t.projectId != null) ids.add(t.projectId);
+    return [...ids];
+  }
+
+  /**
+   * Leader or Admin only (permissions round 4): changing the team
+   * (members, partner roles), the leader, settings / edit, close /
+   * reopen / archive, and delete. 404 when the project is missing or
+   * soft-deleted; 403 NOT_PROJECT_LEADER otherwise.
+   */
+  async assertProjectManage(user: { id: number } & Record<string, any>, projectId: number): Promise<void> {
+    if (this.adminBypass(isAdminUser(user))) return;
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { leaderId: true },
+    });
+    if (!project) throw new NotFoundException('Project not found');
+    if (user?.id != null && project.leaderId === user.id) return;
+    throw notProjectLeader();
   }
 
   /**
@@ -233,24 +329,10 @@ export class ProjectAccessService {
   }
 
   /**
-   * Returns the set of project IDs the user can access. Admins get
+   * Returns the set of project IDs the user can access under the same
+   * rule as assertProjectAccess (rules 2–7). Admins get
    * `{ all: true, projectIds: [] }` (callers treat that as "all").
-   * Used for filtering list endpoints (e.g. execution-board).
-   *
-   * Extended for hierarchical access: after the direct member/led
-   * union, if the user manages any subordinates, add every project
-   * they touch (member of, or leader/creator of). Empty subordinate
-   * set (no org-tree involvement) skips the widen step entirely —
-   * bit-for-bit identical to the pre-feature behaviour.
-   *
-   * Extended for org-unit-level backup access (feat/ops-complete,
-   * 2026-08; retirement of `User.department` completed 2026-09-28): a
-   * user can always READ the projects of their home OrgUnit for
-   * backup, even without a direct membership or task assignment. The
-   * caller's `User.orgUnitId` is matched against `Project.orgUnitId`
-   * and every match is added to the accessible set. Task assignment
-   * only NARROWS what the UI shows in "my tasks"/filters — it never
-   * removes org-mates' projects from the reading set.
+   * Used for filtering list endpoints.
    */
   async getAccessibleProjectIds(
     userId: number,
@@ -258,22 +340,10 @@ export class ProjectAccessService {
   ): Promise<{ all: boolean; projectIds: number[] }> {
     if (this.adminBypass(isAdmin)) return { all: true, projectIds: [] };
 
-    const memberships = await this.prisma.projectMember.findMany({
-      where: { userId },
-      select: { projectId: true },
-    });
-    const led = await this.prisma.project.findMany({
-      where: { OR: [{ leaderId: userId }, { createdBy: userId }], deletedAt: null },
-      select: { id: true },
-    });
-    const ids = new Set<number>();
-    for (const m of memberships) ids.add(m.projectId);
-    for (const p of led) ids.add(p.id);
+    // Rules 2–5 for the caller.
+    const ids = new Set<number>(await this.projectIdsOfUsers([userId]));
 
-    // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit-based
-    // department widen. The legacy `User.department` → Department.name
-    // → departmentId chain is retired; OrgUnit is the single source of
-    // truth for org-tree membership.
+    // Rule 6: projects of the caller's home OrgUnit.
     const caller = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { orgUnitId: true },
@@ -286,26 +356,9 @@ export class ProjectAccessService {
       for (const p of unitProjects) ids.add(p.id);
     }
 
-    // Hierarchical widen.
+    // Rule 7: rules 2–5 for every subordinate in the managed subtree.
     const subs = await this.getSubordinateUserIds(userId);
-    if (subs.length > 0) {
-      const subMemberships = await this.prisma.projectMember.findMany({
-        where: { userId: { in: subs } },
-        select: { projectId: true },
-      });
-      const subLed = await this.prisma.project.findMany({
-        where: {
-          OR: [
-            { leaderId: { in: subs } },
-            { createdBy: { in: subs } },
-          ],
-          deletedAt: null,
-        },
-        select: { id: true },
-      });
-      for (const m of subMemberships) ids.add(m.projectId);
-      for (const p of subLed) ids.add(p.id);
-    }
+    for (const id of await this.projectIdsOfUsers(subs)) ids.add(id);
 
     return { all: false, projectIds: [...ids] };
   }

@@ -46,7 +46,8 @@ import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as Sentry from '@sentry/react';
 import client from '@/api/client';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied, getPermissionMessage } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
@@ -167,6 +168,7 @@ export function TeamTab({
     data: team,
     isLoading,
     isError,
+    error: teamError,
     refetch: refetchTeam,
   } = useQuery<ProjectTeamData>({
     queryKey: ['project-team', projectId],
@@ -831,6 +833,10 @@ export function TeamTab({
     return (
       <p className="py-8 text-center text-sm text-slate-400 dark:text-slate-500">Loading team…</p>
     );
+  }
+  // Round 4: a 403 shows the server's reason, not "Couldn't load".
+  if (isPermissionDenied(teamError)) {
+    return <NoAccess variant="page" what="this project's team" message={getPermissionMessage(teamError)} />;
   }
   if (isError || !team) {
     return (

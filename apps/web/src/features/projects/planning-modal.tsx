@@ -2,7 +2,8 @@ import { useState, useMemo, useRef, useEffect, useCallback, createContext, useCo
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 import { Plus, ArrowLeft, Trash2, Search, ChevronRight, ChevronDown, Copy, X, UserPlus, GripVertical, Layers, MessageSquare, Paperclip, Download, FileText, AlertTriangle, ChevronsDownUp, ChevronsUpDown, Pencil, SlidersHorizontal, Archive, Undo2, Calendar } from 'lucide-react';
-import { notify, getErrorMessage, isPermissionDenied } from '@/lib/notify';
+import { notify, getErrorMessage, isPermissionDenied, getPermissionMessage } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
@@ -5674,7 +5675,7 @@ function PlanningView({ projectId }: { projectId: number }) {
   };
   const clearSelection = () => setSelectedTaskIds(new Set());
 
-  const { data: planningData, isLoading } = useQuery({
+  const { data: planningData, isLoading, error: planningError } = useQuery({
     queryKey: ['planning', projectId],
     queryFn: () => planningApi.getData(projectId),
     enabled: !!projectId,
@@ -6603,6 +6604,10 @@ function PlanningView({ projectId }: { projectId: number }) {
   const totalLoggedHours = Math.round(totalLoggedMinutes / 60 * 10) / 10;
 
   if (isLoading) return <div className="flex h-96 items-center justify-center text-[13px] text-slate-400 dark:text-slate-500">Loading...</div>;
+  // Round 4: a 403 shows the server's reason, not an empty grid.
+  if (isPermissionDenied(planningError)) {
+    return <NoAccess variant="page" what="this project's planning" message={getPermissionMessage(planningError)} />;
+  }
 
   return (
     <PlanningColumnsContext.Provider value={planningColumnsCtx}>

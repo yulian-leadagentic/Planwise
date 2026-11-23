@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExecutionPlanningService } from '../execution-planning/execution-planning.service';
 import {
@@ -466,6 +466,30 @@ export class SchedulerService {
     return row.projectId;
   }
 
+  /** Round 4: a ZoneDeliverableTarget id → its project, for the access check. */
+  async getProjectIdForTarget(targetId: number): Promise<number> {
+    const row = await this.prisma.zoneDeliverableTarget.findUnique({
+      where: { id: targetId },
+      select: { projectDeliverable: { select: { projectId: true, deletedAt: true } } },
+    });
+    if (!row || !row.projectDeliverable || row.projectDeliverable.deletedAt != null) {
+      throw new NotFoundException('Deliverable target not found');
+    }
+    return row.projectDeliverable.projectId;
+  }
+
+  /** Round 4: the dry-run's zone must be a live zone of the deliverable's project. */
+  async assertZoneInProject(zoneId: number, projectId: number): Promise<void> {
+    const zone = await this.prisma.zone.findFirst({
+      where: { id: zoneId, deletedAt: null },
+      select: { projectId: true },
+    });
+    if (!zone) throw new NotFoundException('Zone not found');
+    if (zone.projectId !== projectId) {
+      throw new BadRequestException('The zone belongs to another project');
+    }
+  }
+
   /**
    * §16 (2026-11-18) · The ZoneDeliverableTarget that carries the
    * (ProjectDeliverable × Zone) dry-run of a zone with no row of its own:
@@ -688,10 +712,19 @@ export class SchedulerService {
    * `projectId`/`projectName` already (populated by the per-project
    * call), so the dashboard can group by project without a second
    * lookup.
+   *
+   * Round 4: `projectIds` limits the scan to the caller's accessible
+   * projects; omit it (Admin) to scan all. Soft-deleted projects are
+   * skipped.
    */
-  async scanAllActiveOverload(): Promise<AllOverloadScanResult> {
+  async scanAllActiveOverload(projectIds?: number[]): Promise<AllOverloadScanResult> {
     const projects = await this.prisma.project.findMany({
-      where: { status: 'active', isArchived: false },
+      where: {
+        status: 'active',
+        isArchived: false,
+        deletedAt: null,
+        ...(projectIds ? { id: { in: projectIds } } : {}),
+      },
       select: { id: true },
       orderBy: { id: 'asc' },
     });

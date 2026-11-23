@@ -9,18 +9,19 @@ import {
 } from '@nestjs/websockets';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger, NotFoundException } from '@nestjs/common';
 
 import { WsAuthService } from '../../common/services/ws-auth.service';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { isAdminUser } from '../../common/guards/roles.guard';
+import { socketCorsOrigins } from '../../common/ws-cors';
 
 type EntityType = 'project' | 'task' | 'zone';
 const ENTITY_TYPES: readonly EntityType[] = ['project', 'task', 'zone'];
 
 @WebSocketGateway({
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+    origin: socketCorsOrigins(),
     credentials: true,
   },
   namespace: '/messaging',
@@ -141,20 +142,63 @@ export class MessagesGateway implements OnGatewayConnection, OnGatewayDisconnect
 
   @OnEvent('message.created')
   handleMessageCreated(payload: { message: any; entityType: string; entityId: number }) {
-    const room = `entity-${payload.entityType}-${payload.entityId}`;
-    this.server.to(room).emit('message:new', { message: payload.message });
+    return this.emitToRoom(payload.entityType, payload.entityId, 'message:new', { message: payload.message });
   }
 
   @OnEvent('message.updated')
   handleMessageUpdated(payload: { message: any; entityType: string; entityId: number }) {
-    const room = `entity-${payload.entityType}-${payload.entityId}`;
-    this.server.to(room).emit('message:updated', { message: payload.message });
+    return this.emitToRoom(payload.entityType, payload.entityId, 'message:updated', { message: payload.message });
   }
 
   @OnEvent('message.deleted')
   handleMessageDeleted(payload: { messageId: number; entityType: string; entityId: number }) {
-    const room = `entity-${payload.entityType}-${payload.entityId}`;
-    this.server.to(room).emit('message:deleted', { messageId: payload.messageId });
+    return this.emitToRoom(payload.entityType, payload.entityId, 'message:deleted', { messageId: payload.messageId });
+  }
+
+  /**
+   * Round 4 (review fix) — a socket keeps its rooms after its user loses
+   * access to the project (removed as a member, partner role or task
+   * assignee, a new leader, an org-unit change …). So every broadcast
+   * re-checks each socket in the room with the same rule as message:join
+   * (one check per user per broadcast): a user who no longer passes is
+   * taken out of the room and gets nothing. This covers project, task and
+   * zone rooms and every removal path, without hooks in each of them.
+   */
+  private async emitToRoom(entityType: string, entityId: number, event: string, data: unknown): Promise<void> {
+    const target = parseEntity({ entityType, entityId });
+    if (!target) return;
+    const room = roomFor(target.entityType, target.entityId);
+    try {
+      const sockets = await this.server.in(room).fetchSockets();
+      const verdicts = new Map<number, Promise<'allowed' | 'denied' | 'error'>>();
+      const verdictFor = (user: any) => {
+        let verdict = verdicts.get(user.id);
+        if (!verdict) {
+          verdict = this.assertEntityAccess(user, target.entityType, target.entityId).then(
+            () => 'allowed' as const,
+            (err) => (err instanceof ForbiddenException || err instanceof NotFoundException ? 'denied' : 'error'),
+          );
+          verdicts.set(user.id, verdict);
+        }
+        return verdict;
+      };
+      await Promise.all(
+        sockets.map(async (socket) => {
+          const user = socket.data?.user;
+          const verdict = user?.id != null ? await verdictFor(user) : 'denied';
+          if (verdict === 'allowed') {
+            socket.emit(event, data);
+          } else if (verdict === 'denied') {
+            socket.leave(room);
+            this.logger.debug(`Socket ${socket.id} (user ${user?.id}) lost access; left room ${room}`);
+          }
+          // 'error' (e.g. the database is unreachable): this event is
+          // skipped for the socket, which keeps its room.
+        }),
+      );
+    } catch (err) {
+      this.logger.warn(`Broadcast ${event} to ${room} failed: ${(err as Error)?.message ?? err}`);
+    }
   }
 
   private async assertEntityAccess(user: any, entityType: EntityType, entityId: number): Promise<void> {

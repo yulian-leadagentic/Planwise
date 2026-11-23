@@ -16,6 +16,7 @@ import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagg
 
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard, userHasModulePermission } from '../../../common/guards/roles.guard';
+import { ProjectAccessService } from '../../../common/services/project-access.service';
 import { RequirePermissions } from '../../../common/decorators/roles.decorator';
 import { permissionDenied } from '../../../common/errors/permission-denied';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
@@ -52,6 +53,7 @@ export class ContactsImportController {
     private readonly presets: ContactsMappingPresetService,
     private readonly resolve: ContactsResolveService,
     private readonly commitService: ContactsCommitService,
+    private readonly projectAccess: ProjectAccessService,
   ) {}
 
   /** Extra defense — the guard covers `data-import/contacts`; make sure
@@ -225,6 +227,12 @@ export class ContactsImportController {
     },
   ): Promise<CommitResult> {
     this.assertCanImport(user);
+    // Round 4 (review fix) — attaching the imported people to a project
+    // changes that project's team: leader or Admin only, as on the Team
+    // tab. Checked before anything is written.
+    if (body.attachToProjectId != null) {
+      await this.projectAccess.assertProjectManage(user, Number(body.attachToProjectId));
+    }
     return this.commitService.commit(
       {
         sheet: body.sheet,

@@ -20,9 +20,10 @@ import * as fs from 'fs';
 
 import { ProjectFilesService } from './project-files.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 
 /**
  * Build an RFC 5987-compliant Content-Disposition header. Browsers fall back
@@ -71,12 +72,22 @@ function contentDispositionAttachment(name: string): string {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('projects/:projectId/files')
 export class ProjectFilesController {
-  constructor(private readonly service: ProjectFilesService) {}
+  constructor(
+    private readonly service: ProjectFilesService,
+    // Round 4: every route is project-scoped. A fileId is bound to the
+    // URL's projectId in the service, so asserting the project suffices.
+    private readonly access: ProjectAccessService,
+  ) {}
+
+  private assertAccess(user: any, projectId: number): Promise<void> {
+    return this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
+  }
 
   @Get()
   @RequirePermissions({ module: 'projects/files', action: 'read' })
   @ApiOperation({ summary: 'List files attached to a project' })
-  list(@Param('projectId', ParseIntPipe) projectId: number) {
+  async list(@CurrentUser() user: any, @Param('projectId', ParseIntPipe) projectId: number) {
+    await this.assertAccess(user, projectId);
     return this.service.list(projectId);
   }
 
@@ -94,34 +105,38 @@ export class ProjectFilesController {
     },
   })
   @ApiOperation({ summary: 'Upload a file to a project' })
-  upload(
+  async upload(
     @Param('projectId', ParseIntPipe) projectId: number,
     @CurrentUser() user: any,
     @UploadedFile() file: Express.Multer.File,
     @Body('description') description?: string,
   ) {
+    await this.assertAccess(user, projectId);
     return this.service.addUpload(projectId, user.id, file, description);
   }
 
   @Post('link')
   @RequirePermissions({ module: 'projects/files', action: 'write' })
   @ApiOperation({ summary: 'Add an external link / network path' })
-  addLink(
+  async addLink(
     @Param('projectId', ParseIntPipe) projectId: number,
     @CurrentUser() user: any,
     @Body() body: { name: string; url: string; description?: string },
   ) {
+    await this.assertAccess(user, projectId);
     return this.service.addLink(projectId, user.id, body);
   }
 
   @Delete(':fileId')
   @RequirePermissions({ module: 'projects/files', action: 'delete' })
   @ApiOperation({ summary: 'Remove a project file or link' })
-  remove(
+  async remove(
+    @CurrentUser() user: any,
     @Param('projectId', ParseIntPipe) projectId: number,
     @Param('fileId') rawFileId: string,
   ) {
     const fileId = parseProjectFileId(rawFileId);
+    await this.assertAccess(user, projectId);
     return this.service.remove(projectId, fileId);
   }
 
@@ -129,11 +144,13 @@ export class ProjectFilesController {
   @RequirePermissions({ module: 'projects/files', action: 'read' })
   @ApiOperation({ summary: 'Stream an uploaded project file' })
   async download(
+    @CurrentUser() user: any,
     @Param('projectId', ParseIntPipe) projectId: number,
     @Param('fileId') rawFileId: string,
     @Res({ passthrough: true }) res: Response,
   ): Promise<StreamableFile> {
     const fileId = parseProjectFileId(rawFileId);
+    await this.assertAccess(user, projectId);
     const { path, file } = await this.service.resolveUploadPath(projectId, fileId);
     res.set({
       'Content-Type': file.mimeType || 'application/octet-stream',

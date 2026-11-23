@@ -17,6 +17,28 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class TaskChecklistService {
   constructor(private prisma: PrismaService) {}
 
+  /** Task of a live checklist item (round 4 access check). 404 if missing. */
+  async getItemTaskId(itemId: number): Promise<number> {
+    const item = await this.prisma.taskChecklistItem.findFirst({
+      where: { id: itemId, deletedAt: null },
+      select: { taskId: true },
+    });
+    if (!item) throw new NotFoundException('Checklist item not found');
+    return item.taskId;
+  }
+
+  /** Distinct tasks of the given live items. 404 if any item is missing. */
+  async getItemsTaskIds(itemIds: number[]): Promise<number[]> {
+    const ids = [...new Set(itemIds)];
+    if (ids.length === 0) return [];
+    const rows = await this.prisma.taskChecklistItem.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      select: { taskId: true },
+    });
+    if (rows.length !== ids.length) throw new NotFoundException('Checklist item not found');
+    return [...new Set(rows.map((r) => r.taskId))];
+  }
+
   async list(taskId: number) {
     return this.prisma.taskChecklistItem.findMany({
       where: { taskId, deletedAt: null },

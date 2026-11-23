@@ -28,7 +28,8 @@ const PROVIDER_LABEL: Record<LinkProvider, string> = {
   'generic': 'Link',
 };
 import client from '@/api/client';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied, getPermissionMessage } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { UserAvatar } from '@/components/shared/user-avatar';
@@ -88,10 +89,12 @@ export function FilesTab({ projectId }: { projectId: number }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { data: files = [], isLoading } = useQuery<ProjectFile[]>({
+  const { data: files = [], isLoading, error: filesError } = useQuery<ProjectFile[]>({
     queryKey: ['projects', projectId, 'files'],
     queryFn: () => client.get(`/projects/${projectId}/files`).then((r) => r.data?.data ?? r.data),
   });
+  // Round 4: a 403 shows the server's reason, not an empty list.
+  const filesDenied = isPermissionDenied(filesError);
 
   // Favorites: pinned to top of EACH section list. Persisted locally per
   // project (see useFavorites — server-side persistence is a planned follow-up).
@@ -188,7 +191,7 @@ export function FilesTab({ projectId }: { projectId: number }) {
             Upload documents or link to files on a network share or shared drive
           </p>
         </div>
-        {canWrite && (
+        {canWrite && !filesDenied && (
           <div className="flex items-center gap-2">
             <input ref={fileInputRef} type="file" onChange={handleFilePick} className="hidden" />
             <button
@@ -214,6 +217,8 @@ export function FilesTab({ projectId }: { projectId: number }) {
 
       {isLoading ? (
         <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading files...</div>
+      ) : filesDenied ? (
+        <NoAccess variant="page" what="this project's files" message={getPermissionMessage(filesError)} />
       ) : files.length === 0 ? (
         <div className="rounded-[14px] border border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-800/40 p-10 text-center">
           <FileText className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />

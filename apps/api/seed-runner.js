@@ -55,7 +55,8 @@ async function seed() {
       { name: 'Time', route: '/time', icon: 'Clock', sortOrder: 3 },
       { name: 'Projects', route: '/projects', icon: 'FolderKanban', sortOrder: 4 },
       { name: 'Contracts', route: '/contracts', icon: 'FileText', sortOrder: 5 },
-      { name: 'People', route: '/people', icon: 'Users', sortOrder: 6 },
+      // Round 4 — the module the code checks (`partners:*`); see prisma/seed.ts.
+      { name: 'Partners', route: '/partners', icon: 'Briefcase', sortOrder: 6 },
       { name: 'Reports', route: '/reports', icon: 'BarChart3', sortOrder: 7 },
       { name: 'Templates', route: '/templates', icon: 'Copy', sortOrder: 8 },
       { name: 'Admin', route: '/admin', icon: 'Settings', sortOrder: 9 },
@@ -181,11 +182,15 @@ async function seed() {
           Time:      { R: true, W: true, D: true, A: true, E: true },
           Projects:  { R: true, W: true, D: true, A: true, E: true },
           Contracts: { R: true, W: true, D: true, A: true, E: true },
-          People:    { R: true, W: true, D: true, A: true, E: true },
+          Partners:  { R: true, W: true, D: true, A: true, E: true },
           Reports:   { R: true, E: true },
           Templates: { R: true, W: true, D: true, A: true, E: true },
           Admin:     { R: true, W: true, D: true, A: true, E: true },
           'Data Import': { R: true, W: true },
+          // Same explicit importer grants as prisma/seed.ts (round 4).
+          'Import Employees': { R: true, W: true },
+          'Import Partners':  { R: true, W: true },
+          'Import Contacts':  { R: true, W: true },
         } },
       { name: 'HR Manager', description: 'Full HR access + Time read',
         grants: { Dashboard: { R: true }, Time: { R: true }, HR: { R: true, W: true, A: true, E: true } } },
@@ -200,7 +205,7 @@ async function seed() {
           Time:      { R: true, A: true },
           Projects:  { R: true, W: true, D: true },
           Contracts: { R: true, W: true },
-          People:    { R: true },
+          Partners:  { R: true },
           Reports:   { R: true, E: true },
           Templates: { R: true },
         } },
@@ -214,7 +219,7 @@ async function seed() {
       { name: 'Viewer', description: 'Read-only',
         grants: {
           Dashboard: { R: true }, Tasks: { R: true }, Time: { R: true }, Projects: { R: true },
-          Contracts: { R: true }, People: { R: true }, Reports: { R: true },
+          Contracts: { R: true }, Partners: { R: true }, Reports: { R: true },
         } },
     ];
 

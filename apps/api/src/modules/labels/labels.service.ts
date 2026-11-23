@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLabelDto } from './dto/create-label.dto';
@@ -8,15 +8,29 @@ import { UpdateLabelDto } from './dto/update-label.dto';
 export class LabelsService {
   constructor(private prisma: PrismaService) {}
 
+  /** Project of a label, for the controller's access check. */
+  async getProjectId(id: number): Promise<number> {
+    const label = await this.prisma.label.findFirst({ where: { id }, select: { projectId: true } });
+    if (!label) throw new NotFoundException('Label not found');
+    return label.projectId;
+  }
+
+  /** Round 4: a parent label must belong to the same project. */
+  private async findParentInProject(parentId: number, projectId: number, notFoundMessage: string) {
+    const parent = await this.prisma.label.findFirst({ where: { id: parentId } });
+    if (!parent) throw new NotFoundException(notFoundMessage);
+    if (parent.projectId !== projectId) {
+      throw new BadRequestException('The parent label belongs to another project');
+    }
+    return parent;
+  }
+
   async create(dto: CreateLabelDto) {
     let path = dto.name;
     let depth = 0;
 
     if (dto.parentId) {
-      const parent = await this.prisma.label.findFirst({ where: { id: dto.parentId } });
-      if (!parent) {
-        throw new NotFoundException('Parent label not found');
-      }
+      const parent = await this.findParentInProject(dto.parentId, dto.projectId, 'Parent label not found');
       path = `${parent.path} / ${dto.name}`;
       depth = parent.depth + 1;
     }
@@ -87,6 +101,14 @@ export class LabelsService {
   async update(id: number, dto: UpdateLabelDto) {
     const existing = await this.findOne(id);
 
+    // Round 4: a label stays in its project; a new parent must be in it too.
+    if (dto.projectId !== undefined && dto.projectId !== existing.projectId) {
+      throw new BadRequestException('A label cannot move to another project');
+    }
+    if (dto.parentId != null) {
+      await this.findParentInProject(dto.parentId, existing.projectId, 'Parent label not found');
+    }
+
     const data: any = { ...dto };
 
     // Recompute path if name changed
@@ -99,7 +121,7 @@ export class LabelsService {
       }
 
       // Update all descendants paths
-      await this.updateDescendantPaths(id, existing.path, data.path);
+      await this.updateDescendantPaths(existing.projectId, existing.path, data.path);
     }
 
     return this.prisma.label.update({
@@ -109,9 +131,10 @@ export class LabelsService {
     });
   }
 
-  private async updateDescendantPaths(parentId: number, oldPath: string, newPath: string) {
+  /** Rewrites descendant paths; scoped to the label's own project. */
+  private async updateDescendantPaths(projectId: number, oldPath: string, newPath: string) {
     const descendants = await this.prisma.label.findMany({
-      where: { path: { startsWith: oldPath + ' / ' } },
+      where: { projectId, path: { startsWith: oldPath + ' / ' } },
     });
 
     for (const descendant of descendants) {
@@ -129,10 +152,7 @@ export class LabelsService {
     let depth = 0;
 
     if (parentId) {
-      const parent = await this.prisma.label.findFirst({ where: { id: parentId } });
-      if (!parent) {
-        throw new NotFoundException('Target parent label not found');
-      }
+      const parent = await this.findParentInProject(parentId, label.projectId, 'Target parent label not found');
       path = `${parent.path} / ${label.name}`;
       depth = parent.depth + 1;
     }
@@ -146,7 +166,7 @@ export class LabelsService {
 
     // Update descendants if path changed
     if (oldPath !== path) {
-      await this.updateDescendantPaths(id, oldPath, path);
+      await this.updateDescendantPaths(label.projectId, oldPath, path);
     }
 
     return updated;

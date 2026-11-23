@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { useNotifications } from '@/hooks/use-notifications';
 import { formatRelative } from '@/lib/date-utils';
 import { cn } from '@/lib/utils';
+import { DiscussionDrawer } from '@/features/messaging/discussion-drawer';
+import { notificationClickAction, type DiscussionTarget } from '@/features/messaging/open-discussion';
 
 const typeIcons: Record<string, any> = {
   mention: { icon: MessageSquare, color: 'text-blue-600 bg-blue-100' },
@@ -16,6 +18,8 @@ const typeIcons: Record<string, any> = {
 
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
+  // Round 4C-2: a mention in a project he can't open shows its discussion here.
+  const [drawerTarget, setDrawerTarget] = useState<DiscussionTarget | null>(null);
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications();
   const navigate = useNavigate();
   const ref = useRef<HTMLDivElement>(null);
@@ -32,9 +36,9 @@ export function NotificationCenter() {
   const handleNotificationClick = (n: any) => {
     if (!n.isRead) markRead(n.id);
     setOpen(false);
-    if (n.entityType === 'project' && n.entityId) navigate(`/projects/${n.entityId}`);
-    else if (n.entityType === 'task' && n.entityId) navigate(`/projects`);
-    else navigate('/inbox');
+    const action = notificationClickAction(n);
+    if (action.kind === 'drawer') setDrawerTarget(action.target);
+    else navigate(action.to);
   };
 
   return (
@@ -120,6 +124,15 @@ export function NotificationCenter() {
             </button>
           </div>
         </div>
+      )}
+
+      {drawerTarget && (
+        <DiscussionDrawer
+          open
+          onClose={() => setDrawerTarget(null)}
+          entityType={drawerTarget.entityType}
+          entityId={drawerTarget.entityId}
+        />
       )}
     </div>
   );

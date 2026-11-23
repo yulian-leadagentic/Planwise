@@ -21,6 +21,11 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ReportQueryDto } from './dto/report-query.dto';
+import { ProjectAccessService } from '../../common/services/project-access.service';
+import {
+  assertFinanceProjectAccess,
+  financeProjectScope,
+} from '../../common/services/finance-scope';
 // `canSeeFinance` — explicit finance:read, no admin short-circuit
 // (finance is in the RolesGuard's NO_ADMIN_BYPASS). Shared helper since
 // permissions round 2.
@@ -34,6 +39,7 @@ export class ReportsController {
   constructor(
     private readonly reportsService: ReportsService,
     private readonly employeeScope: EmployeeScopeService,
+    private readonly access: ProjectAccessService,
   ) {}
 
   // ─── Permissions round 3 — privacy (2026-11-22) ─────────────────────
@@ -166,7 +172,11 @@ export class ReportsController {
   @RequirePermissions({ module: 'reports', action: 'read' })
   @ApiOperation({ summary: 'Milestones report' })
   async milestones(@CurrentUser() user: any, @Query() query: ReportQueryDto) {
-    const rows = await this.reportsService.milestonesReport(query);
+    // Round 4 — per-project list: finance:read sees every project, anyone
+    // else only the projects he can access.
+    if (query.projectId) await assertFinanceProjectAccess(this.access, user, Number(query.projectId));
+    const projectIds = query.projectId ? null : await financeProjectScope(this.access, user);
+    const rows = await this.reportsService.milestonesReport(query, projectIds);
     // Permissions round 2 (B-19) — `LabelMilestone.amount` is a payment
     // value; ambiguous name, so stripped here for non-finance callers.
     return canSeeFinance(user) ? rows : omitKeys(rows, AMOUNT_KEYS);

@@ -24,10 +24,32 @@ export class BillingsService {
     });
   }
 
-  async findAll(query: any) {
+  /** Project of a contract (null = no project). 404 if missing. */
+  async getContractProjectId(contractId: number): Promise<number | null> {
+    const c = await this.prisma.contract.findFirst({ where: { id: contractId }, select: { projectId: true } });
+    if (!c) throw new NotFoundException('Contract not found');
+    return c.projectId ?? null;
+  }
+
+  /** Project of a billing, through its contract. 404 if missing. */
+  async getBillingProjectId(id: number): Promise<number | null> {
+    const b = await this.prisma.billing.findUnique({
+      where: { id },
+      select: { contract: { select: { projectId: true } } },
+    });
+    if (!b) throw new NotFoundException('Billing not found');
+    return b.contract?.projectId ?? null;
+  }
+
+  /**
+   * `projectIds` (round 4): null = every billing; an array limits the
+   * list to contracts of those projects.
+   */
+  async findAll(query: any, projectIds: number[] | null = null) {
     const where: any = {};
     if (query.contractId) where.contractId = Number(query.contractId);
     if (query.status) where.status = query.status;
+    if (projectIds) where.contract = { projectId: { in: projectIds } };
 
     return this.prisma.billing.findMany({
       where,

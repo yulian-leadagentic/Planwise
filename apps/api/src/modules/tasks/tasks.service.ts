@@ -120,6 +120,67 @@ export class TasksService {
     return [];
   }
 
+  /**
+   * Round 4 (2026-11-23) — a task stays in its project. Checks a create /
+   * update target against the task's project:
+   *   • `projectId` may not change once set (CROSS_PROJECT_MOVE);
+   *   • a zone must be in the same project (CROSS_PROJECT_MOVE on update,
+   *     CROSS_PROJECT_PLACEMENT on create);
+   *   • a project deliverable must be in the same project
+   *     (CROSS_PROJECT_PLACEMENT).
+   * `currentProjectId` is null on create and for personal tasks without a
+   * project; there the zone decides the project, as on create. Returns
+   * the resulting project id.
+   */
+  private async assertPlacementInProject(
+    currentProjectId: number | null,
+    target: { projectId?: number | null; zoneId?: number | null; projectDeliverableId?: number | null },
+    mode: 'create' | 'update',
+  ): Promise<number | null> {
+    let projectId = currentProjectId;
+    if (target.projectId !== undefined && target.projectId !== currentProjectId) {
+      if (mode === 'update' && currentProjectId != null) {
+        throw new BadRequestException({
+          code: 'CROSS_PROJECT_MOVE',
+          message: "A task can't be moved to another project.",
+        });
+      }
+      projectId = target.projectId ?? null;
+    }
+    if (target.zoneId != null) {
+      const zone = await this.prisma.zone.findFirst({
+        where: { id: target.zoneId, deletedAt: null },
+        select: { projectId: true },
+      });
+      if (!zone) throw new NotFoundException('Zone not found');
+      if (projectId == null) {
+        projectId = zone.projectId;
+      } else if (zone.projectId !== projectId) {
+        throw new BadRequestException(
+          mode === 'update'
+            ? { code: 'CROSS_PROJECT_MOVE', message: 'A task can only move to a zone of its own project.' }
+            : { code: 'CROSS_PROJECT_PLACEMENT', message: 'The zone belongs to a different project than the task.' },
+        );
+      }
+    }
+    if (target.projectDeliverableId != null) {
+      const deliverable =
+        projectId == null
+          ? null
+          : await this.prisma.projectDeliverable.findFirst({
+              where: { id: target.projectDeliverableId, projectId, deletedAt: null },
+              select: { id: true },
+            });
+      if (!deliverable) {
+        throw new BadRequestException({
+          code: 'CROSS_PROJECT_PLACEMENT',
+          message: 'A task can only be linked to a deliverable of its own project.',
+        });
+      }
+    }
+    return projectId;
+  }
+
   async create(userId: number, dto: CreateTaskDto) {
     // Three paths:
     //   • personal task: isPersonal=true → project/zone/service ALL optional
@@ -179,6 +240,13 @@ export class TasksService {
       }
       projectId = dto.projectId;
     }
+
+    // Round 4 — zone, project and deliverable must agree.
+    await this.assertPlacementInProject(
+      null,
+      { projectId: dto.projectId, zoneId: dto.zoneId, projectDeliverableId: dto.projectDeliverableId },
+      'create',
+    );
 
     // If serviceTypeId provided AND we have a zone, upsert the
     // ZoneServiceType junction row. For project-root tasks we skip this
@@ -687,6 +755,21 @@ export class TasksService {
       }
     }
 
+    // Round 4 — the task stays in its project; a zone or deliverable
+    // must be in that project. A personal task without a project that
+    // gets a zone joins the zone's project (as on create). Legacy rows
+    // with a zone but no projectId belong to their zone's project.
+    const storedProjectId: number | null = (existing as any).projectId ?? null;
+    const placedProjectId = await this.assertPlacementInProject(
+      storedProjectId ?? (existing as any).zone?.projectId ?? null,
+      { projectId: dto.projectId, zoneId: dto.zoneId, projectDeliverableId: dto.projectDeliverableId },
+      'update',
+    );
+    const joinsProject =
+      dto.zoneId != null && dto.projectId === undefined && placedProjectId !== storedProjectId
+        ? { projectId: placedProjectId }
+        : {};
+
     // Pull date fields out so we can either set them, clear them, or leave
     // them untouched depending on whether the caller sent each key.
     // (Empty string / null → null; missing → leave alone.)
@@ -789,6 +872,7 @@ export class TasksService {
       where: { id },
       data: {
         ...rest,
+        ...joinsProject,
         status: dto.status as any,
         priority: dto.priority as any,
         estimatedStartDate: movedEstimatedStart ?? dateOrNull(estimatedStartDate as any),
@@ -1156,6 +1240,20 @@ export class TasksService {
   ) {
     await this.findOne(taskId);
 
+    // Round 4 — a reply must sit under a comment of the same task.
+    if (data.parentId != null) {
+      const parent = await this.prisma.taskComment.findFirst({
+        where: { id: data.parentId, taskId },
+        select: { id: true },
+      });
+      if (!parent) {
+        throw new BadRequestException({
+          code: 'COMMENT_PARENT_MISMATCH',
+          message: 'You can only reply to a comment on the same task.',
+        });
+      }
+    }
+
     // Create the comment first, then promote any pre-uploaded task-level
     // attachments to belong to it. The frontend flow is:
     //   1. user picks files in the composer
@@ -1260,6 +1358,29 @@ export class TasksService {
   }
 
   async batchReorder(items: { id: number; sortOrder: number; zoneId?: number }[]) {
+    // Round 4 — a reorder moves a task only between zones of its project.
+    const moves = items.filter((i) => i.zoneId != null);
+    if (moves.length > 0) {
+      const tasks = await this.prisma.task.findMany({
+        where: { id: { in: moves.map((m) => m.id) } },
+        select: { id: true, projectId: true },
+      });
+      const zones = await this.prisma.zone.findMany({
+        where: { id: { in: [...new Set(moves.map((m) => m.zoneId as number))] }, deletedAt: null },
+        select: { id: true, projectId: true },
+      });
+      const taskProject = new Map(tasks.map((t) => [t.id, t.projectId]));
+      const zoneProject = new Map(zones.map((z) => [z.id, z.projectId]));
+      for (const m of moves) {
+        if (!zoneProject.has(m.zoneId as number)) throw new NotFoundException('Zone not found');
+        if (zoneProject.get(m.zoneId as number) !== taskProject.get(m.id)) {
+          throw new BadRequestException({
+            code: 'CROSS_PROJECT_MOVE',
+            message: 'A task can only move to a zone of its own project.',
+          });
+        }
+      }
+    }
     await this.prisma.$transaction(
       items.map((item) =>
         this.prisma.task.update({
@@ -1379,7 +1500,7 @@ export class TasksService {
   ) {
     const task = await this.prisma.task.findFirst({
       where: { id: taskId, deletedAt: null },
-      select: { id: true, status: true, requiresReview: true },
+      select: { id: true, status: true, requiresReview: true, projectId: true, code: true, name: true },
     });
     if (!task) throw new NotFoundException('Task not found');
 
@@ -1409,6 +1530,13 @@ export class TasksService {
         nextStatus = 'in_review';
         break;
       case 'approve':
+        // Round 4 — approve only what is waiting for review.
+        if (task.status !== 'in_review') {
+          throw new BadRequestException({
+            code: 'TASK_NOT_IN_REVIEW',
+            message: 'Only a task that is In Review can be approved.',
+          });
+        }
         nextStatus = 'completed';
         break;
       case 'return':
@@ -1443,7 +1571,53 @@ export class TasksService {
       }),
     ]);
 
+    // Round 4 — same follow-up as a status change through update().
+    if (nextStatus !== task.status) {
+      await this.activityLog.logTaskStatusChange({
+        actorUserId: actorId,
+        projectId: task.projectId,
+        entityId: taskId,
+        taskCode: task.code ?? null,
+        taskName: task.name,
+        oldStatus: task.status,
+        newStatus: nextStatus,
+      });
+      await this.recomputeCompletionPct(taskId);
+    }
+
     return { task: updated, action, reason: reason?.trim() || null };
+  }
+
+  /** Status, review flag and project leader of a live task, for the approve rule. */
+  async getReviewContext(
+    taskId: number,
+  ): Promise<{ status: string; requiresReview: boolean; leaderId: number | null }> {
+    const t = await this.prisma.task.findFirst({
+      where: { id: taskId, deletedAt: null },
+      select: { status: true, requiresReview: true, project: { select: { leaderId: true } } },
+    });
+    if (!t) throw new NotFoundException('Task not found');
+    return { status: t.status, requiresReview: t.requiresReview, leaderId: t.project?.leaderId ?? null };
+  }
+
+  /**
+   * Owner fields of an ARCHIVED task (restore access check), or null when
+   * the task is live or missing. `deletedAt: { not: null }` gets past the
+   * soft-delete middleware, as in restore().
+   */
+  async findArchivedForAccess(
+    id: number,
+  ): Promise<{ projectId: number | null; createdBy: number | null; assigneeIds: number[] } | null> {
+    const t = await this.prisma.task.findFirst({
+      where: { id, deletedAt: { not: null } },
+      select: { projectId: true, createdBy: true, assignees: { where: { deletedAt: null }, select: { userId: true } } },
+    });
+    if (!t) return null;
+    return {
+      projectId: t.projectId ?? null,
+      createdBy: t.createdBy ?? null,
+      assigneeIds: (t.assignees ?? []).map((a) => a.userId),
+    };
   }
 
   async listReviews(taskId: number) {
@@ -1456,57 +1630,7 @@ export class TasksService {
     });
   }
 
-  // Aggregated review stats. Returns a compact JSON the dashboard can
-  // slice: per-actor totals + rework rate (return count / submitted
-  // count). Kept SQL-free for portability across dev/staging.
-  async reviewSummary() {
-    const events = await this.prisma.taskReviewEvent.findMany({
-      orderBy: { createdAt: 'asc' },
-      include: {
-        actor: { select: { id: true, firstName: true, lastName: true } },
-      },
-    });
-
-    type ActorStat = {
-      actorId: number;
-      actorName: string;
-      submitted: number;
-      approved: number;
-      returned: number;
-      lastActivityAt: string | null;
-    };
-    const byActor = new Map<number, ActorStat>();
-    let totalSubmitted = 0;
-    let totalApproved = 0;
-    let totalReturned = 0;
-    for (const e of events) {
-      const name = `${e.actor?.firstName ?? ''} ${e.actor?.lastName ?? ''}`.trim() || `User #${e.actorId}`;
-      if (!byActor.has(e.actorId)) {
-        byActor.set(e.actorId, {
-          actorId: e.actorId,
-          actorName: name,
-          submitted: 0,
-          approved: 0,
-          returned: 0,
-          lastActivityAt: null,
-        });
-      }
-      const rec = byActor.get(e.actorId)!;
-      rec.lastActivityAt = e.createdAt.toISOString();
-      if (e.action === 'submit') { rec.submitted++; totalSubmitted++; }
-      else if (e.action === 'approve') { rec.approved++; totalApproved++; }
-      else if (e.action === 'return') { rec.returned++; totalReturned++; }
-    }
-
-    const totalHandled = totalApproved + totalReturned;
-    return {
-      totals: {
-        submitted: totalSubmitted,
-        approved: totalApproved,
-        returned: totalReturned,
-        reworkRate: totalHandled > 0 ? Math.round((totalReturned / totalHandled) * 100) : 0,
-      },
-      byActor: Array.from(byActor.values()).sort((a, b) => b.returned - a.returned || b.approved - a.approved),
-    };
-  }
+  // `reviewSummary` (GET /tasks/reports/review-summary) was removed in
+  // round 4: company-wide per-person stats with no project scope, and the
+  // web never called it.
 }

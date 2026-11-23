@@ -178,6 +178,13 @@ export class ZonesService {
       if (!parent) {
         throw new NotFoundException('Parent zone not found');
       }
+      // Round 4 — a zone's parent is in the same project.
+      if (parent.projectId !== dto.projectId) {
+        throw new BadRequestException({
+          code: 'CROSS_PROJECT_PARENT',
+          message: "A zone's parent must be in the same project.",
+        });
+      }
       path = parent.path;
       depth = parent.depth + 1;
     }
@@ -405,6 +412,14 @@ export class ZonesService {
       where: { id: newParentId, deletedAt: null },
     });
     if (!newParent) throw new NotFoundException('Target parent zone not found');
+    // Round 4 — the copy keeps the source's project, so the new parent
+    // must be in that project too.
+    if (newParent.projectId !== source.projectId) {
+      throw new BadRequestException({
+        code: 'CROSS_PROJECT_PARENT',
+        message: "A zone's parent must be in the same project.",
+      });
+    }
 
     // Wrap the recursive copy in a transaction so a partial failure does not
     // leave orphan zones behind.
@@ -1506,6 +1521,25 @@ export class ZonesService {
   }
 
   async batchReorder(items: { id: number; sortOrder: number; parentId?: number | null }[]) {
+    // Round 4 — a new parent must be in the zone's own project.
+    const moves = items.filter((i) => i.parentId != null);
+    if (moves.length > 0) {
+      const ids = [...new Set([...moves.map((m) => m.id), ...moves.map((m) => m.parentId as number)])];
+      const rows = await this.prisma.zone.findMany({
+        where: { id: { in: ids }, deletedAt: null },
+        select: { id: true, projectId: true },
+      });
+      const projectOf = new Map(rows.map((r) => [r.id, r.projectId]));
+      for (const m of moves) {
+        if (!projectOf.has(m.parentId as number)) throw new NotFoundException('Parent zone not found');
+        if (projectOf.get(m.parentId as number) !== projectOf.get(m.id)) {
+          throw new BadRequestException({
+            code: 'CROSS_PROJECT_PARENT',
+            message: "A zone's parent must be in the same project.",
+          });
+        }
+      }
+    }
     await this.prisma.$transaction(
       items.map((item) =>
         this.prisma.zone.update({

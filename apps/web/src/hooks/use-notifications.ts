@@ -2,17 +2,16 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { io, Socket } from 'socket.io-client';
 import { useAuthStore } from '@/stores/auth.store';
+import client from '@/api/client';
+import { API_BASE } from '@/lib/runtime-config';
+import {
+  NOTIFICATIONS_SOCKET_PATH,
+  notificationsSocketUrl,
+  toBellNotification,
+  type BellNotification,
+} from '@/lib/notifications-socket';
 
-export interface Notification {
-  id: string;
-  type: string;
-  title: string;
-  body: string;
-  entityType?: string;
-  entityId?: number;
-  isRead: boolean;
-  createdAt: string;
-}
+export type Notification = BellNotification;
 
 export function useNotifications() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -24,47 +23,56 @@ export function useNotifications() {
 
   useEffect(() => {
     if (!isAuthenticated || !token) return;
+    let cancelled = false;
 
-    // Use runtime API base (window.__APP_CONFIG__) → build env (VITE_API_URL)
-    // → page origin (nginx-proxied dev/prod).
-    const fromConfig = (window as any).__APP_CONFIG__?.apiUrl?.trim();
-    const fromBuild = import.meta.env.VITE_API_URL?.trim();
-    const apiOrigin = (fromConfig || fromBuild || window.location.origin).replace(/\/$/, '');
-    const socket = io(apiOrigin, {
-      path: '/api/ws',
+    // Round 4: the history comes from REST (the gateway only pushes new
+    // notifications); the socket adds live ones on top. REST rows also
+    // carry `canOpenEntity`, so the list is reloaded after each push.
+    const loadList = () =>
+      client
+        .get('/notifications', { params: { perPage: 20 } })
+        .then((r) => {
+          if (cancelled) return;
+          const rows = r.data?.data;
+          setNotifications(Array.isArray(rows) ? rows.map(toBellNotification) : []);
+          setUnreadCount(Number(r.data?.meta?.unreadCount) || 0);
+        })
+        .catch(() => {
+          /* keep what the bell already shows */
+        });
+    loadList();
+
+    // Round 4: the gateway is namespace `/notifications` on Socket.IO's
+    // default path, at the API origin (the old `/api/ws` path served nothing).
+    const socket = io(notificationsSocketUrl(API_BASE, window.location.origin), {
+      path: NOTIFICATIONS_SOCKET_PATH,
       auth: { token },
       transports: ['websocket', 'polling'],
     });
 
-    socket.on('connect', () => {
-      socket.emit('notifications:subscribe');
-    });
-
-    socket.on('notification', (notification: Notification) => {
-      setNotifications((prev) => [notification, ...prev]);
-      setUnreadCount((prev) => prev + 1);
+    socket.on('notification', (row: unknown) => {
+      const notification = toBellNotification(row);
+      setNotifications((prev) => [notification, ...prev.filter((n) => n.id !== notification.id)]);
+      if (!notification.isRead) setUnreadCount((prev) => prev + 1);
 
       // Invalidate relevant queries based on notification type
       if (notification.entityType) {
         queryClient.invalidateQueries({ queryKey: [notification.entityType] });
       }
-    });
-
-    socket.on('notifications:initial', (data: { notifications: Notification[]; unreadCount: number }) => {
-      setNotifications(data.notifications);
-      setUnreadCount(data.unreadCount);
+      loadList();
     });
 
     socketRef.current = socket;
 
     return () => {
+      cancelled = true;
       socket.disconnect();
       socketRef.current = null;
     };
   }, [isAuthenticated, token, queryClient]);
 
   const markRead = useCallback((id: string) => {
-    socketRef.current?.emit('notifications:read', { id });
+    client.patch(`/notifications/${id}/read`).catch(() => {});
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)),
     );
@@ -72,7 +80,7 @@ export function useNotifications() {
   }, []);
 
   const markAllRead = useCallback(() => {
-    socketRef.current?.emit('notifications:read-all');
+    client.patch('/notifications/read-all').catch(() => {});
     setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
     setUnreadCount(0);
   }, []);

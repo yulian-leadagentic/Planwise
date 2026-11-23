@@ -7,7 +7,8 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import { useDroppable } from '@dnd-kit/core';
 import { cn } from '@/lib/utils';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied, getPermissionMessage } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 import { TaskCardBody } from '@/components/shared/task-card-body';
 import {
   hasPredecessorConflict,
@@ -231,7 +232,7 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
   // pointing back here restore the drawer (see useDrawerRoute docs).
   const { drawerId: drawerTaskId, openDrawer: setDrawerTaskId, closeDrawer } = useDrawerRoute('task');
 
-  const { data: planningData, isLoading, isError, refetch } = useQuery({
+  const { data: planningData, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['planning', projectId],
     queryFn: () => client.get(`/projects/${projectId}/planning-data`).then((r) => r.data?.data ?? r.data),
     enabled: !!projectId,
@@ -362,6 +363,11 @@ export function KanbanBoard({ projectId }: { projectId: number }) {
 
   if (isLoading) {
     return <div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading board...</div>;
+  }
+
+  // Round 4: a 403 shows the server's reason, not "Couldn't load".
+  if (isPermissionDenied(error)) {
+    return <NoAccess variant="page" what="this project's board" message={getPermissionMessage(error)} />;
   }
 
   if (isError) {

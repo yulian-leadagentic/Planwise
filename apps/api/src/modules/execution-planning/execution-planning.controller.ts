@@ -102,20 +102,17 @@ export class ExecutionPlanningController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Manager dashboard with project KPIs' })
   async getManagerDashboard(@CurrentUser() user: any) {
-    // Get all projects the user is a member of
-    const memberships = await this.eps['prisma'].projectMember.findMany({
-      where: { userId: user.id },
-      select: { projectId: true },
-    });
-    const projectIds = memberships.map((m: any) => m.projectId);
-
+    // Round 4 — every project the access rule admits (leader, creator,
+    // member, org unit, manager chain, …), not memberships only.
+    const acc = await this.access.getAccessibleProjectIds(user.id, isAdminUser(user));
     const projects = await this.eps['prisma'].project.findMany({
-      where: { id: { in: projectIds }, deletedAt: null },
+      where: acc.all ? { deletedAt: null } : { id: { in: acc.projectIds }, deletedAt: null },
       include: {
         _count: { select: { tasks: true, members: true, zones: true } },
         leader: { select: { id: true, firstName: true, lastName: true } },
       },
     });
+    const projectIds = projects.map((p: any) => p.id);
 
     // Get progress + feasibility for each project
     const projectData = await Promise.all(

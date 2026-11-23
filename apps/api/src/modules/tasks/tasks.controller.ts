@@ -16,7 +16,8 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { TasksService } from './tasks.service';
 import { TaskChecklistService } from './task-checklist.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser, userHasModulePermission } from '../../common/guards/roles.guard';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
@@ -56,6 +57,88 @@ export class TasksController {
     private readonly transitions: StageTransitionService,
     private readonly checklist: TaskChecklistService,
   ) {}
+
+  /**
+   * Round 4 — restore access. An archived task is invisible to
+   * assertTaskAccess, so its project (or, for a personal task, its
+   * creator / assignees) is checked here.
+   */
+  private async assertRestoreAccess(user: any, id: number): Promise<void> {
+    const archived = await this.tasksService.findArchivedForAccess(id);
+    if (!archived) {
+      // Live or missing: the normal check (404 when missing).
+      await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
+      return;
+    }
+    if (archived.projectId != null) {
+      await this.access.assertProjectAccess(user.id, archived.projectId, isAdminUser(user));
+      return;
+    }
+    if (isAdminUser(user) || archived.createdBy === user.id || archived.assigneeIds.includes(user.id)) return;
+    throw new PermissionDeniedException(
+      'This is a personal task — only the person who created it and its assignees can open it.',
+      { module: 'tasks', reason: 'PERSONAL_TASK' },
+    );
+  }
+
+  /** The project leader, an Admin or a holder of tasks:approve — else 403. */
+  private assertApprover(user: any, ctx: { leaderId: number | null }): void {
+    const allowed =
+      isAdminUser(user) ||
+      (ctx.leaderId != null && ctx.leaderId === user.id) ||
+      userHasModulePermission(user, 'tasks', 'approve');
+    if (!allowed) {
+      throw new PermissionDeniedException(
+        'Only the project leader, an administrator or someone with permission to approve tasks can approve this task.',
+        { module: 'tasks', action: 'approve' },
+      );
+    }
+  }
+
+  /**
+   * Round 4 (D-20) — approve: the project leader, an Admin or a holder of
+   * tasks:approve; only from In Review; through the stage-transition rules.
+   */
+  private async assertCanApprove(
+    user: any,
+    ctx: { status: string; leaderId: number | null },
+  ): Promise<void> {
+    this.assertApprover(user, ctx);
+    if (ctx.status !== 'in_review') {
+      throw new BadRequestException({
+        code: 'TASK_NOT_IN_REVIEW',
+        message: 'Only a task that is In Review can be approved.',
+      });
+    }
+    await this.transitions.assertTransition(user, ctx.status, 'completed');
+  }
+
+  /**
+   * Round 4 (review fix) — PATCH /tasks/:id is the path every board uses
+   * (kanban drag, bulk status, My Tasks, the planning grid), so it must
+   * not be a way around approve:
+   *   • Done on a task that requires review, or that is In Review, IS an
+   *     approve — the same rule as POST /tasks/:id/review (leader / Admin
+   *     / tasks:approve; only from In Review → 400 TASK_NOT_IN_REVIEW).
+   *   • Switching the review step off on a task that requires it would
+   *     let the next PATCH skip approve, so it needs the same approver.
+   * A task without review keeps the plain stage-transition rule.
+   */
+  private async assertStatusChange(user: any, id: number, dto: UpdateTaskDto): Promise<void> {
+    const turnsReviewOff = dto.requiresReview === false;
+    if (!dto.status && !turnsReviewOff) return;
+    const ctx = await this.tasksService.getReviewContext(id);
+
+    if (dto.status && dto.status !== ctx.status) {
+      const reviewed = ctx.requiresReview || dto.requiresReview === true || ctx.status === 'in_review';
+      if (dto.status === 'completed' && reviewed) {
+        await this.assertCanApprove(user, ctx);
+      } else {
+        await this.transitions.assertTransition(user, ctx.status, dto.status);
+      }
+    }
+    if (turnsReviewOff && ctx.requiresReview) this.assertApprover(user, ctx);
+  }
 
   @Post()
   @RequirePermissions({ module: 'tasks', action: 'write' })
@@ -128,18 +211,17 @@ export class TasksController {
   @ApiOperation({ summary: 'Update a task' })
   async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTaskDto, @CurrentUser() user: any) {
     await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
+    // Round 4 — the target zone / project needs access too; the service
+    // keeps the task inside its own project (CROSS_PROJECT_MOVE).
+    if (dto.zoneId != null) await this.access.assertZoneAccess(user.id, dto.zoneId, isAdminUser(user));
+    if (dto.projectId != null) await this.access.assertProjectAccess(user.id, dto.projectId, isAdminUser(user));
     // Permissions round 2 (B-13) — changing budgetAmount needs
     // finance:write; sending the stored value back unchanged passes.
     await assertFinanceFieldWrites(user, dto, ['budgetAmount'], () =>
       this.tasksService.getMoneySnapshot(id),
     );
-    // If status is changing, enforce stage-transition rules
-    if (dto.status) {
-      const currentTask = await this.tasksService.findOne(id);
-      if ((currentTask as any).status !== dto.status) {
-        await this.transitions.assertTransition(user, (currentTask as any).status, dto.status);
-      }
-    }
+    // Status change: stage-transition rules, and approve for a reviewed task.
+    await this.assertStatusChange(user, id, dto);
     return this.tasksService.update(id, dto, user?.id);
   }
 
@@ -152,17 +234,13 @@ export class TasksController {
   }
 
   // Restore a soft-deleted (archived) task. Mirrored on the frontend
-  // by the Restore button on the Archived tab.
-  //
-  // We skip the per-task project-access check here because the helper
-  // filters out archived tasks (deletedAt IS NULL) — so any restore
-  // would 404 before getting to the actual restore step. Authorization
-  // is still enforced via @RequirePermissions; restore is a power-user
-  // action gated by tasks:write at the role level.
+  // by the Restore button on the Archived tab. Round 4 (D-09): project
+  // access is checked on the archived task's project.
   @Post(':id/restore')
   @RequirePermissions({ module: 'tasks', action: 'write' })
   @ApiOperation({ summary: 'Restore an archived task' })
-  async restore(@Param('id', ParseIntPipe) id: number) {
+  async restore(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.assertRestoreAccess(user, id);
     return this.tasksService.restore(id);
   }
 
@@ -182,6 +260,9 @@ export class TasksController {
     @CurrentUser() user: any,
   ) {
     await this.access.assertTaskAccess(user.id, id, isAdminUser(user));
+    if (body?.action === 'approve') {
+      await this.assertCanApprove(user, await this.tasksService.getReviewContext(id));
+    }
     return this.tasksService.recordReview(id, user.id, body.action, body.reason);
   }
 
@@ -196,12 +277,8 @@ export class TasksController {
     return this.tasksService.listReviews(id);
   }
 
-  @Get('reports/review-summary')
-  @RequirePermissions({ module: 'reports', action: 'read' })
-  @ApiOperation({ summary: 'Aggregate review stats — returns per actor + task counts' })
-  async reviewSummary() {
-    return this.tasksService.reviewSummary();
-  }
+  // `GET /tasks/reports/review-summary` was removed in round 4: company-
+  // wide stats with no project scope, and nothing in the web called it.
 
   // Assignees
   @Post(':id/assignees')
@@ -234,6 +311,7 @@ export class TasksController {
   // Checklist — sub-items inside a task, NOT separate tasks. Read is gated
   // on tasks:read (anyone who can see the task can tick boxes off, which
   // matches how teams use the feature); add/delete require tasks:write.
+  // Round 4: every route checks access to the item's task.
   @Get(':id/checklist')
   @RequirePermissions({ module: 'tasks', action: 'read' })
   @ApiOperation({ summary: 'List checklist items on a task' })
@@ -265,23 +343,34 @@ export class TasksController {
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() body: { text?: string; isDone?: boolean },
   ) {
-    // Authorize on the parent task. Reuse assertTaskAccess by looking the
-    // item up first; cheaper than threading taskId through the URL.
+    // Authorize on the parent task.
+    const taskId = await this.checklist.getItemTaskId(itemId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.checklist.update(itemId, user.id, body ?? {});
   }
 
   @Delete('checklist/:itemId')
   @RequirePermissions({ module: 'tasks', action: 'write' })
   @ApiOperation({ summary: 'Remove a checklist item (soft delete)' })
-  async removeChecklistItem(@Param('itemId', ParseIntPipe) itemId: number) {
+  async removeChecklistItem(@CurrentUser() user: any, @Param('itemId', ParseIntPipe) itemId: number) {
+    const taskId = await this.checklist.getItemTaskId(itemId);
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.checklist.remove(itemId);
   }
 
   @Post('checklist/reorder')
   @RequirePermissions({ module: 'tasks', action: 'write' })
   @ApiOperation({ summary: 'Bulk-update sortOrder of checklist items' })
-  async reorderChecklist(@Body() body: { items: Array<{ id: number; sortOrder: number }> }) {
-    return this.checklist.reorder(body?.items ?? []);
+  async reorderChecklist(
+    @CurrentUser() user: any,
+    @Body() body: { items: Array<{ id: number; sortOrder: number }> },
+  ) {
+    const items = body?.items ?? [];
+    // Items may span tasks: every task needs access.
+    for (const taskId of await this.checklist.getItemsTaskIds(items.map((i) => i.id))) {
+      await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
+    }
+    return this.checklist.reorder(items);
   }
 
   // Comments

@@ -221,7 +221,7 @@ describe('ReportsController — scope + userId filter', () => {
       timeEntryScope: jest.fn(async () => scope),
       visibleUserIds: jest.fn(async () => scope.visibleUserIds),
     };
-    return { ctrl: new ReportsController(reportsService, employeeScope), reportsService, employeeScope };
+    return { ctrl: new ReportsController(reportsService, employeeScope, {} as any), reportsService, employeeScope };
   }
   const res = () => ({ set: jest.fn(), send: jest.fn() }) as any;
 

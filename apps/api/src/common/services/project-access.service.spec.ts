@@ -19,7 +19,11 @@ describe('ProjectAccessService', () => {
     prisma = {
       project: { findFirst: jest.fn(), findMany: jest.fn() },
       projectMember: { findFirst: jest.fn(), findMany: jest.fn() },
-      task: { findFirst: jest.fn() },
+      // Round 4 rules 4 (partner role) and 5 (task assignee). Default:
+      // the user holds no role and no assignment.
+      projectPartnerRole: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+      taskAssignee: { findFirst: jest.fn().mockResolvedValue(null) },
+      task: { findFirst: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
       zone: { findFirst: jest.fn() },
       // OrgUnit + User surfaces used by the hierarchical-access
       // extension. Default to "no org data" so every pre-existing
@@ -498,6 +502,169 @@ describe('ProjectAccessService', () => {
       const err = await service.assertTaskAccess(1, 10, false).catch((e) => e);
       expect(err).toBeInstanceOf(PermissionDeniedException);
       expect(err.message).toMatch(/^This is a personal task/);
+    });
+  });
+
+  // ─── Permissions round 4 (2026-11-23) ───────────────────────────
+  // Rule 4: partner-role holders. Rule 5: task assignees get the whole
+  // project. Rule 7 now covers subordinates admitted by rules 4–5.
+
+  describe('round 4 — partner-role holders (rule 4)', () => {
+    beforeEach(() => {
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88, orgUnitId: null });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+    });
+
+    it('allows a user who holds an active partner role on the project', async () => {
+      prisma.projectPartnerRole.findFirst.mockResolvedValueOnce({ id: 3 });
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
+
+      const where = prisma.projectPartnerRole.findFirst.mock.calls[0][0].where;
+      expect(where.projectId).toBe(42);
+      // Only the user's own BusinessPartner counts, and only an active row.
+      expect(where.party).toEqual({ user: { id: { in: [1] } } });
+      expect(where.status).toBe('active');
+      expect(where.validFrom.lte).toBeInstanceOf(Date);
+      expect(where.validTo.gt).toBeInstanceOf(Date);
+    });
+
+    it('lists the projects where the user holds a partner role', async () => {
+      prisma.projectMember.findMany.mockResolvedValue([]);
+      prisma.project.findMany.mockResolvedValue([]);
+      prisma.projectPartnerRole.findMany.mockResolvedValueOnce([{ projectId: 7 }, { projectId: 7 }]);
+      const result = await service.getAccessibleProjectIds(1, false);
+      expect(result).toEqual({ all: false, projectIds: [7] });
+      const where = prisma.projectPartnerRole.findMany.mock.calls[0][0].where;
+      expect(where.party).toEqual({ user: { id: { in: [1] } } });
+      expect(where.status).toBe('active');
+    });
+
+    it('a manager of a partner-role holder gets in (rule 7)', async () => {
+      prisma.orgUnit.findMany
+        .mockResolvedValueOnce([{ id: 1, path: '/1/' }])
+        .mockResolvedValueOnce([{ id: 1 }]);
+      prisma.user.findMany.mockResolvedValue([{ id: 5 }]);
+      // Caller: no role. Subordinate 5: a role.
+      prisma.projectPartnerRole.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 9 });
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
+      expect(prisma.projectPartnerRole.findFirst.mock.calls[1][0].where.party).toEqual({ user: { id: { in: [5] } } });
+    });
+  });
+
+  describe('round 4 — task assignees get the whole project (rule 5)', () => {
+    beforeEach(() => {
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88, orgUnitId: null });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+    });
+
+    it('allows a user assigned to any live task of the project', async () => {
+      prisma.taskAssignee.findFirst.mockResolvedValueOnce({ id: 11 });
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
+      const where = prisma.taskAssignee.findFirst.mock.calls[0][0].where;
+      expect(where).toEqual({ userId: { in: [1] }, deletedAt: null, task: { projectId: 42, deletedAt: null } });
+    });
+
+    it('opens a task he is NOT assigned to, in a project where he has another task', async () => {
+      // Task 10 has no assignment for user 1 …
+      prisma.task.findFirst.mockResolvedValue({ projectId: 42, createdBy: 5, assignees: [] });
+      // … but he is assigned elsewhere in project 42.
+      prisma.taskAssignee.findFirst.mockResolvedValueOnce({ id: 12 });
+      await expect(service.assertTaskAccess(1, 10, false)).resolves.toBe(42);
+    });
+
+    it('lists the projects of every task he is assigned to', async () => {
+      prisma.projectMember.findMany.mockResolvedValue([{ projectId: 10 }]);
+      prisma.project.findMany.mockResolvedValue([]);
+      prisma.task.findMany.mockResolvedValueOnce([{ projectId: 20 }, { projectId: 30 }]);
+      const result = await service.getAccessibleProjectIds(1, false);
+      expect([...result.projectIds].sort((a, b) => a - b)).toEqual([10, 20, 30]);
+      const args = prisma.task.findMany.mock.calls[0][0];
+      expect(args.where.deletedAt).toBeNull();
+      expect(args.where.assignees).toEqual({ some: { userId: { in: [1] }, deletedAt: null } });
+    });
+
+    it('a manager of an assignee gets in (rule 7)', async () => {
+      prisma.orgUnit.findMany
+        .mockResolvedValueOnce([{ id: 1, path: '/1/' }])
+        .mockResolvedValueOnce([{ id: 1 }]);
+      prisma.user.findMany.mockResolvedValue([{ id: 5 }]);
+      prisma.taskAssignee.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 13 });
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
+    });
+
+    it('a stranger with no role, no assignment and no org link is refused', async () => {
+      const err = await service.assertProjectAccess(1, 42, false).catch((e) => e);
+      expect(err).toBeInstanceOf(PermissionDeniedException);
+      expect(err.getResponse()).toMatchObject({ details: { reason: 'NOT_PROJECT_MEMBER' } });
+    });
+  });
+
+  describe('round 4 — org unit (rule 6) and one project read', () => {
+    it('same home org unit is admitted', async () => {
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88, orgUnitId: 6 });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValueOnce({ orgUnitId: 6 });
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
+    });
+
+    it('another org unit is refused', async () => {
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88, orgUnitId: 6 });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValueOnce({ orgUnitId: 7 });
+      await expect(service.assertProjectAccess(1, 42, false)).rejects.toBeInstanceOf(PermissionDeniedException);
+    });
+
+    it('reads the project row once (no second fetch for the org unit)', async () => {
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88, orgUnitId: 6 });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+      await service.assertProjectAccess(1, 42, false).catch(() => undefined);
+      expect(prisma.project.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.project.findFirst.mock.calls[0][0].select).toMatchObject({ orgUnitId: true });
+    });
+  });
+
+  describe('round 4 — assertProjectManage (leader or Admin)', () => {
+    const ADMIN = { id: 1, isAdmin: true };
+    const LEADER = { id: 2, isAdmin: false };
+    const MEMBER_WITH_WRITE = {
+      id: 3,
+      isAdmin: false,
+      roleModules: [{ module: { route: '/projects', name: 'projects' }, canRead: true, canWrite: true, canDelete: true }],
+    };
+
+    beforeEach(() => {
+      prisma.project.findFirst.mockResolvedValue({ leaderId: 2 });
+    });
+
+    it('Admin passes without reading the project', async () => {
+      await expect(service.assertProjectManage(ADMIN, 42)).resolves.toBeUndefined();
+      expect(prisma.project.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('the leader passes', async () => {
+      await expect(service.assertProjectManage(LEADER, 42)).resolves.toBeUndefined();
+      expect(prisma.project.findFirst.mock.calls[0][0].where).toEqual({ id: 42, deletedAt: null });
+    });
+
+    it('a member with projects:write is refused (NOT_PROJECT_LEADER)', async () => {
+      prisma.projectMember.findFirst.mockResolvedValue({ id: 1 });
+      const err = await service.assertProjectManage(MEMBER_WITH_WRITE, 42).catch((e) => e);
+      expect(err).toBeInstanceOf(PermissionDeniedException);
+      expect(err.message).toBe("Only the project leader or an administrator can change this project's team or settings.");
+      expect(err.getResponse()).toMatchObject({
+        code: 'PERMISSION_DENIED',
+        details: { module: 'projects', reason: 'NOT_PROJECT_LEADER' },
+      });
+    });
+
+    it('the creator who is not the leader is refused', async () => {
+      prisma.project.findFirst.mockResolvedValue({ leaderId: 2, createdBy: 4 });
+      await expect(service.assertProjectManage({ id: 4, isAdmin: false }, 42)).rejects.toBeInstanceOf(PermissionDeniedException);
+    });
+
+    it('a missing or deleted project is a 404', async () => {
+      prisma.project.findFirst.mockResolvedValue(null);
+      await expect(service.assertProjectManage(LEADER, 42)).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

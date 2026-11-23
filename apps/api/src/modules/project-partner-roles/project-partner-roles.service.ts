@@ -105,6 +105,8 @@ interface QueryDto {
   partyId?: number;
   roleCode?: string;
   activeOnly?: boolean;
+  /** Round 4: restrict to these projects (the caller's accessible set). */
+  projectIds?: number[];
 }
 
 @Injectable()
@@ -114,10 +116,21 @@ export class ProjectPartnerRolesService {
     private readonly activityLog: ActivityLogService,
   ) {}
 
+  /** Project of an assignment row, for the controller's access checks. */
+  async getProjectId(id: number): Promise<number> {
+    const row = await this.prisma.projectPartnerRole.findUnique({
+      where: { id },
+      select: { projectId: true },
+    });
+    if (!row) throw new NotFoundException('Project partner role not found');
+    return row.projectId;
+  }
+
   async list(q: QueryDto) {
     const now = new Date();
     const where: Prisma.ProjectPartnerRoleWhereInput = {};
     if (q.projectId) where.projectId = q.projectId;
+    else if (q.projectIds) where.projectId = { in: q.projectIds };
     if (q.partyId)   where.partyId = q.partyId;
     if (q.roleCode)  where.role = { code: q.roleCode };
     if (q.activeOnly !== false) {

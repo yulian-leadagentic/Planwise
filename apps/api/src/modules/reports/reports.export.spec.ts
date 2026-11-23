@@ -124,7 +124,7 @@ describe('GET /reports/export — timesheet-detailed (B-02)', () => {
 
   it('the controller passes the caller’s finance grant through', async () => {
     const reportsService: any = { exportReport: jest.fn(async () => Buffer.from('x')) };
-    const ctrl = new ReportsController(reportsService, scopeStub());
+    const ctrl = new ReportsController(reportsService, scopeStub(), {} as any);
     await ctrl.exportReport(REPORTS_EXPORTER, 'timesheet-detailed', 'excel', {} as any, fakeRes());
     expect(reportsService.exportReport).toHaveBeenLastCalledWith('timesheet-detailed', 'excel', {}, { canSeeFinance: false, scope: ALL_TIME_SCOPE });
     await ctrl.exportReport(FINANCE_EXPORTER, 'timesheet-detailed', 'excel', {} as any, fakeRes());
@@ -144,7 +144,7 @@ describe('GET /reports/export — timesheet-detailed (B-02)', () => {
 describe('GET /reports/export — cost-* types (B-03)', () => {
   it('cost-by-project without finance:read → 403 before any query', async () => {
     const reportsService: any = { exportReport: jest.fn() };
-    const ctrl = new ReportsController(reportsService, scopeStub());
+    const ctrl = new ReportsController(reportsService, scopeStub(), {} as any);
     const res = fakeRes();
     await expect(ctrl.exportReport(REPORTS_EXPORTER, 'cost-by-project', 'excel', {} as any, res)).rejects.toThrow(
       ForbiddenException,
@@ -168,7 +168,7 @@ describe('GET /reports/export — cost-* types (B-03)', () => {
 
   it('a finance:read caller still gets it', async () => {
     const reportsService: any = { exportReport: jest.fn(async () => Buffer.from('x')) };
-    const ctrl = new ReportsController(reportsService, scopeStub());
+    const ctrl = new ReportsController(reportsService, scopeStub(), {} as any);
     const res = fakeRes();
     await ctrl.exportReport(FINANCE_EXPORTER, 'cost-by-project', 'excel', {} as any, res);
     expect(reportsService.exportReport).toHaveBeenCalledWith('cost-by-project', 'excel', {}, { canSeeFinance: true });
@@ -180,7 +180,8 @@ describe('GET /reports/milestones (B-19)', () => {
   it('drops LabelMilestone.amount for callers without finance:read', async () => {
     const rows = [{ id: 1, name: 'Permit', amount: '25000.00', label: { id: 3, name: 'A' } }];
     const reportsService: any = { milestonesReport: jest.fn(async () => rows) };
-    const ctrl = new ReportsController(reportsService, scopeStub());
+    const access: any = { getAccessibleProjectIds: jest.fn(async () => ({ all: false, projectIds: [59] })) };
+    const ctrl = new ReportsController(reportsService, scopeStub(), access);
     expect(await ctrl.milestones(REPORTS_EXPORTER, {} as any)).toEqual([{ id: 1, name: 'Permit', label: { id: 3, name: 'A' } }]);
     expect(await ctrl.milestones(FINANCE_EXPORTER, {} as any)).toBe(rows);
   });

@@ -683,10 +683,13 @@ export class ReportsService {
     return Object.values(byProject);
   }
 
-  async milestonesReport(query: ReportQueryDto) {
+  /** `projectIds` (round 4): null = every project; an array limits the rows to those projects. */
+  async milestonesReport(query: ReportQueryDto, projectIds: number[] | null = null) {
     const where: any = {};
     if (query.projectId) {
       where.label = { projectId: Number(query.projectId) };
+    } else if (projectIds) {
+      where.label = { projectId: { in: projectIds } };
     }
 
     return this.prisma.labelMilestone.findMany({

@@ -6,6 +6,8 @@ import {
 import { cn } from '@/lib/utils';
 import { formatRelative } from '@/lib/date-utils';
 import client from '@/api/client';
+import { isPermissionDenied, getPermissionMessage } from '@/lib/notify';
+import { NoAccess } from '@/components/shared/no-access';
 
 /**
  * Project Activity Feed.
@@ -61,7 +63,7 @@ function configFor(key: string) {
 }
 
 export function ActivityFeed({ projectId }: { projectId: number }) {
-  const { data: items = [], isLoading, isError, refetch } = useQuery<FeedItem[]>({
+  const { data: items = [], isLoading, isError, error, refetch } = useQuery<FeedItem[]>({
     queryKey: ['activity', 'project', projectId],
     queryFn: async () => {
       const [logsResult, msgResult, notifResult] = await Promise.all([
@@ -133,6 +135,9 @@ export function ActivityFeed({ projectId }: { projectId: number }) {
 
       {isLoading ? (
         <div className="py-6 text-center text-sm text-slate-400 dark:text-slate-500">Loading activity...</div>
+      ) : isPermissionDenied(error) ? (
+        // Round 4: a 403 is "no access", not a failure to retry.
+        <NoAccess what="this project's activity" message={getPermissionMessage(error)} />
       ) : isError ? (
         <div className="py-8 text-center">
           <AlertCircle className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />

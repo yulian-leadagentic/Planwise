@@ -5,12 +5,18 @@ import {
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { MessagesService } from './messages.service';
+import { MessageViewer } from './message-access.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { QueryMessagesDto } from './dto/query-messages.dto';
+
+/** Round 4: the caller as the thread-visibility checks need him. */
+function viewerOf(user: any): MessageViewer {
+  return { id: user.id, isAdmin: isAdminUser(user) };
+}
 
 @ApiTags('Messages')
 @ApiBearerAuth()
@@ -23,14 +29,14 @@ export class MessagesController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Create a message' })
   create(@CurrentUser() user: any, @Body() dto: CreateMessageDto) {
-    return this.messagesService.create(user.id, dto);
+    return this.messagesService.create(viewerOf(user), dto);
   }
 
   @Get()
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'List messages for an entity' })
-  findAll(@Query() query: QueryMessagesDto) {
-    return this.messagesService.findByEntity(query);
+  findAll(@CurrentUser() user: any, @Query() query: QueryMessagesDto) {
+    return this.messagesService.findByEntity(query, viewerOf(user));
   }
 
   /**
@@ -45,6 +51,7 @@ export class MessagesController {
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Batch message counts for many entityIds' })
   counts(
+    @CurrentUser() user: any,
     @Query('entityType') entityType: string,
     @Query('entityIds') entityIds: string,
   ) {
@@ -52,7 +59,7 @@ export class MessagesController {
       .split(',')
       .map((s) => Number(s.trim()))
       .filter((n) => Number.isFinite(n));
-    return this.messagesService.countByEntities(entityType, ids);
+    return this.messagesService.countByEntities(viewerOf(user), entityType, ids);
   }
 
   @Get('inbox')
@@ -64,7 +71,7 @@ export class MessagesController {
     @Query('perPage') perPage?: string,
   ) {
     return this.messagesService.getInbox(
-      user.id,
+      viewerOf(user),
       page ? Number(page) : 1,
       perPage ? Number(perPage) : 20,
     );
@@ -80,7 +87,7 @@ export class MessagesController {
     @Query('page') page?: string,
     @Query('perPage') perPage?: string,
   ) {
-    return this.messagesService.search(query || '', user.id, {
+    return this.messagesService.search(query || '', viewerOf(user), {
       entityType,
       page: page ? Number(page) : 1,
       perPage: perPage ? Number(perPage) : 20,
@@ -90,32 +97,33 @@ export class MessagesController {
   @Get('analytics/overview')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get messaging analytics and KPIs' })
-  analytics(@Query('projectId') projectId?: string) {
-    return this.messagesService.getAnalytics(projectId ? Number(projectId) : undefined);
+  analytics(@CurrentUser() user: any, @Query('projectId') projectId?: string) {
+    return this.messagesService.getAnalytics(viewerOf(user), projectId ? Number(projectId) : undefined);
   }
 
   @Get('suggest-recipients/:entityType/:entityId')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get suggested message recipients for an entity' })
   suggestRecipients(
+    @CurrentUser() user: any,
     @Param('entityType') entityType: string,
     @Param('entityId', ParseIntPipe) entityId: number,
   ) {
-    return this.messagesService.suggestRecipients(entityType as any, entityId);
+    return this.messagesService.suggestRecipients(viewerOf(user), entityType, entityId);
   }
 
   @Get(':id')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get message with thread' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.messagesService.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.messagesService.findOne(id, viewerOf(user));
   }
 
   @Get(':id/summarize')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get AI summary of a thread' })
-  summarize(@Param('id', ParseIntPipe) id: number) {
-    return this.messagesService.summarizeThread(id);
+  summarize(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.messagesService.summarizeThread(id, viewerOf(user));
   }
 
   @Patch(':id')
@@ -126,30 +134,32 @@ export class MessagesController {
     @CurrentUser() user: any,
     @Body('content') content: string,
   ) {
-    return this.messagesService.update(id, user.id, content);
+    return this.messagesService.update(id, viewerOf(user), content);
   }
 
+  // Round 4: same grant as posting; the service allows only the author,
+  // the project leader or an Admin.
   @Delete(':id')
-  @RequirePermissions({ module: 'projects', action: 'delete' })
+  @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Delete message' })
   remove(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: any,
   ) {
-    return this.messagesService.remove(id, user.id);
+    return this.messagesService.remove(id, viewerOf(user));
   }
 
   @Post(':id/resolve')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Mark thread as resolved' })
   resolve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
-    return this.messagesService.resolveThread(id, user.id);
+    return this.messagesService.resolveThread(id, viewerOf(user));
   }
 
   @Post(':id/unresolve')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Mark thread as unresolved' })
-  unresolve(@Param('id', ParseIntPipe) id: number) {
-    return this.messagesService.unresolveThread(id);
+  unresolve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: any) {
+    return this.messagesService.unresolveThread(id, viewerOf(user));
   }
 }

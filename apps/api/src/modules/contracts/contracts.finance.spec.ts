@@ -24,6 +24,11 @@ const FINANCE_WRITER = {
   isAdmin: false,
   roleModules: [perm('/contracts', { canRead: true, canWrite: true }), perm('/finance', { canRead: true, canWrite: true })],
 };
+// Round 4 — every caller here is on project 59 (scope tests: contracts.scope.spec.ts).
+const allowAll = (): any => ({
+  assertProjectAccess: jest.fn(async () => undefined),
+  getAccessibleProjectIds: jest.fn(async () => ({ all: false, projectIds: [59] })),
+});
 const FINANCE_APPROVER = {
   id: 6,
   isAdmin: false,
@@ -38,8 +43,10 @@ describe('billings (B-12 / B-13)', () => {
       findOne: jest.fn(async () => ({ ...stored })),
       create: jest.fn(async () => ({ ...stored })),
       update: jest.fn(async () => ({ ...stored })),
+      getContractProjectId: jest.fn(async () => 59),
+      getBillingProjectId: jest.fn(async () => 59),
     };
-    return { ctrl: new BillingsController(billingsService), billingsService };
+    return { ctrl: new BillingsController(billingsService, allowAll()), billingsService };
   }
 
   it('reads drop the amount without finance:read', async () => {
@@ -100,8 +107,12 @@ describe('contracts (B-12 / B-13)', () => {
       updateMilestone: jest.fn(async () => ({ id: 3, name: 'M', amount: null })),
       createExpense: jest.fn(async () => ({ id: 9, amount: '10.00' })),
       getExpenses: jest.fn(async () => [{ id: 9, amount: '10.00', expenseType: 'travel' }]),
+      getContractProjectId: jest.fn(async () => 59),
+      getItemProjectId: jest.fn(async () => 59),
+      getLabelProjectId: jest.fn(async () => 59),
+      getMilestoneProjectId: jest.fn(async () => 59),
     };
-    return { ctrl: new ContractsController(contractsService), contractsService };
+    return { ctrl: new ContractsController(contractsService, allowAll()), contractsService };
   }
 
   it('GET /contracts/:id drops totalAmount, item total / quantity / unitPrice and billing amounts', async () => {

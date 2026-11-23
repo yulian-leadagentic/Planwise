@@ -6,6 +6,8 @@ import { useInbox } from '@/hooks/use-messages';
 import { formatRelative } from '@/lib/date-utils';
 import { cn } from '@/lib/utils';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
+import { DiscussionDrawer } from './discussion-drawer';
+import { inboxItemAction, type DiscussionTarget } from './open-discussion';
 
 function getInitials(firstName: string, lastName: string) {
   return `${firstName?.[0] ?? ''}${lastName?.[0] ?? ''}`.toUpperCase();
@@ -20,6 +22,8 @@ const entityLabels: Record<string, string> = {
 export function InboxPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState<'all' | 'mentions' | 'replies'>('all');
+  // Round 4C-2: a thread seen only through a mention opens here.
+  const [drawerTarget, setDrawerTarget] = useState<DiscussionTarget | null>(null);
   const { data, isLoading } = useInbox();
 
   const allMessages = (data as any)?.data ?? [];
@@ -30,10 +34,10 @@ export function InboxPage() {
     return true;
   });
 
-  const getEntityLink = (msg: any): string => {
-    if (msg.entityType === 'project') return `/projects/${msg.entityId}`;
-    if (msg.entityType === 'task') return `/projects`; // task detail if exists
-    return '#';
+  const openItem = (msg: any) => {
+    const action = inboxItemAction(msg);
+    if (action.kind === 'drawer') setDrawerTarget(action.target);
+    else navigate(action.to);
   };
 
   return (
@@ -84,7 +88,7 @@ export function InboxPage() {
               <div
                 key={msg.id}
                 className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4 hover:border-blue-300 hover:bg-blue-50/20 cursor-pointer transition-colors"
-                onClick={() => navigate(getEntityLink(msg))}
+                onClick={() => openItem(msg)}
               >
                 <div className="flex items-start gap-3">
                   {/* Author avatar */}
@@ -129,6 +133,15 @@ export function InboxPage() {
             );
           })}
         </div>
+      )}
+
+      {drawerTarget && (
+        <DiscussionDrawer
+          open
+          onClose={() => setDrawerTarget(null)}
+          entityType={drawerTarget.entityType}
+          entityId={drawerTarget.entityId}
+        />
       )}
     </div>
   );

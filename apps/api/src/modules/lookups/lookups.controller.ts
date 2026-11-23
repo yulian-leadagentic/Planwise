@@ -2,7 +2,9 @@ import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
 import { BusinessPartnersService } from '../business-partners/business-partners.service';
@@ -35,6 +37,7 @@ export class LookupsController {
     private readonly prisma: PrismaService,
     private readonly partners: BusinessPartnersService,
     private readonly orgUnits: OrgUnitService,
+    private readonly access: ProjectAccessService,
   ) {}
 
   /**
@@ -66,12 +69,17 @@ export class LookupsController {
   @Get('lookups/customer-orgs')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Customer organizations for the create-project form (projects:write).' })
-  async listCustomerOrgs() {
-    return this.partners.findAll({
-      partnerType: 'organization',
-      roleType: 'customer',
-      perPage: 200,
-    } as any);
+  async listCustomerOrgs(@CurrentUser() user: any) {
+    // Round 4 (review fix) — each org's project rows are cut to the
+    // caller's projects, as on GET /business-partners.
+    return this.partners.findAll(
+      {
+        partnerType: 'organization',
+        roleType: 'customer',
+        perPage: 200,
+      } as any,
+      await this.access.getAccessibleProjectIds(user.id, isAdminUser(user)),
+    );
   }
 
   /**

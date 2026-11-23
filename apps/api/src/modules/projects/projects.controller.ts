@@ -21,6 +21,7 @@ import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
+import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { QueryProjectsDto } from './dto/query-projects.dto';
@@ -90,13 +91,15 @@ export class ProjectsController {
   @Get(':id')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Get project by ID' })
-  findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+  async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.access.assertProjectAccess(user.id, id, isAdminUser(user));
     return this.projectsService.findOne(id, user);
   }
 
   // Budget + cost endpoints are gated behind the Finance module
   // permission (Item 1 / 2026-05-18). Users without finance:read get
   // a 403; admins toggle access per role via /admin/roles.
+  // Round 4: finance:read sees these for every project (no access check).
   @Get(':id/budget-summary')
   @RequirePermissions({ module: 'finance', action: 'read' })
   @ApiOperation({ summary: 'Get budget summary for project (requires finance:read)' })
@@ -120,6 +123,10 @@ export class ProjectsController {
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Update a project' })
   async update(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProjectDto) {
+    // Round 4: settings, leader, members and archive are leader-or-Admin;
+    // the org unit (it grants the whole unit access) is Admin only.
+    await this.access.assertProjectManage(user, id);
+    await this.assertOrgUnitChangeAllowed(user, id, dto);
     // Permissions round 2 (B-13 / B-15) — changing budget / estimated
     // value needs finance:write (an unchanged echo passes); the response
     // drops project money for callers without finance:read.
@@ -130,10 +137,23 @@ export class ProjectsController {
     return canSeeFinance(user) ? project : omitKeys(project, PROJECT_MONEY_KEYS);
   }
 
+  /** Admin only when `orgUnitId` differs from the stored value; an unchanged echo passes. */
+  private async assertOrgUnitChangeAllowed(user: any, id: number, dto: UpdateProjectDto): Promise<void> {
+    if (dto.orgUnitId === undefined || isAdminUser(user)) return;
+    const current = await this.projectsService.getOrgUnitId(id);
+    if ((dto.orgUnitId ?? null) === current) return;
+    throw new PermissionDeniedException("Only an administrator can change a project's organizational unit.", {
+      field: 'orgUnitId',
+      reason: 'ADMIN_ONLY',
+    });
+  }
+
   @Delete(':id')
   @RequirePermissions({ module: 'projects', action: 'delete' })
   @ApiOperation({ summary: 'Soft delete a project' })
-  remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+  async remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    // Round 4: projects:delete (decorator) AND leader-or-Admin.
+    await this.access.assertProjectManage(user, id);
     return this.projectsService.remove(id, user?.id);
   }
 
@@ -141,36 +161,43 @@ export class ProjectsController {
   // done"; closed projects keep all their data, stay queryable for audit
   // and reporting, but the default project-list query hides them. The UI
   // exposes a "Show closed" toggle to opt back in.
+  // Round 4: close / reopen are leader-or-Admin.
   @Post(':id/close')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Close a project (stamp closedAt, keep all data)' })
-  close(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+  async close(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.access.assertProjectManage(user, id);
     return this.projectsService.close(id, user?.id);
   }
 
   @Post(':id/reopen')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Reopen a previously-closed project (clear closedAt)' })
-  reopen(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+  async reopen(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.access.assertProjectManage(user, id);
     return this.projectsService.reopen(id, user?.id);
   }
 
-  // Members
+  // Members — round 4: changing the team is leader-or-Admin;
+  // projects:write alone no longer adds anyone.
   @Post(':id/members')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Add member to project' })
-  addMember(
+  async addMember(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
     @Body('userId', ParseIntPipe) userId: number,
     @Body('role') role?: string,
   ) {
+    await this.access.assertProjectManage(user, projectId);
     return this.projectsService.addMember(projectId, userId, role);
   }
 
   @Get(':id/members')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'List project members (login users only)' })
-  getMembers(@Param('id', ParseIntPipe) projectId: number) {
+  async getMembers(@CurrentUser() user: any, @Param('id', ParseIntPipe) projectId: number) {
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.projectsService.getMembers(projectId);
   }
 
@@ -182,11 +209,13 @@ export class ProjectsController {
   @Get(':id/activity-logs')
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'List activity-log entries scoped to this project (latest first)' })
-  getActivityLogs(
+  async getActivityLogs(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
     @Query('perPage') perPage?: number,
     @Query('page') page?: number,
   ) {
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     return this.projectsService.getActivityLogs(projectId, {
       perPage: Math.min(Number(perPage) || 50, 200),
       page: Math.max(Number(page) || 1, 1),
@@ -268,10 +297,12 @@ export class ProjectsController {
   @Delete(':id/members/:userId')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Remove member from project' })
-  removeMember(
+  async removeMember(
+    @CurrentUser() user: any,
     @Param('id', ParseIntPipe) projectId: number,
     @Param('userId', ParseIntPipe) userId: number,
   ) {
+    await this.access.assertProjectManage(user, projectId);
     return this.projectsService.removeMember(projectId, userId);
   }
 
@@ -284,6 +315,7 @@ export class ProjectsController {
     @Param('id', ParseIntPipe) id: number,
     @Body('userId', ParseIntPipe) userId: number,
   ) {
+    await this.access.assertProjectManage(user, id);
     const project = await this.projectsService.setLeader(id, userId);
     return canSeeFinance(user) ? project : omitKeys(project, PROJECT_MONEY_KEYS);
   }
@@ -299,7 +331,8 @@ export class ProjectsController {
   // enum, self-dep, circular). We parse `dependsOnId` by hand (no
   // dedicated pipe on a Body field) so the error message matches the
   // service-layer language instead of Nest's generic ParseIntPipe one.
-  addDependency(
+  async addDependency(
+    @CurrentUser() user: any,
     @Param('taskId', ParseIntPipe) taskId: number,
     @Body()
     body: {
@@ -309,6 +342,9 @@ export class ProjectsController {
       reason?: string | null;
     },
   ) {
+    // Round 4: access to the task's project; the service keeps both
+    // tasks in that same project.
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.projectsService.addDependency(taskId, body);
   }
 
@@ -322,7 +358,8 @@ export class ProjectsController {
   @Patch('tasks/:taskId/dependencies/:dependsOnId')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Patch task dependency (lag / lagUnit / reason)' })
-  patchDependency(
+  async patchDependency(
+    @CurrentUser() user: any,
     @Param('taskId', ParseIntPipe) taskId: number,
     @Param('dependsOnId', ParseIntPipe) dependsOnId: number,
     @Body()
@@ -332,13 +369,19 @@ export class ProjectsController {
       reason?: string | null;
     },
   ) {
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.projectsService.patchDependency(taskId, dependsOnId, body);
   }
 
   @Delete('tasks/:taskId/dependencies/:dependsOnId')
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Remove task dependency' })
-  removeDependency(@Param('taskId', ParseIntPipe) taskId: number, @Param('dependsOnId', ParseIntPipe) dependsOnId: number) {
+  async removeDependency(
+    @CurrentUser() user: any,
+    @Param('taskId', ParseIntPipe) taskId: number,
+    @Param('dependsOnId', ParseIntPipe) dependsOnId: number,
+  ) {
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.projectsService.removeDependency(taskId, dependsOnId);
   }
 }

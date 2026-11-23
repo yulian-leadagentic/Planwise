@@ -13,10 +13,11 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
-import { RolesGuard } from '../../common/guards/roles.guard';
+import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 
 /**
  * Project Status Board — the Notion-style table where rows = projects
@@ -33,24 +34,30 @@ import { PrismaService } from '../../prisma/prisma.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('project-status-board')
 export class ProjectStatusBoardController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: ProjectAccessService,
+  ) {}
 
   /**
-   * Returns the board payload: ordered milestone columns + every
-   * project's per-milestone completion status. The frontend renders
-   * directly off this shape — no further mapping needed.
+   * Returns the board payload: ordered milestone columns + the caller's
+   * accessible projects (round 4) with their per-milestone completion
+   * status. The frontend renders directly off this shape.
    */
   @Get()
   @RequirePermissions({ module: 'projects', action: 'read' })
   @ApiOperation({ summary: 'Fetch the project × milestone status board' })
-  async getBoard() {
+  async getBoard(@CurrentUser() user: any) {
+    const accessible = await this.access.getAccessibleProjectIds(user.id, isAdminUser(user));
+    const scope = accessible.all ? {} : { id: { in: accessible.projectIds } };
+    const statusScope = accessible.all ? {} : { projectId: { in: accessible.projectIds } };
     const [milestones, projects, statuses] = await Promise.all([
       this.prisma.projectStageMilestone.findMany({
         where: { isActive: true },
         orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
       }),
       this.prisma.project.findMany({
-        where: { deletedAt: null, isArchived: false },
+        where: { deletedAt: null, isArchived: false, ...scope },
         select: {
           id: true,
           name: true,
@@ -64,6 +71,7 @@ export class ProjectStatusBoardController {
       // Pull ALL statuses in one query — for any reasonable project
       // count (low thousands) this is faster than per-project lookups.
       this.prisma.projectMilestoneStatus.findMany({
+        where: statusScope,
         select: {
           projectId: true,
           milestoneId: true,
@@ -175,6 +183,7 @@ export class ProjectStatusBoardController {
     @Param('milestoneId', ParseIntPipe) milestoneId: number,
     @Body('isCompleted') isCompleted?: boolean,
   ) {
+    await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     // If isCompleted not supplied, read the current value and flip.
     const existing = await this.prisma.projectMilestoneStatus.findUnique({
       where: { projectId_milestoneId: { projectId, milestoneId } },

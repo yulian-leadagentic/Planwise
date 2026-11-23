@@ -92,6 +92,8 @@ export class ProjectDeliverablesController {
   ) {
     const projectId = await this.service.getProjectId(id);
     await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
+    // Round 4: no zone from another project.
+    if (body?.zoneId != null) await this.service.assertZoneInProject(body.zoneId, projectId);
     return this.service.setTarget(id, body.months, body.baseDate, body.zoneId, body.durationWeeks);
   }
 
@@ -111,6 +113,8 @@ export class ProjectDeliverablesController {
     for (const it of body.items) {
       const projectId = await this.service.getProjectId(it.id);
       await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
+      // Round 4: no zone from another project.
+      if (it.zoneId != null) await this.service.assertZoneInProject(it.zoneId, projectId);
     }
     return this.service.batchSetTargets(body.items, body.baseDate, body.applyToTasks !== false, user.id);
   }
@@ -125,7 +129,8 @@ export class ProjectDeliverablesController {
     @CurrentUser() user: any,
     @Param('taskId', ParseIntPipe) taskId: number,
   ) {
-    void user;
+    // Round 4: access to the task's project (was missing).
+    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     return this.service.forceApplyTargetToTask(taskId);
   }
 

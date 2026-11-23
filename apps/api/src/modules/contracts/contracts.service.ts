@@ -122,7 +122,11 @@ export class ContractsService {
     return contract;
   }
 
-  async findAll(query: any) {
+  /**
+   * `projectIds` (round 4): null = every contract; an array limits the
+   * list to those projects (contracts without a project are left out).
+   */
+  async findAll(query: any, projectIds: number[] | null = null) {
     const page = Number(query.page) || 1;
     const perPage = Number(query.perPage) || 20;
     const skip = (page - 1) * perPage;
@@ -130,6 +134,7 @@ export class ContractsService {
     const where: Prisma.ContractWhereInput = {};
     if (query.status) where.status = query.status;
     if (query.projectId) where.projectId = Number(query.projectId);
+    else if (projectIds) where.projectId = { in: projectIds };
     if (query.partnerId) where.partnerId = Number(query.partnerId);
 
     const [data, total] = await Promise.all([
@@ -157,6 +162,43 @@ export class ContractsService {
       data,
       meta: { total, page, perPage, totalPages: Math.ceil(total / perPage) },
     };
+  }
+
+  // ─── Project of a record (round 4 access checks) ────────────────────
+
+  /** Project of a contract (null = not tied to a project). 404 if missing. */
+  async getContractProjectId(id: number): Promise<number | null> {
+    const c = await this.prisma.contract.findFirst({ where: { id }, select: { projectId: true } });
+    if (!c) throw new NotFoundException('Contract not found');
+    return c.projectId ?? null;
+  }
+
+  /** Project of a contract item, through its contract. */
+  async getItemProjectId(itemId: number): Promise<number | null> {
+    const item = await this.prisma.contractItem.findUnique({
+      where: { id: itemId },
+      select: { contract: { select: { projectId: true } } },
+    });
+    if (!item) throw new NotFoundException('Contract item not found');
+    return item.contract?.projectId ?? null;
+  }
+
+  /** Project of a label (milestones hang off labels). */
+  async getLabelProjectId(labelId: number): Promise<number> {
+    if (!Number.isInteger(labelId)) throw new BadRequestException('A milestone needs a label (labelId).');
+    const label = await this.prisma.label.findFirst({ where: { id: labelId }, select: { projectId: true } });
+    if (!label) throw new NotFoundException('Label not found');
+    return label.projectId;
+  }
+
+  /** Project of a milestone, through its label. */
+  async getMilestoneProjectId(id: number): Promise<number> {
+    const m = await this.prisma.labelMilestone.findUnique({
+      where: { id },
+      select: { label: { select: { projectId: true } } },
+    });
+    if (!m) throw new NotFoundException('Milestone not found');
+    return m.label.projectId;
   }
 
   async findOne(id: number) {
@@ -254,7 +296,45 @@ export class ContractsService {
     return item;
   }
 
+  /**
+   * Round 4 (review fix) — an item's label, and its milestone (through the
+   * milestone's label), must be in the contract's own project: 400
+   * CROSS_PROJECT_PLACEMENT otherwise (also for a contract with no
+   * project). 404 when the label / milestone does not exist.
+   */
+  private async assertItemPlacement(
+    contractProjectId: number | null,
+    data: { labelId?: unknown; milestoneId?: unknown } | null | undefined,
+  ): Promise<void> {
+    const crossProject = (what: string) =>
+      new BadRequestException({
+        code: 'CROSS_PROJECT_PLACEMENT',
+        message: `A contract item can only use a ${what} of the contract's own project.`,
+      });
+    if (data?.labelId != null) {
+      const label = await this.prisma.label.findFirst({
+        where: { id: Number(data.labelId) },
+        select: { projectId: true },
+      });
+      if (!label) throw new NotFoundException('Label not found');
+      if (contractProjectId == null || label.projectId !== contractProjectId) throw crossProject('label');
+    }
+    if (data?.milestoneId != null) {
+      const milestone = await this.prisma.labelMilestone.findUnique({
+        where: { id: Number(data.milestoneId) },
+        select: { label: { select: { projectId: true } } },
+      });
+      if (!milestone) throw new NotFoundException('Milestone not found');
+      if (contractProjectId == null || milestone.label?.projectId !== contractProjectId) {
+        throw crossProject('milestone');
+      }
+    }
+  }
+
   async addItem(contractId: number, data: any) {
+    if (data?.labelId != null || data?.milestoneId != null) {
+      await this.assertItemPlacement(await this.getContractProjectId(contractId), data);
+    }
     return this.prisma.contractItem.create({
       data: {
         contractId,
@@ -274,6 +354,9 @@ export class ContractsService {
   }
 
   async updateItem(itemId: number, data: any) {
+    if (data?.labelId != null || data?.milestoneId != null) {
+      await this.assertItemPlacement(await this.getItemProjectId(itemId), data);
+    }
     return this.prisma.contractItem.update({
       where: { id: itemId },
       data: {

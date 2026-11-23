@@ -67,6 +67,18 @@ export class ProjectDeliverablesService {
     return row.projectId;
   }
 
+  /** Round 4: a (zone × deliverable) target needs a live zone of the deliverable's project. */
+  async assertZoneInProject(zoneId: number, projectId: number): Promise<void> {
+    const zone = await this.prisma.zone.findFirst({
+      where: { id: zoneId, deletedAt: null },
+      select: { projectId: true },
+    });
+    if (!zone) throw new NotFoundException('Zone not found');
+    if (zone.projectId !== projectId) {
+      throw new BadRequestException('The zone belongs to another project');
+    }
+  }
+
   /** List a project's deliverables, ordered for display. Includes
    *  per-zone target rows so the Deliverable Planning UI can lay out
    *  one row per (zone × deliverable). */

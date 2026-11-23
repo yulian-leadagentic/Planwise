@@ -15,6 +15,11 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { ContractsService } from './contracts.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { ProjectAccessService } from '../../common/services/project-access.service';
+import {
+  assertFinanceProjectAccess,
+  financeProjectScope,
+} from '../../common/services/finance-scope';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ApiPaginated } from '../../common/decorators/api-paginated.decorator';
@@ -29,6 +34,9 @@ import {
 } from '../../common/finance/finance-access';
 
 /**
+ * Round 4 (2026-11-23) — project scope: finance:read reaches every
+ * project; anyone else needs project access too (finance-scope.ts).
+ *
  * Permissions round 2 (B-12 / B-13) — contract money.
  *   Read:  `totalAmount` / `unitPrice` are stripped by the global
  *          interceptor; ContractItem `total` / `quantity` and
@@ -50,12 +58,20 @@ function redactContractMoney<T extends Record<string, any>>(contract: T): T {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('contracts')
 export class ContractsController {
-  constructor(private readonly contractsService: ContractsService) {}
+  constructor(
+    private readonly contractsService: ContractsService,
+    private readonly access: ProjectAccessService,
+  ) {}
+
+  private scope(user: any, projectId: number | null | undefined) {
+    return assertFinanceProjectAccess(this.access, user, projectId);
+  }
 
   @Post()
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Create a contract' })
   async create(@CurrentUser() user: any, @Body() dto: CreateContractDto) {
+    await this.scope(user, dto.projectId);
     await assertFinanceFieldWrites(user, dto, ['totalAmount'], null);
     return this.contractsService.create(user.id, dto);
   }
@@ -64,20 +80,24 @@ export class ContractsController {
   @RequirePermissions({ module: 'contracts', action: 'read' })
   @ApiPaginated()
   @ApiOperation({ summary: 'List contracts with filters' })
-  findAll(
+  async findAll(
+    @CurrentUser() user: any,
     @Query('page') page?: number,
     @Query('perPage') perPage?: number,
     @Query('status') status?: string,
     @Query('projectId') projectId?: number,
     @Query('partnerId') partnerId?: number,
   ) {
-    return this.contractsService.findAll({ page, perPage, status, projectId, partnerId });
+    if (projectId) await this.scope(user, Number(projectId));
+    const projectIds = projectId ? null : await financeProjectScope(this.access, user);
+    return this.contractsService.findAll({ page, perPage, status, projectId, partnerId }, projectIds);
   }
 
   @Get(':id')
   @RequirePermissions({ module: 'contracts', action: 'read' })
   @ApiOperation({ summary: 'Get contract by ID' })
   async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.scope(user, await this.contractsService.getContractProjectId(id));
     const contract = await this.contractsService.findOne(id);
     return canSeeFinance(user) ? contract : redactContractMoney(contract);
   }
@@ -90,6 +110,9 @@ export class ContractsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: Partial<CreateContractDto>,
   ) {
+    await this.scope(user, await this.contractsService.getContractProjectId(id));
+    // Moving the contract to another project needs access there too.
+    if (dto.projectId !== undefined) await this.scope(user, dto.projectId);
     await assertFinanceFieldWrites(user, dto, ['totalAmount'], () => this.contractsService.findOne(id));
     return this.contractsService.update(id, dto, user.id);
   }
@@ -97,7 +120,8 @@ export class ContractsController {
   @Delete(':id')
   @RequirePermissions({ module: 'contracts', action: 'delete' })
   @ApiOperation({ summary: 'Soft delete a contract' })
-  remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+  async remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.scope(user, await this.contractsService.getContractProjectId(id));
     return this.contractsService.remove(id, user.id);
   }
 
@@ -106,6 +130,7 @@ export class ContractsController {
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Add item to contract' })
   async addItem(@CurrentUser() user: any, @Param('id', ParseIntPipe) contractId: number, @Body() body: any) {
+    await this.scope(user, await this.contractsService.getContractProjectId(contractId));
     // `quantity` defaults to 1 on create — echoing the default is no change.
     await assertFinanceFieldWrites(user, body, CONTRACT_ITEM_MONEY_KEYS, { quantity: 1 });
     const item = await this.contractsService.addItem(contractId, body);
@@ -120,6 +145,7 @@ export class ContractsController {
     @Param('itemId', ParseIntPipe) itemId: number,
     @Body() body: any,
   ) {
+    await this.scope(user, await this.contractsService.getItemProjectId(itemId));
     await assertFinanceFieldWrites(user, body, CONTRACT_ITEM_MONEY_KEYS, () =>
       this.contractsService.getItem(itemId),
     );
@@ -130,7 +156,8 @@ export class ContractsController {
   @Delete(':id/items/:itemId')
   @RequirePermissions({ module: 'contracts', action: 'delete' })
   @ApiOperation({ summary: 'Remove contract item' })
-  removeItem(@Param('itemId', ParseIntPipe) itemId: number) {
+  async removeItem(@CurrentUser() user: any, @Param('itemId', ParseIntPipe) itemId: number) {
+    await this.scope(user, await this.contractsService.getItemProjectId(itemId));
     return this.contractsService.removeItem(itemId);
   }
 
@@ -139,6 +166,8 @@ export class ContractsController {
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Create milestone for a label' })
   async createMilestone(@CurrentUser() user: any, @Body() body: any) {
+    // The milestone's project is its label's project.
+    await this.scope(user, await this.contractsService.getLabelProjectId(Number(body?.labelId)));
     await assertFinanceFieldWrites(user, body, AMOUNT_KEYS, null);
     const milestone = await this.contractsService.createMilestone(user.id, body);
     return canSeeFinance(user) ? milestone : omitKeys(milestone, AMOUNT_KEYS);
@@ -148,6 +177,7 @@ export class ContractsController {
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Update milestone' })
   async updateMilestone(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    await this.scope(user, await this.contractsService.getMilestoneProjectId(id));
     await assertFinanceFieldWrites(user, body, AMOUNT_KEYS, () => this.contractsService.getMilestone(id));
     const milestone = await this.contractsService.updateMilestone(id, body);
     return canSeeFinance(user) ? milestone : omitKeys(milestone, AMOUNT_KEYS);
@@ -156,7 +186,8 @@ export class ContractsController {
   @Delete('milestones/:id')
   @RequirePermissions({ module: 'contracts', action: 'delete' })
   @ApiOperation({ summary: 'Delete milestone' })
-  removeMilestone(@Param('id', ParseIntPipe) id: number) {
+  async removeMilestone(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.scope(user, await this.contractsService.getMilestoneProjectId(id));
     return this.contractsService.removeMilestone(id);
   }
 
@@ -187,6 +218,7 @@ export class ContractsController {
   @RequirePermissions({ module: 'contracts', action: 'write' })
   @ApiOperation({ summary: 'Create expense' })
   async createExpense(@CurrentUser() user: any, @Body() dto: CreateExpenseDto) {
+    await this.scope(user, dto.projectId);
     await assertFinanceFieldWrites(user, dto, AMOUNT_KEYS, null);
     const expense = await this.contractsService.createExpense(user.id, dto);
     return canSeeFinance(user) ? expense : omitKeys(expense, AMOUNT_KEYS);
@@ -196,6 +228,7 @@ export class ContractsController {
   @RequirePermissions({ module: 'contracts', action: 'read' })
   @ApiOperation({ summary: 'List expenses by project' })
   async getExpenses(@CurrentUser() user: any, @Query('projectId', ParseIntPipe) projectId: number) {
+    await this.scope(user, projectId);
     const expenses = await this.contractsService.getExpenses(projectId);
     return canSeeFinance(user) ? expenses : omitKeys(expenses, AMOUNT_KEYS);
   }

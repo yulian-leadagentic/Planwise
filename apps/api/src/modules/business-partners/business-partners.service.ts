@@ -76,6 +76,31 @@ const partnerInclude = {
 } as const;
 
 /**
+ * Permissions round 4 (review fix) — the projects a caller may see on a
+ * partner: `ProjectAccessService.getAccessibleProjectIds` (`all` for an
+ * Admin). A partner's project rows (Team-tab roles, the Contacts list's
+ * "projects" column) are cut to these, so the partner screens do not
+ * list projects the caller has no access to.
+ */
+export type PartnerProjectScope = { all: boolean; projectIds: number[] };
+
+/** No project rows at all — for internal calls that only need the partner. */
+const NO_PROJECTS: PartnerProjectScope = { all: false, projectIds: [] };
+
+/** Drops the `projectPartnerRoles` rows outside the caller's projects. */
+function scopeProjectRoles<T>(bp: T, scope: PartnerProjectScope): T {
+  const roles = (bp as any)?.projectPartnerRoles;
+  if (scope.all || !Array.isArray(roles)) return bp;
+  const allowed = new Set(scope.projectIds);
+  return { ...bp, projectPartnerRoles: roles.filter((r: { projectId: number }) => allowed.has(r.projectId)) };
+}
+
+/** Prisma filter for project-role rows inside the scope (empty = no filter). */
+function scopeProjectWhere(scope: PartnerProjectScope): Prisma.ProjectPartnerRoleWhereInput {
+  return scope.all ? {} : { projectId: { in: scope.projectIds } };
+}
+
+/**
  * BM2 Phase 3 helper — extract the lower-cased domain from an email.
  * Returns null when the email is empty or malformed.
  *
@@ -275,7 +300,7 @@ export class BusinessPartnersService {
   // CRUD
   // ─────────────────────────────────────────────────────────────────────────
 
-  async findAll(query: QueryBusinessPartnersDto) {
+  async findAll(query: QueryBusinessPartnersDto, scope: PartnerProjectScope) {
     const where: Prisma.BusinessPartnerWhereInput = { deletedAt: null };
 
     if (query.partnerType) where.partnerType = query.partnerType;
@@ -442,9 +467,11 @@ export class BusinessPartnersService {
     // BM2 ops-surfaces Phase B (2026-08-13): no more legacy shim — the
     // include returns partnerRelationshipsA + projectPartnerRoles directly
     // and the frontend consumers read those two arrays.
+    // Round 4 (review fix): both cut to the caller's projects.
+    const scoped = data.map((bp) => scopeProjectRoles(bp, scope));
     const enriched = query.withProjects
-      ? await this.attachProjectsForContacts(data as any[])
-      : data;
+      ? await this.attachProjectsForContacts(scoped as any[], scope)
+      : scoped;
 
     // People UX M6 (D1) — attach `isEmployee` to each person payload.
     // Only one home-org lookup per request; skipped when the query
@@ -523,7 +550,7 @@ export class BusinessPartnersService {
     // Basic existence check — 404 if the org doesn't exist / is deleted.
     // Reuse `findOne` so the guard is identical to every other detail
     // endpoint on this controller.
-    await this.findOne(orgId);
+    await this.findOne(orgId, NO_PROJECTS);
     const workerOfType = await this.prisma.partnerRelationshipType.findUnique({
       where: { code: 'worker_of' },
       select: { id: true },
@@ -622,9 +649,11 @@ export class BusinessPartnersService {
    *      organization carries the `customer` project role.
    * Results are merged + de-duped per BP, split active vs archived using
    * project.status, and capped to keep the response light.
+   * Round 4 (review fix): only projects inside `scope` are counted or listed.
    */
   private async attachProjectsForContacts<T extends { id: number; partnerType: string; partnerRelationshipsA?: any[] }>(
     partners: T[],
+    scope: PartnerProjectScope,
   ): Promise<Array<T & { projectCount: { active: number; archived: number }; projects: Array<{ id: number; name: string; number: string | null; status: string; role: string | null; via: 'direct' | 'employer' }> }>> {
     if (partners.length === 0) return partners as any;
 
@@ -660,6 +689,7 @@ export class BusinessPartnersService {
       where: {
         partyId: { in: partnerIds },
         validTo: { gt: new Date() },
+        ...scopeProjectWhere(scope),
       },
       include: {
         role: { select: { code: true, name: true } },
@@ -677,6 +707,7 @@ export class BusinessPartnersService {
             partyId: { in: Array.from(allEmployerIds) },
             roleId: customerRole.id,
             validTo: { gt: new Date() },
+            ...scopeProjectWhere(scope),
           },
           include: {
             project: { select: { id: true, name: true, number: true, status: true, deletedAt: true } },
@@ -735,12 +766,14 @@ export class BusinessPartnersService {
     });
   }
 
-  async findOne(id: number) {
-    const bp = await this.prisma.businessPartner.findFirst({
+  async findOne(id: number, scope: PartnerProjectScope) {
+    const found = await this.prisma.businessPartner.findFirst({
       where: { id, deletedAt: null },
       include: partnerInclude,
     });
-    if (!bp) throw new NotFoundException('Business partner not found');
+    if (!found) throw new NotFoundException('Business partner not found');
+    // Round 4 (review fix) — project rows of the caller's projects only.
+    const bp = scopeProjectRoles(found, scope);
 
     // BM2 Phase 1 (2026-08-13): incoming relationships now read from
     // `partner_relationships` (BUT050 party↔party). "Incoming" = rows
@@ -911,8 +944,8 @@ export class BusinessPartnersService {
     });
   }
 
-  async update(id: number, dto: UpdateBusinessPartnerDto, userId?: number) {
-    const existing = await this.findOne(id);
+  async update(id: number, dto: UpdateBusinessPartnerDto, userId: number | undefined, scope: PartnerProjectScope) {
+    const existing = await this.findOne(id, NO_PROJECTS);
 
     if (dto.email && dto.email !== existing.email) {
       const dup = await this.prisma.businessPartner.findFirst({
@@ -1020,7 +1053,8 @@ export class BusinessPartnersService {
       });
     } catch (e) { Sentry.captureException(e); /* swallow */ }
 
-    return finalBp;
+    // Round 4 (review fix) — project rows of the caller's projects only.
+    return scopeProjectRoles(finalBp, scope);
   }
 
   /**
@@ -1067,7 +1101,7 @@ export class BusinessPartnersService {
   // ─────────────────────────────────────────────────────────────────────────
 
   async addRole(bpId: number, roleTypeId: number, isPrimary = false) {
-    await this.findOne(bpId); // existence check + 404
+    await this.findOne(bpId, NO_PROJECTS); // existence check + 404
     const roleType = await this.prisma.partnerRoleType.findUnique({ where: { id: roleTypeId } });
     if (!roleType) throw new NotFoundException('Role type not found');
 
@@ -1094,7 +1128,7 @@ export class BusinessPartnersService {
 
   /** List a partner's current job titles, with their primary flag. */
   async listProfessions(bpId: number) {
-    await this.findOne(bpId);
+    await this.findOne(bpId, NO_PROJECTS);
     return this.prisma.businessPartnerProfession.findMany({
       where: { businessPartnerId: bpId },
       include: { profession: true },
@@ -1113,7 +1147,7 @@ export class BusinessPartnersService {
     professionIds: number[],
     primaryProfessionId: number | null,
   ) {
-    await this.findOne(bpId);
+    await this.findOne(bpId, NO_PROJECTS);
 
     // Sanity: every desired id must reference an existing profession.
     if (professionIds.length > 0) {
@@ -1186,7 +1220,7 @@ export class BusinessPartnersService {
    * drawer renders a stable list.
    */
   async listDomains(bpId: number) {
-    await this.findOne(bpId); // 404 + implicit soft-delete filter
+    await this.findOne(bpId, NO_PROJECTS); // 404 + implicit soft-delete filter
     return this.prisma.businessPartnerDomain.findMany({
       where: { partnerId: bpId },
       orderBy: { domain: 'asc' },
@@ -1218,7 +1252,7 @@ export class BusinessPartnersService {
    *     this corporate domain. Message names the owner (unchanged).
    */
   async addDomain(bpId: number, rawDomain: string, userId?: number) {
-    const bp = await this.findOne(bpId);
+    const bp = await this.findOne(bpId, NO_PROJECTS);
     if (bp.partnerType !== 'organization') {
       throw new BadRequestException(
         `Domains can only be attached to organization BPs; this one is a ${bp.partnerType}.`,
