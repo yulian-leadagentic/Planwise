@@ -1,5 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { GATEWAY_OPTIONS } from '@nestjs/websockets/constants';
+import { Prisma } from '@prisma/client';
 
 import { MessagesService } from './messages.service';
 import { MessageAccessService, MessageViewer } from './message-access.service';
@@ -83,8 +84,18 @@ function scalar(actual: any, cond: any): boolean {
     if ('in' in cond) return cond.in.includes(actual);
     if ('not' in cond) return cond.not === null ? actual != null : actual !== cond.not;
     if ('contains' in cond) return String(actual ?? '').includes(cond.contains);
-    if ('equals' in cond) return actual == null; // metadata DbNull / AnyNull
-    if ('path' in cond) return actual?.[cond.path[0] ?? cond.path] == null;
+    if ('path' in cond) {
+      // Prisma JSON path filter on MySQL: the path is passed verbatim to
+      // JSON_EXTRACT, which rejects anything not starting with `$`
+      // (MySQL 3143 "Invalid JSON path expression").
+      if (typeof cond.path !== 'string' || !/^\$\.\w+$/.test(cond.path)) {
+        throw new Error(`MySQL 3143: Invalid JSON path expression '${cond.path}'`);
+      }
+      const v = actual?.[cond.path.slice(2)];
+      // JSON_EXTRACT gives SQL NULL for a missing key or a NULL column.
+      return cond.equals === Prisma.AnyNull ? v == null : v === cond.equals;
+    }
+    if ('equals' in cond) return actual == null; // metadata DbNull
   }
   return actual === cond;
 }
@@ -135,8 +146,8 @@ function makeService(db: Db) {
         return m ? withReplies(m, include) : null;
       }),
       findUnique: jest.fn(async ({ where }: any) => db.messages.find((m) => m.id === where.id) ?? null),
-      findMany: jest.fn(async ({ where, include, skip = 0, take }: any) =>
-        list(where).slice(skip, take != null ? skip + take : undefined).map((m) => withReplies(m, include)),
+      findMany: jest.fn(async ({ where, include, select, skip = 0, take }: any) =>
+        list(where).slice(skip, take != null ? skip + take : undefined).map((m) => withReplies(m, include ?? select)),
       ),
       count: jest.fn(async ({ where }: any) => list(where).length),
       groupBy: jest.fn(async ({ by, where, _count }: any) => {
@@ -520,6 +531,47 @@ describe('Messages — round 4C-2 flags and reply notifications', () => {
       await replyTo200();
       expect(replyNotices()[0][0].data).toMatchObject({ userId: 9 });
     });
+  });
+});
+
+describe('Messages — analytics unresolved threads (MySQL JSON path)', () => {
+  let db: Db;
+  let ctx: ReturnType<typeof makeService>;
+  beforeEach(() => {
+    db = makeDb();
+    ctx = makeService(db);
+  });
+  const jsonPaths = (where: any): string[] =>
+    where && typeof where === 'object'
+      ? Object.entries(where).flatMap(([k, v]) => (k === 'path' ? [v as string] : jsonPaths(v)))
+      : [];
+  const unresolved = async () => (await ctx.svc.getAnalytics(ADMIN)).unresolvedThreads;
+  const setMeta = (id: number, metadata: any) => {
+    db.messages.find((m) => m.id === id)!.metadata = metadata;
+  };
+
+  it('filters metadata with a `$.`-prefixed JSON path (bare "resolved" is MySQL error 3143)', async () => {
+    await ctx.svc.getAnalytics(ADMIN);
+    const paths = ctx.prisma.message.count.mock.calls.flatMap(([args]: any[]) => jsonPaths(args.where));
+    expect(paths).toContain('$.resolved');
+    for (const p of paths) expect(p).toMatch(/^\$\./);
+  });
+
+  it('a thread is unresolved until resolved, and again once reopened', async () => {
+    // Threads 100, 200, 300, 400 — none has metadata yet.
+    expect(await unresolved()).toBe(4);
+    await ctx.svc.resolveThread(100, ADMIN);
+    expect(await unresolved()).toBe(3);
+    await ctx.svc.unresolveThread(100, ADMIN);
+    expect(await unresolved()).toBe(4);
+  });
+
+  it('resolved: false / null and metadata without the key count as unresolved', async () => {
+    setMeta(100, { resolved: false });
+    setMeta(200, { resolved: null });
+    setMeta(300, { attachments: [{ name: 'a.pdf' }] });
+    setMeta(400, { resolved: true, resolvedBy: 9 });
+    expect(await unresolved()).toBe(3);
   });
 });
 

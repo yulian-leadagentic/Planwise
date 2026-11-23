@@ -256,6 +256,10 @@ export class MessagesService {
     const [totalMessages, totalThreads, unresolvedThreads, mentionCount, recentActivity] = await Promise.all([
       this.prisma.message.count({ where }),
       this.prisma.message.count({ where: { AND: [where, { parentId: null }] } }),
+      // Unresolved = no metadata, or `resolved` missing / null / false.
+      // resolveThread sets `resolved: true`; unresolveThread removes it.
+      // MySQL JSON paths must start with `$.` (a bare 'resolved' fails
+      // with MySQL error 3143 "Invalid JSON path expression").
       this.prisma.message.count({
         where: {
           AND: [
@@ -264,7 +268,8 @@ export class MessagesService {
             {
               OR: [
                 { metadata: { equals: Prisma.DbNull } },
-                { metadata: { path: 'resolved', equals: Prisma.AnyNull } },
+                { metadata: { path: '$.resolved', equals: Prisma.AnyNull } },
+                { metadata: { path: '$.resolved', equals: false } },
               ],
             },
           ],
