@@ -6,6 +6,16 @@ import { notify, getErrorMessage, isPermissionDenied, getPermissionMessage } fro
 import { NoAccess } from '@/components/shared/no-access';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
+import { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { createPickedMenuFocus } from '@/components/ui/menu-focus';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
 import { projectsApi, type AssigneeCandidate } from '@/api/projects.api';
 import { tasksApi } from '@/api/tasks.api';
@@ -61,6 +71,16 @@ import {
 // already clamps elsewhere. The /feasibility and /progress endpoints
 // stay available for any other callers.
 
+// ─── Add-menu focus hand-off (QA6 PR-071) ───────────────────────────────────
+//
+// The Add menus' items open a picker modal or an inline form whose input
+// grabs focus; see createPickedMenuFocus for why the trigger must not
+// take it back after a pick. One stable instance per component.
+function usePickedMenuFocus() {
+  const [handoff] = useState(createPickedMenuFocus);
+  return handoff;
+}
+
 // ─── Status Badge Dropdown (clickable badge that opens status picker) ─────────
 
 function StatusBadgeDropdown({
@@ -75,15 +95,7 @@ function StatusBadgeDropdown({
   selectedTaskIds?: Set<number>;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', h);
-    return () => document.removeEventListener('mousedown', h);
-  }, [open]);
 
   const allStatuses = [
     { value: 'not_started', label: 'To Do', bg: 'bg-slate-100 dark:bg-slate-800', text: 'text-slate-600 dark:text-slate-300', dot: 'bg-slate-400 dark:bg-slate-500' },
@@ -129,28 +141,35 @@ function StatusBadgeDropdown({
     }
   };
 
+  // QA6 PR-071: Radix DropdownMenu (portal + collision flip) instead of
+  // an `absolute top-full` div, so the menu on the last row isn't clipped
+  // by the page's scroll container.
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        className={cn('inline-flex items-center gap-1 rounded-[5px] px-2 py-0.5 text-[10px] font-bold cursor-pointer hover:ring-2 hover:ring-blue-300 transition-all', current.bg, current.text)}
-      >
-        <span className={cn('w-1.5 h-1.5 rounded-full', current.dot)} />
-        {current.label}
-        <ChevronDown className="h-2.5 w-2.5 opacity-60" />
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-40 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1">
-          {allStatuses.map((s) => (
-            <button key={s.value} onClick={() => handleChange(s.value)}
-              className={cn('w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50 dark:hover:bg-slate-800/50', s.value === currentStatus && 'bg-blue-50')}>
-              <span className={cn('w-2 h-2 rounded-full', s.dot)} />
-              <span className="text-slate-700 dark:text-slate-200">{s.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          className={cn('inline-flex items-center gap-1 rounded-[5px] px-2 py-0.5 text-[10px] font-bold cursor-pointer hover:ring-2 hover:ring-blue-300 transition-all', current.bg, current.text)}
+        >
+          <span className={cn('w-1.5 h-1.5 rounded-full', current.dot)} />
+          {current.label}
+          <ChevronDown className="h-2.5 w-2.5 opacity-60" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-40">
+        {allStatuses.map((s) => (
+          <DropdownMenuItem
+            key={s.value}
+            onSelect={() => handleChange(s.value)}
+            className={cn('gap-2 py-1.5 text-[12px]', s.value === currentStatus && 'bg-blue-50 dark:bg-blue-900/30')}
+          >
+            <span className={cn('w-2 h-2 rounded-full', s.dot)} />
+            <span className="text-slate-700 dark:text-slate-200">{s.label}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -158,17 +177,7 @@ function StatusBadgeDropdown({
 
 function StatusMenu({ taskId, currentStatus, projectId }: { taskId: number; currentStatus: string; projectId: number }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
 
   const statuses = [
     { value: 'not_started', label: 'To Do', dot: 'bg-slate-400 dark:bg-slate-500' },
@@ -192,34 +201,37 @@ function StatusMenu({ taskId, currentStatus, projectId }: { taskId: number; curr
   };
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        title="Change status"
-        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
-      >
-        <ChevronDown className="w-3.5 h-3.5" />
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-44 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1">
-          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Set Status</div>
-          {statuses.map((s) => (
-            <button
-              key={s.value}
-              onClick={() => handleChange(s.value)}
-              className={cn(
-                'w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50 dark:hover:bg-slate-800/50',
-                s.value === currentStatus && 'bg-blue-50 font-medium',
-              )}
-            >
-              <span className={cn('w-2 h-2 rounded-full', s.dot)} />
-              <span className="text-slate-700 dark:text-slate-200">{s.label}</span>
-              {s.value === currentStatus && <span className="ml-auto text-[10px] text-blue-500">current</span>}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          title="Change status"
+          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+        >
+          <ChevronDown className="w-3.5 h-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuLabel className="px-3 py-1.5">Set Status</DropdownMenuLabel>
+        {statuses.map((s) => (
+          <DropdownMenuItem
+            key={s.value}
+            // Keep the menu open until the update succeeds (handleChange
+            // closes it), same as before the Radix move.
+            onSelect={(e) => { e.preventDefault(); handleChange(s.value); }}
+            className={cn(
+              'gap-2 py-1.5 text-[12px]',
+              s.value === currentStatus && 'bg-blue-50 dark:bg-blue-900/30 font-medium',
+            )}
+          >
+            <span className={cn('w-2 h-2 rounded-full', s.dot)} />
+            <span className="text-slate-700 dark:text-slate-200">{s.label}</span>
+            {s.value === currentStatus && <span className="ml-auto text-[10px] text-blue-500">current</span>}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -229,17 +241,7 @@ function MoveToMenu({ taskId, currentZoneId, zones, projectId, onMoved }: {
   taskId: number; currentZoneId: number; zones: any[]; projectId: number; onMoved: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
 
   const flatZones = useMemo(() => {
     const result: any[] = [];
@@ -268,31 +270,33 @@ function MoveToMenu({ taskId, currentZoneId, zones, projectId, onMoved }: {
   if (flatZones.length === 0) return null;
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        title="Move to zone..."
-        className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
-      >
-        <Layers className="w-3.5 h-3.5" />
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-56 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl py-1">
-          <div className="px-3 py-1.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase">Move to zone</div>
-          {flatZones.map((z) => (
-            <button
-              key={z.id}
-              onClick={() => handleMove(z.id)}
-              className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              style={{ paddingLeft: `${12 + z.depth * 16}px` }}
-            >
-              <span className="text-slate-700 dark:text-slate-200">{z.name}</span>
-              <span className="text-[10px] text-slate-400 dark:text-slate-500">{ZONE_DISPLAY[z.zoneType]?.label ?? z.zoneType}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          title="Move to zone..."
+          className="w-7 h-7 rounded-md flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+        >
+          <Layers className="w-3.5 h-3.5" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel className="px-3 py-1.5">Move to zone</DropdownMenuLabel>
+        {flatZones.map((z) => (
+          <DropdownMenuItem
+            key={z.id}
+            // Stay open until the move succeeds (handleMove closes it).
+            onSelect={(e) => { e.preventDefault(); handleMove(z.id); }}
+            className="gap-2 py-1.5 text-[12px]"
+            style={{ paddingLeft: `${12 + z.depth * 16}px` }}
+          >
+            <span className="text-slate-700 dark:text-slate-200">{z.name}</span>
+            <span className="text-[10px] text-slate-400 dark:text-slate-500">{ZONE_DISPLAY[z.zoneType]?.label ?? z.zoneType}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -301,7 +305,6 @@ function MoveToMenu({ taskId, currentZoneId, zones, projectId, onMoved }: {
 function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId: number }) {
   const [open, setOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -314,15 +317,6 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
     enabled: open,
     staleTime: 30 * 1000,
   });
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -363,70 +357,74 @@ function TaskAttachmentButton({ taskId, projectId }: { taskId: number; projectId
     }
   };
 
+  // QA6 PR-071: Radix Popover (portal + collision flip). The hidden file
+  // input stays outside the content so a pending upload's change event
+  // still lands if the popover closes meanwhile.
   return (
-    <div className="relative" ref={ref}>
+    <Popover open={open} onOpenChange={setOpen}>
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
-      <button
-        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-        title="Attachments"
-        className={cn(
-          'w-7 h-7 rounded-md flex items-center justify-center shrink-0 transition-colors',
-          'text-slate-400 dark:text-slate-500 hover:text-amber-600 hover:bg-amber-50',
-        )}
-      >
-        <Paperclip className="w-3.5 h-3.5" />
-      </button>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          title="Attachments"
+          className={cn(
+            'w-7 h-7 rounded-md flex items-center justify-center shrink-0 transition-colors',
+            'text-slate-400 dark:text-slate-500 hover:text-amber-600 hover:bg-amber-50',
+          )}
+        >
+          <Paperclip className="w-3.5 h-3.5" />
+        </button>
+      </PopoverTrigger>
 
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 w-72 rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-          <div className="border-b border-slate-100 dark:border-slate-800 px-4 py-3 flex items-center justify-between">
-            <h4 className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Attachments</h4>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50"
-            >
-              <Plus className="h-3 w-3" /> {uploading ? 'Uploading...' : 'Add File'}
-            </button>
-          </div>
-          <div className="max-h-48 overflow-y-auto">
-            {attachments.length === 0 ? (
-              <div className="py-6 text-center">
-                <Paperclip className="mx-auto h-6 w-6 text-slate-300 dark:text-slate-600" />
-                <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">No attachments</p>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="mt-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
-                >
-                  Upload a file
-                </button>
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-50 dark:divide-slate-800 py-1">
-                {attachments.map((att: any) => (
-                  <div key={att.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                    <FileText className="w-4 h-4 text-slate-400 dark:text-slate-500 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[12px] font-medium text-slate-700 dark:text-slate-200 truncate">{att.fileName}</p>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500">
-                        {att.fileSize ? `${Math.round(att.fileSize / 1024)}KB` : ''}
-                        {att.uploader ? ` · ${att.uploader.firstName}` : ''}
-                      </p>
-                    </div>
-                    <a href={att.fileUrl} target="_blank" rel="noopener noreferrer" className="w-6 h-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50">
-                      <Download className="w-3 h-3" />
-                    </a>
-                    <button onClick={() => handleRemove(att.id)} className="w-6 h-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+      <PopoverContent align="end" className="w-72 overflow-hidden p-0" onClick={(e) => e.stopPropagation()}>
+        <div className="border-b border-slate-100 dark:border-slate-800 px-4 py-3 flex items-center justify-between">
+          <h4 className="text-[13px] font-semibold text-slate-800 dark:text-slate-100">Attachments</h4>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="flex items-center gap-1 text-[11px] font-semibold text-blue-600 hover:text-blue-700 disabled:opacity-50"
+          >
+            <Plus className="h-3 w-3" /> {uploading ? 'Uploading...' : 'Add File'}
+          </button>
         </div>
-      )}
-    </div>
+        <div className="max-h-48 overflow-y-auto">
+          {attachments.length === 0 ? (
+            <div className="py-6 text-center">
+              <Paperclip className="mx-auto h-6 w-6 text-slate-300 dark:text-slate-600" />
+              <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">No attachments</p>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="mt-2 text-[11px] font-semibold text-blue-600 hover:text-blue-700"
+              >
+                Upload a file
+              </button>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-50 dark:divide-slate-800 py-1">
+              {attachments.map((att: any) => (
+                <div key={att.id} className="flex items-center gap-2 px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                  <FileText className="w-4 h-4 text-slate-400 dark:text-slate-500 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[12px] font-medium text-slate-700 dark:text-slate-200 truncate">{att.fileName}</p>
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                      {att.fileSize ? `${Math.round(att.fileSize / 1024)}KB` : ''}
+                      {att.uploader ? ` · ${att.uploader.firstName}` : ''}
+                    </p>
+                  </div>
+                  <a href={att.fileUrl} target="_blank" rel="noopener noreferrer" className="w-6 h-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-blue-600 hover:bg-blue-50">
+                    <Download className="w-3 h-3" />
+                  </a>
+                  <button onClick={() => handleRemove(att.id)} className="w-6 h-6 rounded flex items-center justify-center text-slate-400 dark:text-slate-500 hover:text-red-600 hover:bg-red-50">
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -834,16 +832,6 @@ function ColHeader({
 }) {
   const ctx = useContext(TaskFilterContext);
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
 
   if (!ctx || !filterKey || !kind) {
     return <span className={align === 'right' ? 'text-right' : ''}>{label}</span>;
@@ -852,28 +840,33 @@ function ColHeader({
   const active = !!ctx.filters[filterKey];
   const cur = ctx.filters[filterKey];
 
+  // QA6 PR-071: Radix Popover (portal + collision flip) so a funnel on
+  // the last group's header isn't clipped by the scroll container.
   return (
-    <span ref={ref} className={cn('relative inline-flex items-center gap-1', align === 'right' && 'justify-end w-full')}>
+    <span className={cn('relative inline-flex items-center gap-1', align === 'right' && 'justify-end w-full')}>
       {label}
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
-        className={cn(
-          'inline-flex h-4 w-4 items-center justify-center rounded transition-colors',
-          active ? 'text-blue-600' : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-300',
-        )}
-        title={active ? `Filtered: ${cur}` : `Filter by ${label}`}
-        aria-label={`Filter by ${label}`}
-      >
-        {/* Funnel glyph — filled when a filter is active. */}
-        <svg viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
-          <path d="M1.5 2.5h13l-5 6v4l-3 1.5v-5.5l-5-6z" />
-        </svg>
-      </button>
-      {open && (
-        <div
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              'inline-flex h-4 w-4 items-center justify-center rounded transition-colors',
+              active ? 'text-blue-600' : 'text-slate-300 dark:text-slate-600 hover:text-slate-500 dark:hover:text-slate-300',
+            )}
+            title={active ? `Filtered: ${cur}` : `Filter by ${label}`}
+            aria-label={`Filter by ${label}`}
+          >
+            {/* Funnel glyph — filled when a filter is active. */}
+            <svg viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3">
+              <path d="M1.5 2.5h13l-5 6v4l-3 1.5v-5.5l-5-6z" />
+            </svg>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
           onClick={(e) => e.stopPropagation()}
-          className="absolute top-5 left-0 z-50 w-48 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-2 normal-case tracking-normal font-normal text-slate-700 dark:text-slate-200"
+          className="w-48 p-2 normal-case tracking-normal font-normal text-slate-700 dark:text-slate-200"
         >
           {kind === 'text' ? (
             <input
@@ -923,8 +916,8 @@ function ColHeader({
               Clear
             </button>
           )}
-        </div>
-      )}
+        </PopoverContent>
+      </Popover>
     </span>
   );
 }
@@ -2216,7 +2209,7 @@ function AssigneePicker({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const queryClient = useQueryClient();
-  const ref = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   // QA6 — leader / Admin may widen the list to every employee. The
   // project read is shared by every row (one cached GET /projects/:id).
   const scope = useAssigneeScope(projectId, true);
@@ -2230,15 +2223,6 @@ function AssigneePicker({
   // assign/unassign propagates across all selected rows.
   const isBulk = !!(selectedTaskIds && selectedTaskIds.has(task.id) && selectedTaskIds.size > 1);
   const targetIds = isBulk ? Array.from(selectedTaskIds!) : [task.id];
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['planning', projectId] });
 
@@ -2321,102 +2305,117 @@ function AssigneePicker({
     assignedUserIds,
   });
 
+  // QA6 PR-071: the people list is a Radix Popover (portal + collision
+  // flip) anchored on the whole cell, so it opens upward on the last row
+  // instead of being clipped. Clicks on the cell itself (avatar remove,
+  // the + toggle) don't count as "outside", matching the old behaviour.
   return (
-    <div ref={ref} className="relative inline-flex items-center gap-1">
-      {/* Stacked avatars of current assignees */}
-      {assignees.length > 0 && (
-        <div className="flex -space-x-1.5">
-          {assignees.slice(0, 3).map((a: any) => {
-            const u = a.user ?? {};
-            return (
-              <button
-                key={a.id ?? u.id}
-                type="button"
-                onClick={(e) => { e.stopPropagation(); removeOne(u.id); }}
-                title={`Remove ${u.firstName ?? ''} ${u.lastName ?? ''}`}
-                className="relative w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center ring-2 ring-white hover:bg-red-100 hover:text-red-600 group/avatar"
-              >
-                {(u.firstName?.[0] ?? '') + (u.lastName?.[0] ?? '')}
-                <X className="absolute inset-0 m-auto h-2.5 w-2.5 opacity-0 group-hover/avatar:opacity-100" />
-              </button>
-            );
-          })}
-          {assignees.length > 3 && (
-            <span className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[9px] font-semibold flex items-center justify-center ring-2 ring-white">
-              +{assignees.length - 3}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Add button — shown when someone on the Team is left to assign,
-          or for a leader / Admin, who can also search all employees
-          (QA6). External contacts are not listed at all. */}
-      {(available.length > 0 || scope.canManage) && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
-          className="w-5 h-5 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-slate-400 dark:text-slate-500 flex items-center justify-center hover:border-blue-500 hover:text-blue-600"
-          title="Assign people"
-        >
-          <Plus className="h-3 w-3" />
-        </button>
-      )}
-
-      {/* Dropdown */}
-      {open && (
-        <div className="absolute left-0 top-full mt-1 z-20 w-64 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg">
-          <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-            Assign People
-          </div>
-          <div className="max-h-56 overflow-y-auto py-1">
-            {available.length === 0 ? (
-              <p className="px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500">
-                {members.length === 0 ? 'No project members' : 'Everyone is already assigned'}
-              </p>
-            ) : (
-              available.map((m) => {
-                const name = m.displayName || 'Unknown';
-                const initials = (m.firstName?.[0] ?? '') + (m.lastName?.[0] ?? '') || name[0] || '?';
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <div ref={anchorRef} className="relative inline-flex items-center gap-1">
+          {/* Stacked avatars of current assignees */}
+          {assignees.length > 0 && (
+            <div className="flex -space-x-1.5">
+              {assignees.slice(0, 3).map((a: any) => {
+                const u = a.user ?? {};
                 return (
                   <button
-                    key={m.key}
+                    key={a.id ?? u.id}
                     type="button"
-                    disabled={busy}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      addOne(m);
-                    }}
-                    title={m.onTeam ? (m.role || m.discipline || name) : `${name} will be added to the project team`}
-                    className="w-full flex items-start gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                    onClick={(e) => { e.stopPropagation(); removeOne(u.id); }}
+                    title={`Remove ${u.firstName ?? ''} ${u.lastName ?? ''}`}
+                    className="relative w-5 h-5 rounded-full bg-violet-100 text-violet-600 text-[9px] font-semibold flex items-center justify-center ring-2 ring-white hover:bg-red-100 hover:text-red-600 group/avatar"
                   >
-                    <span className="mt-0.5 w-5 h-5 rounded-full text-[9px] font-semibold flex items-center justify-center shrink-0 bg-violet-100 text-violet-600">
-                      {initials}
-                    </span>
-                    <span className="flex-1 min-w-0">
-                      <span className="block truncate text-slate-700 dark:text-slate-200">{name}</span>
-                      {(m.role || m.discipline) && (
-                        <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">
-                          {[m.role, m.discipline].filter(Boolean).join(' · ')}
-                        </span>
-                      )}
-                      {!m.onTeam && <JoinsTeamNote />}
-                    </span>
+                    {(u.firstName?.[0] ?? '') + (u.lastName?.[0] ?? '')}
+                    <X className="absolute inset-0 m-auto h-2.5 w-2.5 opacity-0 group-hover/avatar:opacity-100" />
                   </button>
                 );
-              })
-            )}
-          </div>
-          {scope.canManage && (
-            <AllEmployeesToggle
-              checked={scope.showAllEmployees}
-              onChange={scope.setShowAllEmployees}
-              loading={scope.loadingEmployees}
-            />
+              })}
+              {assignees.length > 3 && (
+                <span className="w-5 h-5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[9px] font-semibold flex items-center justify-center ring-2 ring-white">
+                  +{assignees.length - 3}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Add button — shown when someone on the Team is left to assign,
+              or for a leader / Admin, who can also search all employees
+              (QA6). External contacts are not listed at all. */}
+          {(available.length > 0 || scope.canManage) && (
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                onClick={(e) => e.stopPropagation()}
+                className="w-5 h-5 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-slate-400 dark:text-slate-500 flex items-center justify-center hover:border-blue-500 hover:text-blue-600"
+                title="Assign people"
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </PopoverTrigger>
           )}
         </div>
-      )}
-    </div>
+      </PopoverAnchor>
+
+      {/* Dropdown */}
+      <PopoverContent
+        align="start"
+        className="w-64 overflow-hidden p-0"
+        onClick={(e) => e.stopPropagation()}
+        onInteractOutside={(e) => {
+          if (anchorRef.current?.contains(e.target as Node)) e.preventDefault();
+        }}
+      >
+        <div className="px-3 py-2 border-b border-slate-100 dark:border-slate-800 text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+          Assign People
+        </div>
+        <div className="max-h-56 overflow-y-auto py-1">
+          {available.length === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500">
+              {members.length === 0 ? 'No project members' : 'Everyone is already assigned'}
+            </p>
+          ) : (
+            available.map((m) => {
+              const name = m.displayName || 'Unknown';
+              const initials = (m.firstName?.[0] ?? '') + (m.lastName?.[0] ?? '') || name[0] || '?';
+              return (
+                <button
+                  key={m.key}
+                  type="button"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    addOne(m);
+                  }}
+                  title={m.onTeam ? (m.role || m.discipline || name) : `${name} will be added to the project team`}
+                  className="w-full flex items-start gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                >
+                  <span className="mt-0.5 w-5 h-5 rounded-full text-[9px] font-semibold flex items-center justify-center shrink-0 bg-violet-100 text-violet-600">
+                    {initials}
+                  </span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block truncate text-slate-700 dark:text-slate-200">{name}</span>
+                    {(m.role || m.discipline) && (
+                      <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">
+                        {[m.role, m.discipline].filter(Boolean).join(' · ')}
+                      </span>
+                    )}
+                    {!m.onTeam && <JoinsTeamNote />}
+                  </span>
+                </button>
+              );
+            })
+          )}
+        </div>
+        {scope.canManage && (
+          <AllEmployeesToggle
+            checked={scope.showAllEmployees}
+            onChange={scope.setShowAllEmployees}
+            loading={scope.loadingEmployees}
+          />
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -3648,72 +3647,52 @@ function ZoneTypePicker({
   onPick: (next: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
   const zc = zoneColors[zoneType] || zoneColors.zone;
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (wrapRef.current?.contains(e.target as Node)) return;
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [open]);
-
+  // QA6 PR-071: Radix DropdownMenu (portal + collision flip). Escape,
+  // outside click and arrow-key navigation come from Radix; the wrapper
+  // still stops the click from toggling the zone row's collapse.
   return (
-    <div ref={wrapRef} className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
-      <button
-        type="button"
-        onClick={() => !pending && setOpen((v) => !v)}
-        disabled={pending}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`Zone type — currently ${ZONE_DISPLAY[zoneType]?.label ?? zoneType}`}
-        title="Change zone type"
-        className={cn(
-          'rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide cursor-pointer',
-          'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
-          zc.bg, zc.text,
-          pending && 'opacity-60 cursor-wait',
-        )}
-      >
-        {ZONE_DISPLAY[zoneType]?.label ?? zoneType}
-      </button>
-      {open && (
-        <div
-          role="listbox"
-          className="absolute left-0 top-full z-40 mt-1 min-w-[8rem] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-[0_12px_40px_rgba(0,0,0,0.12)] p-1.5"
-        >
+    <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+      <DropdownMenu open={open} onOpenChange={(next) => setOpen(next && !pending)}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            disabled={pending}
+            aria-label={`Zone type — currently ${ZONE_DISPLAY[zoneType]?.label ?? zoneType}`}
+            title="Change zone type"
+            className={cn(
+              'rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide cursor-pointer',
+              'focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400',
+              zc.bg, zc.text,
+              pending && 'opacity-60 cursor-wait',
+            )}
+          >
+            {ZONE_DISPLAY[zoneType]?.label ?? zoneType}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
           {types.map((zt) => {
             const optZc = zoneColors[zt] || zoneColors.zone;
             const selected = zt === zoneType;
             return (
-              <button
+              <DropdownMenuItem
                 key={zt}
-                type="button"
-                role="option"
-                aria-selected={selected}
-                onClick={() => { setOpen(false); onPick(zt); }}
+                aria-current={selected || undefined}
+                onSelect={() => onPick(zt)}
                 className={cn(
-                  'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[12px] font-semibold',
-                  'hover:bg-slate-50 dark:hover:bg-slate-800/60',
+                  'gap-2 px-2 py-1 text-[12px] font-semibold',
                   selected && 'ring-1 ring-blue-400',
                 )}
               >
                 <span className={cn('inline-block rounded-[5px] px-2 py-0.5 text-[11px] font-bold tracking-wide', optZc.bg, optZc.text)}>
                   {ZONE_DISPLAY[zt]?.label ?? zt}
                 </span>
-              </button>
+              </DropdownMenuItem>
             );
           })}
-        </div>
-      )}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }
@@ -3796,6 +3775,7 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
   const canEditFinance = canPerm('finance', 'write');
   const [showAddTask, setShowAddTask] = useState(false);
   const [showTaskMenu, setShowTaskMenu] = useState(false);
+  const taskMenuFocus = usePickedMenuFocus();
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
   const queryClient = useQueryClient();
@@ -3824,15 +3804,17 @@ function ZoneGroup({ zone, tasks, members, projectId, onUpdate, onDeleteTask, on
           {showFinance && <span> · ₪{amount.toLocaleString()}</span>}
         </span>
         <div className="relative" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => setShowTaskMenu(!showTaskMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
-            <Plus className="w-3 h-3" /> Add Task
-          </button>
-          {showTaskMenu && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5">
-              <button onClick={() => { setShowCatalogPicker(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">From Catalog</button>
-              <button onClick={() => { setShowAddTask(true); setShowTaskMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Create New Task</button>
-            </div>
-          )}
+          <DropdownMenu open={showTaskMenu} onOpenChange={setShowTaskMenu}>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+                <Plus className="w-3 h-3" /> Add Task
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48" onCloseAutoFocus={taskMenuFocus.onCloseAutoFocus}>
+              <DropdownMenuItem onSelect={() => { taskMenuFocus.markPicked(); setShowCatalogPicker(true); setCollapsed(false); }} className="py-2.5 font-medium">From Catalog</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => { taskMenuFocus.markPicked(); setShowAddTask(true); setCollapsed(false); }} className="py-2.5 font-medium">Create New Task</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <button onClick={async (e) => { e.stopPropagation(); if (await confirm(`Delete zone "${zone.name}" and all its tasks?`)) onDeleteZone(zone.id); }}
           className="w-[22px] h-[22px] rounded-[5px] hover:bg-red-50 flex items-center justify-center text-slate-300 dark:text-slate-600 hover:text-red-600">
@@ -4087,6 +4069,7 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
   const [showDuplicateModal, setShowDuplicateModal] = useState(false);
   const [duplicateName, setDuplicateName] = useState('');
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const addMenuFocus = usePickedMenuFocus();
   const [saveToCatalog, setSaveToCatalog] = useState(true);
   const queryClient = useQueryClient();
 
@@ -4235,24 +4218,27 @@ function HierarchicalZoneGroup({ zone, allTasks, members, projectId, onUpdate, o
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-          <div className="relative">
-            <button onClick={() => setShowAddMenu(!showAddMenu)} className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
-              <Plus className="w-3 h-3" /> Add
-            </button>
-            {showAddMenu && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5">
-                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Tasks</div>
-                <button onClick={() => { setShowAddTask(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Create New Task</button>
-                <button onClick={() => { setShowCatalogPicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Task from Catalog</button>
-                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Deliverable</div>
-                <button onClick={() => { setShowPhasePicker(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">From Template</button>
-                <div className="my-1 border-t border-slate-100 dark:border-slate-800" />
-                <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Zones</div>
-                <button onClick={() => { setShowAddZone(true); setShowAddMenu(false); setCollapsed(false); }} className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50">Add Sub-Zone</button>
-              </div>
-            )}
-          </div>
+          {/* QA6 PR-071: Radix DropdownMenu (portal + collision flip) so
+              "Add" on the last zone opens upward instead of being clipped
+              by the page's scroll container. */}
+          <DropdownMenu open={showAddMenu} onOpenChange={setShowAddMenu}>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48" onCloseAutoFocus={addMenuFocus.onCloseAutoFocus}>
+              <DropdownMenuLabel>Tasks</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => { addMenuFocus.markPicked(); setShowAddTask(true); setCollapsed(false); }} className="gap-2">Create New Task</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => { addMenuFocus.markPicked(); setShowCatalogPicker(true); setCollapsed(false); }} className="gap-2">Task from Catalog</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Deliverable</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => { addMenuFocus.markPicked(); setShowPhasePicker(true); setCollapsed(false); }} className="gap-2">From Template</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Zones</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => { addMenuFocus.markPicked(); setShowAddZone(true); setCollapsed(false); }} className="gap-2">Add Sub-Zone</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {depth === 0 && onDuplicateZone && (
             <button onClick={() => { setDuplicateName(`${zone.name} (copy)`); setShowDuplicateModal(true); }}
               className="text-slate-400 dark:text-slate-500 hover:text-blue-600 text-[11px] font-medium px-2 py-1 rounded-md hover:bg-blue-50 flex items-center gap-1">
@@ -4614,6 +4600,7 @@ function ProjectRootDeliverableGroup({
   // dimension the group represents.
   const [showAddTask, setShowAddTask] = useState(false);
   const [showAddMenuLocal, setShowAddMenuLocal] = useState(false);
+  const addMenuFocus = usePickedMenuFocus();
   const [showCatalogPicker, setShowCatalogPicker] = useState(false);
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [newTask, setNewTask] = useState({ code: '', name: '', budgetHours: '', budgetAmount: '' });
@@ -4838,37 +4825,48 @@ function ProjectRootDeliverableGroup({
             inherit the group's zone / deliverable / service dimension.
             Stop-prop on the wrapper so the header's collapse-toggle
             doesn't fire underneath. */}
+        {/* QA6 PR-071: Radix DropdownMenu (portal + collision flip) so
+            "Add" on the last card opens upward instead of being clipped
+            by the page's scroll container. */}
         <div className="relative ml-2" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            onClick={() => { setShowAddMenuLocal((v) => !v); setCollapsed(false); }}
-            title={kind === 'deliverable' ? 'Add task to this deliverable' : kind === 'service' ? 'Add task to this service' : kind === 'zone' ? 'Add task to this zone' : 'Add task to this group'}
-            className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1 shrink-0"
+          <DropdownMenu
+            open={showAddMenuLocal}
+            onOpenChange={(next) => {
+              setShowAddMenuLocal(next);
+              // Opening the menu expands the card, as before.
+              if (next) setCollapsed(false);
+            }}
           >
-            <Plus className="w-3 h-3" /> Add
-          </button>
-          {showAddMenuLocal && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5">
+            <DropdownMenuTrigger asChild>
               <button
-                onClick={() => { setShowAddTask(true); setShowAddMenuLocal(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left"
+                type="button"
+                title={kind === 'deliverable' ? 'Add task to this deliverable' : kind === 'service' ? 'Add task to this service' : kind === 'zone' ? 'Add task to this zone' : 'Add task to this group'}
+                className="bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-semibold px-2.5 py-1 rounded-md flex items-center gap-1 shrink-0"
+              >
+                <Plus className="w-3 h-3" /> Add
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48" onCloseAutoFocus={addMenuFocus.onCloseAutoFocus}>
+              <DropdownMenuItem
+                onSelect={() => { addMenuFocus.markPicked(); setShowAddTask(true); }}
+                className="py-2.5 font-medium"
               >
                 Create New Task
-              </button>
-              <button
-                onClick={() => { setShowCatalogPicker(true); setShowAddMenuLocal(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left"
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => { addMenuFocus.markPicked(); setShowCatalogPicker(true); }}
+                className="py-2.5 font-medium"
               >
                 Task from Catalog
-              </button>
-              <button
-                onClick={() => { setShowTemplatePicker(true); setShowAddMenuLocal(false); }}
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left"
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => { addMenuFocus.markPicked(); setShowTemplatePicker(true); }}
+                className="py-2.5 font-medium"
               >
                 From Template
-              </button>
-            </div>
-          )}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       {/* Inline add-task form — bm2 fix #4. Mirrors the shape used by
@@ -5586,23 +5584,12 @@ function PlanningView({ projectId }: { projectId: number }) {
   // stack on a 13" laptop (T2.fix5). We now collapse the adds into one
   // "+ Add" dropdown and the filters into a "Filters" popover with an
   // active-count badge. The boolean state below drives both popovers.
+  // QA6 PR-071: both are Radix (DropdownMenu / Popover), which own the
+  // outside-click + Escape dismissal that a document mousedown listener
+  // used to do here, and render in a portal with collision flipping.
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
-  const addMenuRef = useRef<HTMLDivElement | null>(null);
-  const filterPanelRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    // Single document-level mousedown handler closes whichever popover
-    // is open when the click lands outside its container. Re-binds only
-    // when the open state changes — no listener cost while both are closed.
-    if (!showAddMenu && !showFilterPanel) return;
-    const onDocDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (showAddMenu && addMenuRef.current && !addMenuRef.current.contains(t)) setShowAddMenu(false);
-      if (showFilterPanel && filterPanelRef.current && !filterPanelRef.current.contains(t)) setShowFilterPanel(false);
-    };
-    document.addEventListener('mousedown', onDocDown);
-    return () => document.removeEventListener('mousedown', onDocDown);
-  }, [showAddMenu, showFilterPanel]);
+  const toolbarAddFocus = usePickedMenuFocus();
   // Count of active filters — drives the badge on the "Filters" button so
   // the user can tell at a glance whether the current view is unfiltered.
   // `search` is shown inline (its own input), so it's not counted here.
@@ -6743,43 +6730,38 @@ function PlanningView({ projectId }: { projectId: number }) {
       {!showTemplatePicker && !showManualZone && (
         <div className="flex flex-wrap items-center gap-2">
           {/* Add menu — primary action, single entry point. */}
-          <div className="relative" ref={addMenuRef}>
-            <button
-              type="button"
-              onClick={() => setShowAddMenu((v) => !v)}
-              className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold pl-3.5 pr-2.5 py-2 rounded-lg flex items-center gap-1.5"
-            >
-              <Plus className="h-3.5 w-3.5" /> Add
-              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAddMenu && 'rotate-180')} />
-            </button>
-            {showAddMenu && (
-              <div className="absolute left-0 top-full z-50 mt-1.5 w-60 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-1.5">
-                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Zone</div>
-                <button onClick={() => { setShowTemplatePicker(true); setShowAddMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left">
-                  <Layers className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
-                  <span className="flex-1">From Template</span>
-                </button>
-                <button onClick={() => { setShowManualZone(true); setShowAddMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left">
-                  <Plus className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
-                  <span className="flex-1">Manually</span>
-                </button>
-                <div className="my-1 h-px bg-slate-100 dark:bg-slate-800" />
-                <div className="px-2 pt-1 pb-0.5 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Project Root</div>
-                <button onClick={() => { setShowRootTemplate(true); setShowAddMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left">
-                  <FileText className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
-                  <span className="flex-1">New Deliverable</span>
-                </button>
-                <button onClick={() => { setShowRootTask(true); setShowAddMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[13px] text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-left">
-                  <Plus className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
-                  <span className="flex-1">New Task</span>
-                </button>
-              </div>
-            )}
-          </div>
+          <DropdownMenu open={showAddMenu} onOpenChange={setShowAddMenu}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold pl-3.5 pr-2.5 py-2 rounded-lg flex items-center gap-1.5"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add
+                <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', showAddMenu && 'rotate-180')} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" sideOffset={6} className="w-60" onCloseAutoFocus={toolbarAddFocus.onCloseAutoFocus}>
+              <DropdownMenuLabel className="pt-1 pb-0.5">Zone</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => { toolbarAddFocus.markPicked(); setShowTemplatePicker(true); }}>
+                <Layers className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
+                <span className="flex-1">From Template</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => { toolbarAddFocus.markPicked(); setShowManualZone(true); }}>
+                <Plus className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
+                <span className="flex-1">Manually</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="pt-1 pb-0.5">Project Root</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => { toolbarAddFocus.markPicked(); setShowRootTemplate(true); }}>
+                <FileText className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
+                <span className="flex-1">New Deliverable</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => { toolbarAddFocus.markPicked(); setShowRootTask(true); }}>
+                <Plus className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" />
+                <span className="flex-1">New Task</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <span className="mx-1 h-5 w-px bg-slate-200 dark:bg-slate-700" />
 
@@ -6925,136 +6907,135 @@ function PlanningView({ projectId }: { projectId: number }) {
           />
 
           {/* Filters popover — collapses the old 6-control filter row. */}
-          <div className="relative" ref={filterPanelRef}>
-            <button
-              type="button"
-              onClick={() => setShowFilterPanel((v) => !v)}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[13px] font-semibold transition-colors',
-                activeFilterCount > 0
-                  ? 'border-blue-300 bg-blue-50 text-blue-700 hover:border-blue-400'
-                  : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600',
-              )}
-            >
-              <SlidersHorizontal className="h-3.5 w-3.5" />
-              Filters
-              {activeFilterCount > 0 && (
-                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold">
-                  {activeFilterCount}
-                </span>
-              )}
-            </button>
-            {showFilterPanel && (
-              <div className="absolute right-0 top-full z-50 mt-1.5 w-[440px] max-w-[92vw] rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-black/5 bg-white dark:bg-slate-900 p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Task Filters</span>
-                  {hasTaskFilter && (
-                    <button
-                      type="button"
-                      onClick={() => { clearTaskFilters(); }}
-                      className="text-[12px] font-semibold text-blue-600 hover:text-blue-700"
-                    >
-                      Clear all
-                    </button>
-                  )}
-                </div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-3">
-                  <label className="block">
-                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Status</span>
-                    <select
-                      value={filterStatus}
-                      onChange={(e) => setFilterStatus(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                    >
-                      <option value="">All statuses</option>
-                      {(['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'] as const).map((s) => (
-                        <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="block">
-                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Priority</span>
-                    <select
-                      value={filterPriority}
-                      onChange={(e) => setFilterPriority(e.target.value)}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                    >
-                      <option value="">Any priority</option>
-                      <option value="critical">Critical</option>
-                      <option value="high">High</option>
-                      <option value="medium">Medium</option>
-                      <option value="low">Low</option>
-                    </select>
-                  </label>
-                  <div className="block col-span-2">
-                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Assignee</span>
-                    {/* Multi-select. Derives the people set from the
-                        loaded tasks so the filter list matches what's
-                        actually on this board (a project's roster is
-                        already served by /assignee-candidates for the
-                        row-level AssigneePicker; here we intentionally
-                        stay task-scoped so the filter can't propose
-                        someone the current view has no rows for). */}
-                    <PeopleMultiSelect
-                      people={Array.from(
-                        new Map<number, { userId: number; displayName: string; avatarUrl?: string | null }>(
-                          tasks.flatMap((t: any) =>
-                            (t.assignees ?? []).map((a: any) => {
-                              const u = a.user ?? {};
-                              const id: number | undefined = a.userId ?? u.id;
-                              if (id == null) return null;
-                              const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `User #${id}`;
-                              return [id, { userId: id, displayName: name, avatarUrl: u.avatarUrl ?? null }] as [
-                                number,
-                                { userId: number; displayName: string; avatarUrl?: string | null },
-                              ];
-                            }).filter(Boolean) as Array<[number, { userId: number; displayName: string; avatarUrl?: string | null }]>,
-                          ),
-                        ).values(),
-                      )}
-                      value={filterAssigneeIds}
-                      onChange={setFilterAssigneeIds}
-                      placeholder="Any assignee"
-                      title="Filter planning tasks by assignee"
-                      triggerClassName="w-full"
-                    />
-                  </div>
-                  <label className="block">
-                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Estimated start</span>
-                    <div className="flex items-center gap-1.5">
-                      <input type="date" value={filterStartFrom} onChange={(e) => setFilterStartFrom(e.target.value)}
-                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                      <span className="text-slate-300 dark:text-slate-600 text-xs">→</span>
-                      <input type="date" value={filterStartTo} onChange={(e) => setFilterStartTo(e.target.value)}
-                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                    </div>
-                  </label>
-                  <label className="block">
-                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Due date</span>
-                    <div className="flex items-center gap-1.5">
-                      <input type="date" value={filterDueFrom} onChange={(e) => setFilterDueFrom(e.target.value)}
-                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                      <span className="text-slate-300 dark:text-slate-600 text-xs">→</span>
-                      <input type="date" value={filterDueTo} onChange={(e) => setFilterDueTo(e.target.value)}
-                        className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
-                    </div>
-                  </label>
-                  <label className="block col-span-2">
-                    <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Has due date</span>
-                    <select
-                      value={filterHasDue}
-                      onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
-                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
-                    >
-                      <option value="">Any</option>
-                      <option value="yes">Has a due date set</option>
-                      <option value="no">Missing due date</option>
-                    </select>
-                  </label>
-                </div>
+          <Popover open={showFilterPanel} onOpenChange={setShowFilterPanel}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[13px] font-semibold transition-colors',
+                  activeFilterCount > 0
+                    ? 'border-blue-300 bg-blue-50 text-blue-700 hover:border-blue-400'
+                    : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600',
+                )}
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" sideOffset={6} className="w-[440px] max-w-[92vw] p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Task Filters</span>
+                {hasTaskFilter && (
+                  <button
+                    type="button"
+                    onClick={() => { clearTaskFilters(); }}
+                    className="text-[12px] font-semibold text-blue-600 hover:text-blue-700"
+                  >
+                    Clear all
+                  </button>
+                )}
               </div>
-            )}
-          </div>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+                <label className="block">
+                  <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Status</span>
+                  <select
+                    value={filterStatus}
+                    onChange={(e) => setFilterStatus(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="">All statuses</option>
+                    {(['not_started', 'in_progress', 'in_review', 'completed', 'on_hold', 'cancelled'] as const).map((s) => (
+                      <option key={s} value={s}>{STATUS_LABEL[s] ?? s}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Priority</span>
+                  <select
+                    value={filterPriority}
+                    onChange={(e) => setFilterPriority(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="">Any priority</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </label>
+                <div className="block col-span-2">
+                  <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Assignee</span>
+                  {/* Multi-select. Derives the people set from the
+                      loaded tasks so the filter list matches what's
+                      actually on this board (a project's roster is
+                      already served by /assignee-candidates for the
+                      row-level AssigneePicker; here we intentionally
+                      stay task-scoped so the filter can't propose
+                      someone the current view has no rows for). */}
+                  <PeopleMultiSelect
+                    people={Array.from(
+                      new Map<number, { userId: number; displayName: string; avatarUrl?: string | null }>(
+                        tasks.flatMap((t: any) =>
+                          (t.assignees ?? []).map((a: any) => {
+                            const u = a.user ?? {};
+                            const id: number | undefined = a.userId ?? u.id;
+                            if (id == null) return null;
+                            const name = `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || `User #${id}`;
+                            return [id, { userId: id, displayName: name, avatarUrl: u.avatarUrl ?? null }] as [
+                              number,
+                              { userId: number; displayName: string; avatarUrl?: string | null },
+                            ];
+                          }).filter(Boolean) as Array<[number, { userId: number; displayName: string; avatarUrl?: string | null }]>,
+                        ),
+                      ).values(),
+                    )}
+                    value={filterAssigneeIds}
+                    onChange={setFilterAssigneeIds}
+                    placeholder="Any assignee"
+                    title="Filter planning tasks by assignee"
+                    triggerClassName="w-full"
+                  />
+                </div>
+                <label className="block">
+                  <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Estimated start</span>
+                  <div className="flex items-center gap-1.5">
+                    <input type="date" value={filterStartFrom} onChange={(e) => setFilterStartFrom(e.target.value)}
+                      className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+                    <span className="text-slate-300 dark:text-slate-600 text-xs">→</span>
+                    <input type="date" value={filterStartTo} onChange={(e) => setFilterStartTo(e.target.value)}
+                      className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+                  </div>
+                </label>
+                <label className="block">
+                  <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Due date</span>
+                  <div className="flex items-center gap-1.5">
+                    <input type="date" value={filterDueFrom} onChange={(e) => setFilterDueFrom(e.target.value)}
+                      className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+                    <span className="text-slate-300 dark:text-slate-600 text-xs">→</span>
+                    <input type="date" value={filterDueTo} onChange={(e) => setFilterDueTo(e.target.value)}
+                      className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[12px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none" />
+                  </div>
+                </label>
+                <label className="block col-span-2">
+                  <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Has due date</span>
+                  <select
+                    value={filterHasDue}
+                    onChange={(e) => setFilterHasDue(e.target.value as '' | 'yes' | 'no')}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="">Any</option>
+                    <option value="yes">Has a due date set</option>
+                    <option value="no">Missing due date</option>
+                  </select>
+                </label>
+              </div>
+            </PopoverContent>
+          </Popover>
 
           {/* Utility links — pushed right; only shown when actionable. */}
           <div className="ml-auto flex items-center gap-1">
