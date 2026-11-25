@@ -84,9 +84,13 @@ export class SchedulingController {
   // resolved to its project → `assertProjectAccess`).
   //
   // Empty outcomes return 200 with `scheduled: []` and
-  // `feasibility.reason` = 'no-zone' (no zoneId — deliverable-level
-  // target) or 'no-target-row' (no saved target on the zone or any zone
-  // above it).
+  // `feasibility.reason` = 'no-target-row' (no saved target on the zone
+  // or any zone above it), 'no-anchor' or 'no-tasks'.
+  //
+  // PR-077 (2026-11-25) · No zoneId (the "Project Root" row) is the
+  // Root-level target: the deliverable's zone-less tasks, anchored on
+  // `ProjectDeliverable.targetDate` (or `anchorDate`). It used to answer
+  // 'no-zone' without scheduling anything.
   //
   // §16 (2026-11-18) · A zone with no target row of its own (a DP row on
   // a sub-zone, target saved on an ancestor) is previewed as if it had
@@ -103,7 +107,7 @@ export class SchedulingController {
   @RequirePermissions({ module: 'projects', action: 'write' })
   @ApiOperation({
     summary:
-      '§10 · Compute a working-day schedule for a (ProjectDeliverable × Zone) pair without writing. Body { zoneId, anchorDate?, releaseOverrideTaskIds? } — the ZoneDeliverableTarget is resolved server-side; optional anchorDate simulates a different target date for the dry-run only. §14 · optional releaseOverrideTaskIds (task ids) schedules those manually-dated tasks as if they were not overridden; each scheduled row reports manual (stored dueDateOverridden) and skippedByOverride (pinned in this run).',
+      '§10 · Compute a working-day schedule for a (ProjectDeliverable × Zone) pair without writing. Body { zoneId, anchorDate?, releaseOverrideTaskIds? } — the ZoneDeliverableTarget is resolved server-side (no zoneId = the Root-level target: the deliverable\'s zone-less tasks, anchored on ProjectDeliverable.targetDate); optional anchorDate simulates a different target date for the dry-run only. §14 · optional releaseOverrideTaskIds (task ids) schedules those manually-dated tasks as if they were not overridden; each scheduled row reports manual (stored dueDateOverridden) and skippedByOverride (pinned in this run).',
   })
   async dryRunForProjectDeliverable(
     @CurrentUser() user: any,

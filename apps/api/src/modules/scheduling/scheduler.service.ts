@@ -24,6 +24,9 @@ import {
  *
  * Algorithm overview:
  *   1. Load the DAG under ZoneDeliverableTarget (deliverableId; optional zoneId).
+ *      PR-077 (2026-11-25) · or under a Root-level target
+ *      (rootProjectDeliverableId → ProjectDeliverable.targetDate): the
+ *      deliverable's tasks with no zone. See `ScheduleInputs`.
  *      §12 (2026-11-14) · "under" = the target's zone AND its sub-zones,
  *      minus sub-trees that carry their own dated target for the same
  *      deliverable (closest ancestor-or-self target wins — see
@@ -87,10 +90,58 @@ import {
  * This pass exposes explicit endpoints only; events are left as a
  * follow-up until the engine proves out.
  */
-export interface ScheduleInputs {
+/**
+ * What one scheduler run is anchored on — one of two kinds of target:
+ *
+ *   - a ZoneDeliverableTarget (`deliverableId`): schedules the tasks of
+ *     its zone scope (§12: zone + sub-zones, minus sub-trees with their
+ *     own dated target);
+ *   - PR-077 (2026-11-25) · a Root-level target (`rootProjectDeliverableId`):
+ *     `ZoneDeliverableTarget.zoneId` is NOT NULL, so a target saved on the
+ *     Deliverable Planning "Project Root" row lives on
+ *     `ProjectDeliverable.targetDate` instead. It schedules the
+ *     deliverable's tasks with NO zone (`zoneId: null`, exact match) and
+ *     nothing else — a zoned task always belongs to a zone target, so the
+ *     two kinds never share a task.
+ *
+ * Both run through the same engine (`scheduleDeliverable`): same PERT /
+ * lag / working-day / leveling / manual-due-date rules.
+ */
+export type ScheduleInputs = ZoneTargetScheduleInputs | RootTargetScheduleInputs;
+
+export interface ZoneTargetScheduleInputs {
   deliverableId: number; // ZoneDeliverableTarget id
   zoneId?: number;       // optional scope root override (default: the target's own zone); §16 (2026-11-18) · set by the (ProjectDeliverable × Zone) dry-run when an ancestor's target carries the run
   anchorDate?: Date;     // optional override for targetDate (used when simulating)
+  rootProjectDeliverableId?: never;
+}
+
+export interface RootTargetScheduleInputs {
+  rootProjectDeliverableId: number; // ProjectDeliverable id — its own targetDate is the anchor
+  anchorDate?: Date;                // optional override for targetDate (used when simulating)
+  deliverableId?: never;
+  zoneId?: never;
+}
+
+function isRootTarget(inputs: ScheduleInputs): inputs is RootTargetScheduleInputs {
+  return inputs.rootProjectDeliverableId != null;
+}
+
+/**
+ * PR-077 (2026-11-25) · One schedule target of a project, as the
+ * project-wide loops (`scanProjectOverload`, `previewReschedule`,
+ * `saveAndUpdateDueDates`) iterate them — see `loadProjectScheduleTargets`.
+ * `id` is what the report rows carry as `deliverableId`: the
+ * ZoneDeliverableTarget id, or the ProjectDeliverable id for a Root-level
+ * target (`zoneId` null).
+ */
+interface ProjectScheduleTarget {
+  id: number;
+  inputs: ScheduleInputs;
+  zoneId: number | null;
+  zoneName: string | null;
+  targetDate: Date | null;
+  deliverableName: string;
 }
 
 export interface ScheduledTask {
@@ -172,7 +223,7 @@ export interface OverloadFlaggedTask {
   taskId: number;
   taskCode: string;
   taskName: string;
-  deliverableId: number; // ZoneDeliverableTarget id
+  deliverableId: number; // ZoneDeliverableTarget id; PR-077 · the ProjectDeliverable id when zoneId is null (Root-level target)
   deliverableName: string;
   zoneId: number | null;
   zoneName: string | null;
@@ -224,7 +275,7 @@ export interface ReviewRequiredTask {
   taskId: number;
   taskCode: string;
   taskName: string;
-  deliverableId: number;
+  deliverableId: number; // as on OverloadFlaggedTask (PR-077 · ProjectDeliverable id when zoneId is null)
   deliverableName: string;
   zoneId: number | null;
   zoneName: string | null;
@@ -382,14 +433,17 @@ export class SchedulerService {
    * ZoneDeliverableTarget via its composite unique key and delegates to
    * `scheduleDeliverableDryRun`. Read-only.
    *
-   * Two "nothing to schedule" outcomes come back as an empty result
-   * (never a 404) so the preview picker can render a hint instead of
-   * an error:
-   *   - 'no-zone'       : deliverable-level targets are not ZDT-backed;
-   *                       the engine cannot schedule them.
+   * "Nothing to schedule" comes back as an empty result (never a 404)
+   * so the preview picker can render a hint instead of an error:
    *   - 'no-target-row' : neither the zone nor any zone above it has a
    *                       target row for the deliverable (see §16) —
    *                       nothing to anchor a schedule to.
+   *
+   * PR-077 (2026-11-25) · No zone (the DP "Project Root" row) used to
+   * return 'no-zone' — a Root-level target is not ZDT-backed. It is now
+   * the Root-level run (`rootProjectDeliverableId`): the deliverable's
+   * zone-less tasks anchored on `ProjectDeliverable.targetDate` (or the
+   * given `anchorDate`). With neither, the engine says 'no-anchor'.
    *
    * §14 (2026-11-15) · `releaseOverrideTaskIds` is forwarded to the
    * dry-run (see there). Ids outside the pair's scope match nothing.
@@ -414,8 +468,13 @@ export class SchedulerService {
     releaseOverrideTaskIds?: number[];
   }): Promise<ScheduleResult> {
     if (args.zoneId == null) {
-      return this.emptyResult('no-zone');
+      // PR-077 (2026-11-25) · Project Root row → the Root-level target.
+      return this.dryRunWithOptionalRelease(
+        { rootProjectDeliverableId: args.projectDeliverableId, anchorDate: args.anchorDate },
+        args.releaseOverrideTaskIds,
+      );
     }
+    let inputs: ScheduleInputs;
     const zdt = await this.prisma.zoneDeliverableTarget.findUnique({
       where: {
         zoneId_projectDeliverableId: {
@@ -425,7 +484,6 @@ export class SchedulerService {
       },
       select: { id: true },
     });
-    let inputs: ScheduleInputs;
     if (zdt) {
       inputs = { deliverableId: zdt.id, anchorDate: args.anchorDate };
     } else {
@@ -441,12 +499,16 @@ export class SchedulerService {
       }
       inputs = { deliverableId: carrier.id, zoneId: args.zoneId, anchorDate: args.anchorDate };
     }
-    // §14 (2026-11-15) · Nothing to release → the plain dry-run call,
-    // exactly as before.
-    return args.releaseOverrideTaskIds && args.releaseOverrideTaskIds.length > 0
-      ? this.scheduleDeliverableDryRun(inputs, undefined, {
-          releaseOverrideTaskIds: args.releaseOverrideTaskIds,
-        })
+    return this.dryRunWithOptionalRelease(inputs, args.releaseOverrideTaskIds);
+  }
+
+  /** §14 (2026-11-15) · Nothing to release → the plain dry-run call, exactly as before. */
+  private dryRunWithOptionalRelease(
+    inputs: ScheduleInputs,
+    releaseOverrideTaskIds: number[] | undefined,
+  ): Promise<ScheduleResult> {
+    return releaseOverrideTaskIds && releaseOverrideTaskIds.length > 0
+      ? this.scheduleDeliverableDryRun(inputs, undefined, { releaseOverrideTaskIds })
       : this.scheduleDeliverableDryRun(inputs);
   }
 
@@ -542,6 +604,68 @@ export class SchedulerService {
     return this.scheduleDeliverable(inputs, { writeBack: true, actorId });
   }
 
+  /**
+   * PR-077 (2026-11-25) · Every schedule target of a project, for the
+   * project-wide loops (`scanProjectOverload`, `previewReschedule`,
+   * `saveAndUpdateDueDates`): each ZoneDeliverableTarget row (as before —
+   * date-less rows included, the engine answers 'no-anchor'), then one
+   * Root-level target per live deliverable with a
+   * `ProjectDeliverable.targetDate`.
+   *
+   * Precedence: a zone target's scope is zone ids only (`zoneId IN …`), a
+   * Root-level target's is `zoneId IS NULL` only — so every task is
+   * scheduled by at most one target and the loop order cannot change
+   * which dates it gets. A zoned task is never scheduled from the Root
+   * date, also when no zone target governs it.
+   */
+  private async loadProjectScheduleTargets(projectId: number): Promise<ProjectScheduleTarget[]> {
+    const [zoneTargets, rootTargets] = await Promise.all([
+      this.prisma.zoneDeliverableTarget.findMany({
+        where: { projectDeliverable: { projectId, deletedAt: null } },
+        select: {
+          id: true,
+          zoneId: true,
+          targetDate: true,
+          projectDeliverable: { select: { id: true, name: true } },
+          zone: { select: { id: true, name: true } },
+        },
+      }),
+      this.prisma.projectDeliverable.findMany({
+        where: { projectId, deletedAt: null, targetDate: { not: null } },
+        select: { id: true, name: true, targetDate: true },
+      }),
+    ]);
+    return [
+      ...zoneTargets.map(
+        (t): ProjectScheduleTarget => ({
+          id: t.id,
+          inputs: { deliverableId: t.id },
+          zoneId: t.zone?.id ?? t.zoneId ?? null,
+          zoneName: t.zone?.name ?? null,
+          targetDate: t.targetDate ?? null,
+          deliverableName: t.projectDeliverable?.name ?? '—',
+        }),
+      ),
+      ...rootTargets.map(
+        (pd): ProjectScheduleTarget => ({
+          id: pd.id,
+          inputs: { rootProjectDeliverableId: pd.id },
+          zoneId: null,
+          zoneName: null,
+          targetDate: pd.targetDate ?? null,
+          deliverableName: pd.name ?? '—',
+        }),
+      ),
+    ];
+  }
+
+  /** Log label of a target, for the project-wide loops' warnings. */
+  private targetLabel(inputs: ScheduleInputs): string {
+    return isRootTarget(inputs)
+      ? `rootProjectDeliverableId=${inputs.rootProjectDeliverableId}`
+      : `deliverableId=${inputs.deliverableId}`;
+  }
+
   // ─── D3 · Overload scan ────────────────────────────────────────────
   //
   // Runs `scheduleDeliverableDryRun` for every deliverable under a
@@ -564,38 +688,30 @@ export class SchedulerService {
       throw new NotFoundException(`Project ${projectId} not found`);
     }
 
-    // Load every ZoneDeliverableTarget under the project. The scheduler
+    // Load every schedule target under the project. The scheduler
     // iterates these one by one — a project with hundreds of
     // deliverables will issue hundreds of per-deliverable queries, but
     // this is read-only / cache-safe and keeps the engine's single
     // entry point intact.
-    const targets = await this.prisma.zoneDeliverableTarget.findMany({
-      where: {
-        projectDeliverable: { projectId, deletedAt: null },
-      },
-      select: {
-        id: true,
-        zoneId: true,
-        projectDeliverable: { select: { id: true, name: true } },
-        zone: { select: { id: true, name: true, code: true } },
-      },
-    });
+    // PR-077 (2026-11-25) · ZoneDeliverableTargets + Root-level targets.
+    const targets = await this.loadProjectScheduleTargets(projectId);
 
     // §12 (2026-11-14) · Each target now schedules its zone AND its
     // sub-zones (minus sub-trees with their own dated target), so a
     // flagged row's `zoneId` / `zoneName` — taken from the TARGET below —
     // name the Deliverable Planning row the task is scheduled under,
     // which for a sub-zone task is an ancestor of the task's own zone.
+    // A Root-level target's rows carry zoneId / zoneName null.
     const scopeMemo = createTargetScopeMemo();
     const flaggedTasks: OverloadFlaggedTask[] = [];
     const taskIdsFlagged = new Set<number>();
     for (const t of targets) {
       let result: ScheduleResult;
       try {
-        result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo);
+        result = await this.scheduleDeliverableDryRun(t.inputs, scopeMemo);
       } catch (err) {
         this.logger.warn(
-          `scanProjectOverload: dryRun failed for deliverableId=${t.id} — ${(err as Error).message}`,
+          `scanProjectOverload: dryRun failed for ${this.targetLabel(t.inputs)} — ${(err as Error).message}`,
         );
         continue;
       }
@@ -640,7 +756,7 @@ export class SchedulerService {
     for (const t of targets) {
       let result: ScheduleResult;
       try {
-        result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo);
+        result = await this.scheduleDeliverableDryRun(t.inputs, scopeMemo);
       } catch {
         continue;
       }
@@ -668,9 +784,9 @@ export class SchedulerService {
           taskCode: meta.code,
           taskName: meta.name,
           deliverableId: t.id,
-          deliverableName: t.projectDeliverable?.name ?? '—',
-          zoneId: t.zone?.id ?? t.zoneId ?? null,
-          zoneName: t.zone?.name ?? null,
+          deliverableName: t.deliverableName,
+          zoneId: t.zoneId,
+          zoneName: t.zoneName,
           assigneeId: assignee?.id ?? null,
           assigneeName,
           budgetHours: meta.budgetHours != null ? Number(meta.budgetHours) : null,
@@ -819,16 +935,9 @@ export class SchedulerService {
       throw new NotFoundException(`Project ${projectId} not found`);
     }
 
-    const targets = await this.prisma.zoneDeliverableTarget.findMany({
-      where: { projectDeliverable: { projectId, deletedAt: null } },
-      select: {
-        id: true,
-        zoneId: true,
-        targetDate: true,
-        projectDeliverable: { select: { id: true, name: true } },
-        zone: { select: { id: true, name: true } },
-      },
-    });
+    // PR-077 (2026-11-25) · ZoneDeliverableTargets + Root-level targets
+    // (the same list `saveAndUpdateDueDates` commits from).
+    const targets = await this.loadProjectScheduleTargets(projectId);
 
     if (targets.length === 0) {
       return {
@@ -852,16 +961,16 @@ export class SchedulerService {
     const taskToDeliverableTarget = new Map<number, Date | null>();
     for (const t of targets) {
       try {
-        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo, {
+        const result = await this.scheduleDeliverableDryRun(t.inputs, scopeMemo, {
           releaseOverrideTaskIds,
         });
         for (const s of result.scheduled) {
           taskToScheduled.set(s.taskId, s);
-          taskToDeliverableTarget.set(s.taskId, t.targetDate ?? null);
+          taskToDeliverableTarget.set(s.taskId, t.targetDate);
         }
       } catch (err) {
         this.logger.warn(
-          `previewReschedule: dryRun failed for deliverableId=${t.id} — ${(err as Error).message}`,
+          `previewReschedule: dryRun failed for ${this.targetLabel(t.inputs)} — ${(err as Error).message}`,
         );
       }
     }
@@ -1031,18 +1140,12 @@ export class SchedulerService {
         : null,
     );
 
-    // Load every ZoneDeliverableTarget under the project — same shape
-    // as the overload scan but with projectDeliverable name/zone for
-    // the review-row metadata.
-    const targets = await this.prisma.zoneDeliverableTarget.findMany({
-      where: { projectDeliverable: { projectId, deletedAt: null } },
-      select: {
-        id: true,
-        zoneId: true,
-        projectDeliverable: { select: { id: true, name: true } },
-        zone: { select: { id: true, name: true } },
-      },
-    });
+    // Load every schedule target under the project — the same list as
+    // the overload scan and the preview, with deliverable / zone names
+    // for the review-row metadata.
+    // PR-077 (2026-11-25) · ZoneDeliverableTargets + Root-level targets
+    // (`ProjectDeliverable.targetDate`, the deliverable's zone-less tasks).
+    const targets = await this.loadProjectScheduleTargets(projectId);
 
     if (targets.length === 0) {
       return { scannedDeliverables: 0, autoApplied: [], requiresReview: [] };
@@ -1054,16 +1157,16 @@ export class SchedulerService {
     // too; scopes are disjoint, so a task is partitioned exactly once
     // below. Review rows keep the TARGET's zone id / name (the DP row).
     const scopeMemo = createTargetScopeMemo();
-    const perDeliverable: Array<{ target: (typeof targets)[number]; scheduled: ScheduledTask[] }> = [];
+    const perDeliverable: Array<{ target: ProjectScheduleTarget; scheduled: ScheduledTask[] }> = [];
     for (const t of targets) {
       try {
-        const result = await this.scheduleDeliverableDryRun({ deliverableId: t.id }, scopeMemo, {
+        const result = await this.scheduleDeliverableDryRun(t.inputs, scopeMemo, {
           releaseOverrideTaskIds,
         });
         perDeliverable.push({ target: t, scheduled: result.scheduled });
       } catch (err) {
         this.logger.warn(
-          `saveAndUpdateDueDates: dryRun failed for deliverableId=${t.id} — ${(err as Error).message}`,
+          `saveAndUpdateDueDates: dryRun failed for ${this.targetLabel(t.inputs)} — ${(err as Error).message}`,
         );
       }
     }
@@ -1137,7 +1240,7 @@ export class SchedulerService {
 
     const pushReview = (
       s: ScheduledTask,
-      target: (typeof targets)[number],
+      target: ProjectScheduleTarget,
       reason: ReviewRequiredTask['reason'],
     ) => {
       if (seenReviewTaskIds.has(s.taskId)) return;
@@ -1149,9 +1252,9 @@ export class SchedulerService {
         taskCode: meta.code,
         taskName: meta.name,
         deliverableId: target.id,
-        deliverableName: target.projectDeliverable?.name ?? '—',
-        zoneId: target.zone?.id ?? target.zoneId ?? null,
-        zoneName: target.zone?.name ?? null,
+        deliverableName: target.deliverableName,
+        zoneId: target.zoneId,
+        zoneName: target.zoneName,
         currentEnd: meta.endDate ? meta.endDate.toISOString().split('T')[0] : null,
         proposedEnd: s.endDate ? s.endDate.toISOString().split('T')[0] : null,
         reason,
@@ -1396,18 +1499,12 @@ export class SchedulerService {
       releaseOverrideTaskIds?: ReadonlySet<number>;
     },
   ): Promise<ScheduleResult> {
-    // 1. Resolve deliverable + anchor.
-    const deliverable = await this.prisma.zoneDeliverableTarget.findUnique({
-      where: { id: inputs.deliverableId },
-      include: {
-        projectDeliverable: { include: { project: { select: { id: true, startDate: true } } } },
-        zone: { select: { id: true, projectId: true } },
-      },
-    });
-    if (!deliverable) {
-      throw new NotFoundException(`ZoneDeliverableTarget ${inputs.deliverableId} not found`);
-    }
-    const anchor = inputs.anchorDate ?? deliverable.targetDate ?? null;
+    // 1. Resolve the target + anchor.
+    //    PR-077 (2026-11-25) · Two kinds of target (see `ScheduleInputs`);
+    //    everything after this step is shared. `zoneId` null = the
+    //    Root-level target, whose scope is the zone-less tasks.
+    const target = await this.resolveScheduleTarget(inputs);
+    const anchor = inputs.anchorDate ?? target.targetDate ?? null;
     if (!anchor) {
       return this.emptyResult('no-anchor');
     }
@@ -1426,16 +1523,17 @@ export class SchedulerService {
     //    target for this deliverable (that target schedules it), so each
     //    task is scheduled by exactly one target. A null zone stays an
     //    exact match: tasks with no zone have no tree to walk.
-    const zoneId = inputs.zoneId ?? deliverable.zoneId;
-    const projectDeliverableId = deliverable.projectDeliverableId;
+    //    PR-077 (2026-11-25) · That null zone is the Root-level target:
+    //    `zoneId IS NULL`, disjoint from every zone target's scope.
+    const zoneId = target.zoneId;
+    const projectDeliverableId = target.projectDeliverableId;
     const scopeZoneIds =
       zoneId == null
         ? null
         : await loadTargetScopeZoneIds(
             this.prisma,
             {
-              projectId:
-                deliverable.projectDeliverable?.project?.id ?? deliverable.zone?.projectId ?? null,
+              projectId: target.projectId,
               projectDeliverableId,
               rootZoneId: zoneId,
             },
@@ -1655,7 +1753,7 @@ export class SchedulerService {
 
     // ─── 10. FORWARD PASS (feasibility) ─────────────────────────────
     const today = this.stripTime(new Date());
-    const projectStart = deliverable.projectDeliverable?.project?.startDate ?? null;
+    const projectStart = target.projectStartDate;
     const baseDateRaw = projectStart && projectStart.getTime() > today.getTime()
       ? this.stripTime(projectStart)
       : today;
@@ -1800,7 +1898,7 @@ export class SchedulerService {
         }
       });
       this.logger.log(
-        `scheduleDeliverable commit · deliverableId=${inputs.deliverableId} actor=${opts.actorId ?? 'system'} rows=${scheduled.size}`,
+        `scheduleDeliverable commit · ${this.targetLabel(inputs)} actor=${opts.actorId ?? 'system'} rows=${scheduled.size}`,
       );
     }
 
@@ -1815,6 +1913,63 @@ export class SchedulerService {
   }
 
   // ─── helpers ─────────────────────────────────────────────────────
+
+  /**
+   * Step 1 of `scheduleDeliverable`: what the run is anchored on and
+   * which zone scope it covers.
+   *
+   *   - ZoneDeliverableTarget: its date, its zone (or the `zoneId` scope
+   *     override, §16), its deliverable / project.
+   *   - PR-077 (2026-11-25) · Root-level target: the live
+   *     ProjectDeliverable's own `targetDate`, `zoneId` null (scope =
+   *     the deliverable's zone-less tasks). A missing / soft-deleted
+   *     deliverable is a 404, like a missing target row.
+   */
+  private async resolveScheduleTarget(inputs: ScheduleInputs): Promise<{
+    projectDeliverableId: number;
+    projectId: number | null;
+    projectStartDate: Date | null;
+    targetDate: Date | null;
+    zoneId: number | null;
+  }> {
+    if (isRootTarget(inputs)) {
+      const pd = await this.prisma.projectDeliverable.findFirst({
+        where: { id: inputs.rootProjectDeliverableId, deletedAt: null },
+        select: {
+          id: true,
+          targetDate: true,
+          project: { select: { id: true, startDate: true } },
+        },
+      });
+      if (!pd) {
+        throw new NotFoundException(`ProjectDeliverable ${inputs.rootProjectDeliverableId} not found`);
+      }
+      return {
+        projectDeliverableId: pd.id,
+        projectId: pd.project?.id ?? null,
+        projectStartDate: pd.project?.startDate ?? null,
+        targetDate: pd.targetDate ?? null,
+        zoneId: null,
+      };
+    }
+    const zdt = await this.prisma.zoneDeliverableTarget.findUnique({
+      where: { id: inputs.deliverableId },
+      include: {
+        projectDeliverable: { include: { project: { select: { id: true, startDate: true } } } },
+        zone: { select: { id: true, projectId: true } },
+      },
+    });
+    if (!zdt) {
+      throw new NotFoundException(`ZoneDeliverableTarget ${inputs.deliverableId} not found`);
+    }
+    return {
+      projectDeliverableId: zdt.projectDeliverableId,
+      projectId: zdt.projectDeliverable?.project?.id ?? zdt.zone?.projectId ?? null,
+      projectStartDate: zdt.projectDeliverable?.project?.startDate ?? null,
+      targetDate: zdt.targetDate ?? null,
+      zoneId: inputs.zoneId ?? zdt.zoneId,
+    };
+  }
 
   /**
    * D2 · Resource leveling by daily capacity.
