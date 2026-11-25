@@ -380,7 +380,11 @@ export class TasksService {
     if (query.status) where.status = query.status as any;
     if (query.priority) where.priority = query.priority as any;
     if (query.assigneeId) {
-      where.assignees = { some: { userId: query.assigneeId } };
+      // QA6 P0 — only LIVE assignments, as /tasks/mine reads them. The
+      // soft-delete middleware filters the top-level model only, so a
+      // removed assignment (deletedAt set) still matched here and the
+      // Dashboard counted tasks the user had been taken off.
+      where.assignees = { some: { userId: query.assigneeId, deletedAt: null } };
     }
     if (query.search) {
       where.OR = [

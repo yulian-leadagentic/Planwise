@@ -63,12 +63,31 @@ export interface UpdateTaskPayload {
   manualDueDate?: boolean;
 }
 
+/** `GET /tasks/mine` body (`{ success, data: [...] }`, or a bare array) → the task array. */
+export function myTasksFromResponse(body: unknown): any[] {
+  if (Array.isArray(body)) return body;
+  const data = (body as any)?.data;
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
 export const tasksApi = {
   list: (params?: TaskQuery) =>
     client.get('/tasks', { params: params ? { ...params, status: Array.isArray(params.status) ? params.status[0] : params.status } : {} }).then((r) => r.data),
 
-  mine: () =>
-    client.get('/tasks/mine').then((r) => r.data),
+  /**
+   * QA6 P0 — always a plain array. Three screens cache this under the
+   * same key ['tasks', 'mine'] (My Tasks, the Tasks page "Mine" tab and
+   * the weekly timesheet). The Tasks page used to store the raw
+   * `{ success, data }` envelope there, and My Tasks reads only an
+   * array, so opening /my-tasks within the 5-minute staleTime after
+   * /tasks showed "0 of 0".
+   */
+  // `any` (not any[]) so existing callers that still unwrap `.data`
+  // type-check unchanged; at runtime it is always an array.
+  mine: (): Promise<any> =>
+    client.get('/tasks/mine').then((r) => myTasksFromResponse(r.data)),
 
   get: (id: number) =>
     client.get(`/tasks/${id}`).then((r) => r.data?.data ?? r.data),

@@ -316,6 +316,43 @@ describe('UsersService — POST /users (create)', () => {
     await svc.create(createDto(1) as any, ADMIN);
     expect(prisma.user.create).toHaveBeenCalledTimes(1);
   });
+
+  // QA6 (2026-11-25): staging showed users created through POST /users
+  // with userType 'employee' whose person BP had no 'employee' partner
+  // role. The create path writes both from the same derived value; these
+  // pin it down with the real deriveUserType + syncEmployeeBpRole.
+  describe('the employee partner role on the person BP (QA6)', () => {
+    const withRealSync = () => {
+      const ctx = makeService();
+      (ctx.svc as any).deriveUserType.mockRestore();
+      (ctx.svc as any).syncEmployeeBpRole.mockRestore();
+      (ctx.svc as any).bpService = {
+        getHomeOrg: jest.fn(async () => ({ domains: [{ domain: 'amec.co.il', isPersonal: false }] })),
+      };
+      ctx.prisma.partnerRoleType = { findUnique: jest.fn(async () => ({ id: 1, code: 'employee' })) };
+      ctx.prisma.businessPartnerRole = { upsert: jest.fn(async () => ({})), deleteMany: jest.fn(async () => ({ count: 0 })) };
+      return ctx;
+    };
+
+    it('a home-domain email → userType employee AND the BP gets the employee role', async () => {
+      const { svc, prisma } = withRealSync();
+      await svc.create(createDto(5) as any, ADMIN);
+      expect(prisma.user.create.mock.calls[0][0].data).toMatchObject({ userType: 'employee', businessPartnerId: 77 });
+      expect(prisma.businessPartnerRole.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { businessPartnerId_roleTypeId: { businessPartnerId: 77, roleTypeId: 1 } },
+          create: { businessPartnerId: 77, roleTypeId: 1, isPrimary: false },
+        }),
+      );
+    });
+
+    it('an outside email → userType partner and no employee role', async () => {
+      const { svc, prisma } = withRealSync();
+      await svc.create({ ...createDto(5), email: 'someone@gmail.com' } as any, ADMIN);
+      expect(prisma.user.create.mock.calls[0][0].data.userType).toBe('partner');
+      expect(prisma.businessPartnerRole.upsert).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('UsersService — DELETE /users/:id', () => {
