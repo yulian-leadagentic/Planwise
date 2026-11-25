@@ -8,38 +8,29 @@
  *   end date at all, show "ללא תאריך סיום" instead of "Dec 9999". We never
  *   compute days left for them.
  *
- * NOTE: the Operations / Executive Review work ships its own
- * `isOpenEnded` in `@/lib/project-dates`. The two are meant to be unified
- * at integration; keep the semantics here identical (null or year >= 9999).
+ * The open-ended rule lives in `@/lib/project-dates` (single source, shared
+ * with Operations): the sentinel is any end date from year 9000 on, and a
+ * missing / invalid end date also has "no end date" (`hasNoEndDate`).
  */
 import { addYears, format, isValid, parseISO } from 'date-fns';
+import { hasNoEndDate, NO_END_DATE_LABEL } from '@/lib/project-dates';
 import { formatShortDate } from './project-detail/utils';
+
+export { NO_END_DATE_LABEL, OPEN_ENDED_FROM_YEAR, hasNoEndDate } from '@/lib/project-dates';
+
+/**
+ * The form / header sense of "open-ended": no real end date at all —
+ * missing, blank, unparsable, or the sentinel (year >= 9000). Same as
+ * `hasNoEndDate` in `@/lib/project-dates`; note that lib's own
+ * `isOpenEnded` is the sentinel only (null there is not open-ended).
+ */
+export const isOpenEnded = hasNoEndDate;
 
 /** Far-future sentinel older projects were saved with. */
 export const OPEN_ENDED_END_DATE = '9999-12-31';
 
-/** Shown wherever a project has no real end date. */
-export const NO_END_DATE_LABEL = 'ללא תאריך סיום';
-
 /** PR-061 decision: a new project runs 3 years by default. */
 export const DEFAULT_PROJECT_DURATION_YEARS = 3;
-
-/**
- * True when the project has no real end date: missing, blank, unparsable,
- * or the far-future sentinel (any date in year 9999 or later).
- * Reads the year straight from an ISO prefix so a `9999-12-31T00:00:00Z`
- * value can't drift into 9999-12-30 / 10000 through the local timezone.
- */
-export function isOpenEnded(endDate: string | Date | null | undefined): boolean {
-  if (endDate == null || endDate === '') return true;
-  if (typeof endDate === 'string') {
-    const m = /^(\d{4,})-/.exec(endDate.trim());
-    if (m) return Number(m[1]) >= 9999;
-    const d = new Date(endDate);
-    return Number.isNaN(d.getTime()) || d.getFullYear() >= 9999;
-  }
-  return Number.isNaN(endDate.getTime()) || endDate.getFullYear() >= 9999;
-}
 
 /**
  * `YYYY-MM-DD` + N years, as `YYYY-MM-DD`. Feb 29 lands on Feb 28 in a
@@ -73,7 +64,7 @@ export function nextEndDateOnStartChange(args: {
 
 /** Short end-date label for headers, lists and cards ("Nov 2029"). */
 export function formatProjectEndDate(endDate: string | null | undefined): string {
-  if (isOpenEnded(endDate)) return NO_END_DATE_LABEL;
+  if (hasNoEndDate(endDate)) return NO_END_DATE_LABEL;
   return formatShortDate(endDate ?? null) ?? NO_END_DATE_LABEL;
 }
 

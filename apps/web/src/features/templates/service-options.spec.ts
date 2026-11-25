@@ -4,6 +4,7 @@ import {
   isProjectPhaseName,
   PROJECT_PHASE_NAMES,
   serviceOptions,
+  withSavedServiceOption,
 } from './service-options';
 // The API's copy of the rule: the web mirror must not drift from it.
 import {
@@ -56,5 +57,14 @@ describe('PR-069 · Service picker options', () => {
 
   it('tolerates a missing list', () => {
     expect(serviceOptions(undefined)).toEqual([]);
+  });
+
+  it('withSavedServiceOption keeps a saved value the services-only list does not carry', () => {
+    const services = [{ id: 10, name: 'BIM Coordination' }, { id: 12, name: 'ניהול מודל' }];
+    expect(withSavedServiceOption(services, 2, 'Design')).toEqual([...services, { id: 2, name: 'Design' }]);
+    expect(withSavedServiceOption(services, '10', 'BIM Coordination')).toEqual(services);
+    expect(withSavedServiceOption(services, 7, null)).toEqual([...services, { id: 7, name: 'Service #7' }]);
+    expect(withSavedServiceOption(services, null, 'x')).toEqual(services);
+    expect(withSavedServiceOption(undefined, '', null)).toEqual([]);
   });
 });

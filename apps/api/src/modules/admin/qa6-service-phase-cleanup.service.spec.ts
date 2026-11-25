@@ -384,7 +384,7 @@ describe('PR-069 · wiring', () => {
     expect(Reflect.getMetadata('providers', AdminModule)).toContain(Qa6ServicePhaseCleanupService);
 
     const service = { run: jest.fn(async (b: any) => b) };
-    const controller = new BackfillsController({} as never, {} as never, {} as never, {} as never, service as never);
+    const controller = new BackfillsController({} as never, {} as never, {} as never, {} as never, {} as never, service as never);
     await controller.runQa6ServicePhaseCleanup({ id: 7 }, undefined);
     expect(service.run).toHaveBeenLastCalledWith({ dryRun: true, actorId: 7 });
     await expect(controller.runQa6ServicePhaseCleanup({ id: 7 }, { dryRun: false })).rejects.toThrow(

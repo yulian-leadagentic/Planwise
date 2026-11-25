@@ -316,7 +316,7 @@ describe('runQa6SupplierClassification', () => {
     expect(Reflect.getMetadata(GUARDS_METADATA, BackfillsController)).toEqual([JwtAuthGuard, RolesGuard]);
 
     const { prisma, db } = seed();
-    const controller = new BackfillsController(prisma, {} as never, {} as never, {} as never);
+    const controller = new BackfillsController(prisma, {} as never, {} as never, {} as never, {} as never, {} as never);
     const dry = await controller.runQa6SupplierClassification(undefined);
     expect(dry.dryRun).toBe(true);
     expect(db.roles).toHaveLength(2);

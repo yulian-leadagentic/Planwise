@@ -14,7 +14,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
 import { WorkloadPanel } from './workload-dashboard';
 import { formatWorkRange } from './workload-range';
-import { formatDaysLeft, isOpenEnded, NO_END_DATE_LABEL } from '@/lib/project-dates';
+import { formatDaysLeft, hasNoEndDate, NO_END_DATE_LABEL } from '@/lib/project-dates';
 import { OpsAvatar, OpsChevron, OpsLoadBar, OpsErrorBanner, opsErrorMessage, OPS_STATUS_CFG, OPS_PRI_COLORS } from './parts/ops-shared';
 import { BimLeaderTab } from './parts/bim-leader-tab';
 import { ActiveProjectsTab } from './parts/active-projects-tab';
@@ -455,9 +455,9 @@ export function OperationsDashboardPage() {
                           {showFinance && project.budgetPct != null && (
                             <span className={cn('font-mono tabular-nums font-semibold', project.budgetPct > 85 ? 'text-red-600' : 'text-slate-500 dark:text-slate-400')}>Budget allocated {project.budgetPct}%</span>
                           )}
-                          {/* QA6 PR-061 — an open-ended project (9999-12-31) has no
-                              end date: label, no days-left figure. */}
-                          {isOpenEnded(project.endDate) || project.openEnded ? (
+                          {/* QA6 PR-061 — an open-ended project (9999-12-31) or one
+                              with no end date at all: label, no days-left figure. */}
+                          {hasNoEndDate(project.endDate) || project.openEnded ? (
                             <span className="font-semibold text-slate-500 dark:text-slate-400" dir="rtl">{NO_END_DATE_LABEL}</span>
                           ) : (
                             <span className={cn('font-mono tabular-nums font-semibold', project.daysLeft == null ? 'text-slate-400 dark:text-slate-500' : project.daysLeft < 0 ? 'text-red-600' : project.daysLeft < 30 ? 'text-amber-600' : 'text-slate-500 dark:text-slate-400')}>

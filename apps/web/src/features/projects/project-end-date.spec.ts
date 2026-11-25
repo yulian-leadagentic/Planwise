@@ -15,6 +15,7 @@ describe('isOpenEnded (PR-061)', () => {
     expect(isOpenEnded(OPEN_ENDED_END_DATE)).toBe(true);
     expect(isOpenEnded('9999-12-31T00:00:00.000Z')).toBe(true);
     expect(isOpenEnded(new Date(9999, 11, 31))).toBe(true);
+    expect(isOpenEnded('9000-01-01')).toBe(true);
   });
 
   it('treats a missing or unparsable end date as open-ended', () => {
@@ -27,7 +28,7 @@ describe('isOpenEnded (PR-061)', () => {
   it('treats a real end date as bounded', () => {
     expect(isOpenEnded('2029-11-25')).toBe(false);
     expect(isOpenEnded('2029-11-25T00:00:00.000Z')).toBe(false);
-    expect(isOpenEnded('9998-12-31')).toBe(false);
+    expect(isOpenEnded('8999-12-31')).toBe(false);
     expect(isOpenEnded(new Date(2030, 0, 1))).toBe(false);
   });
 });

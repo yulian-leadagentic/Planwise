@@ -67,6 +67,11 @@ import { CSS } from '@dnd-kit/utilities';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { PeopleMultiSelect } from '@/components/shared/people-multi-select';
 import { useProjectTabState } from './use-project-tab-state';
+import {
+  SERVICE_PICKER_QUERY_KEY,
+  SERVICE_PICKER_URL,
+  withSavedServiceOption,
+} from '@/features/templates/service-options';
 import { buildAssigneeOptions, type AssigneeOption } from '@/features/tasks/assignee-picker/assignee-options';
 import {
   useAssigneeScope,
@@ -2752,25 +2757,39 @@ function ProjectScopedPicker({
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState('#8B5CF6');
   const [busy, setBusy] = useState(false);
+  const [lastCreated, setLastCreated] = useState<{ id: number; name: string } | null>(null);
+
+  // PR-069 (integration) — the Service picker lists `GET /phases?scope=services`
+  // (real, active services only; project lifecycle phases left out).
+  // Create still POSTs to /phases.
+  const isServicePicker = endpoint === '/phases';
 
   // Load the global catalog so we have id/name/color for everything,
   // then narrow to the IDs that already appear on tasks in this project.
   const { data: all = [] } = useQuery({
-    queryKey: [endpoint],
-    queryFn: () => client.get(endpoint).then((r) => r.data?.data ?? r.data),
+    queryKey: isServicePicker ? SERVICE_PICKER_QUERY_KEY : [endpoint],
+    queryFn: () => client.get(isServicePicker ? SERVICE_PICKER_URL : endpoint).then((r) => r.data?.data ?? r.data),
     staleTime: 60_000,
   });
   const list: any[] = Array.isArray(all) ? all : [];
 
   // Project-scoped: only entries referenced by this project's tasks.
   // Falls back to the global list if the project has no tasks yet (so
-  // the picker isn't empty on a brand-new project).
+  // the picker isn't empty on a brand-new project) — or, for Service,
+  // when the project's tasks only point at rows the services-only list
+  // leaves out (project phases).
   const usedIds = new Set<number>();
   for (const t of projectTasks) {
     const id: number | undefined = t[fieldKey]?.id ?? t[`${fieldKey}Id`];
     if (typeof id === 'number') usedIds.add(id);
   }
-  const scoped = usedIds.size > 0 ? list.filter((x: any) => usedIds.has(x.id)) : list;
+  const inUse = list.filter((x: any) => usedIds.has(x.id));
+  const scoped = usedIds.size > 0 && (inUse.length > 0 || !isServicePicker) ? inUse : list;
+  // Service: the picked value stays shown even when the services-only
+  // list doesn't carry it (e.g. just created, before the refetch).
+  const options: any[] = isServicePicker
+    ? withSavedServiceOption(scoped, value, lastCreated?.id === value ? lastCreated.name : null)
+    : scoped;
 
   const create = async () => {
     const name = newName.trim();
@@ -2782,7 +2801,10 @@ function ProjectScopedPicker({
       // Refresh the cached catalog so the new entry shows in dropdowns
       // everywhere — and so subsequent renders pick it up.
       queryClient.invalidateQueries({ queryKey: [endpoint] });
-      if (created?.id) onChange(created.id);
+      if (created?.id) {
+        setLastCreated({ id: created.id, name: created.name ?? name });
+        onChange(created.id);
+      }
       setCreating(false);
       setNewName('');
       setNewColor('#8B5CF6');
@@ -2804,7 +2826,7 @@ function ProjectScopedPicker({
             className="flex-1 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] focus:border-blue-500 focus:outline-none"
           >
             <option value="">{placeholder}</option>
-            {scoped.map((x: any) => (
+            {options.map((x: any) => (
               <option key={x.id} value={x.id}>{x.name}</option>
             ))}
           </select>
@@ -2900,10 +2922,11 @@ function CompactPickerCell({
 
   // Source endpoint depends on kind. For deliverable we hit /templates
   // and filter the synthetic __TASK_CATALOG__ entry the templates
-  // controller adds; for phase we hit /phases directly.
-  const sourceUrl = kind === 'deliverable' ? '/templates?type=task_list' : '/phases';
+  // controller adds; for phase (Service) we hit /phases?scope=services
+  // (PR-069: real, active services only, no project lifecycle phases).
+  const sourceUrl = kind === 'deliverable' ? '/templates?type=task_list' : SERVICE_PICKER_URL;
   const { data: all = [] } = useQuery({
-    queryKey: [sourceUrl],
+    queryKey: kind === 'deliverable' ? [sourceUrl] : SERVICE_PICKER_QUERY_KEY,
     queryFn: () => client.get(sourceUrl).then((r) => r.data?.data ?? r.data),
     staleTime: 60_000,
     enabled: editing, // only fetch when the user actually opens the picker
@@ -2917,7 +2940,11 @@ function CompactPickerCell({
   // creating it. Deliverable already shows the full template catalog
   // (matches /templates/deliverables exactly); Service now matches the
   // full /templates/services page the same way.
-  const list = fullList;
+  // Service: a saved value the services-only list leaves out (a project
+  // phase / inactive row set before PR-069) stays listed by its label.
+  const list: any[] = kind === 'phase'
+    ? withSavedServiceOption(fullList, currentId, currentLabel)
+    : fullList;
 
   // For the Deliverable mode the cell stores serviceTypeId on the Task.
   // The dropdown <option value> is the Template id (in deliverable
@@ -2958,7 +2985,8 @@ function CompactPickerCell({
           // Phase — single POST.
           const resp = await client.post('/phases', { name: name.trim() });
           const created = resp.data?.data ?? resp.data;
-          queryClient.invalidateQueries({ queryKey: [sourceUrl] });
+          // ['/phases'] covers the services-only picker list too.
+          queryClient.invalidateQueries({ queryKey: ['/phases'] });
           if (created?.id) await onSave(String(created.id));
         }
       } catch (err: any) {

@@ -1195,7 +1195,7 @@ describe('P1CopiesToRefsService — templateIds filter and failures', () => {
 
     const h = makeHarness(threeTemplates());
     const run = jest.spyOn(h.service, 'run');
-    const controller = new BackfillsController(h.asPrismaService, {} as never, {} as never, h.service, {} as never);
+    const controller = new BackfillsController(h.asPrismaService, {} as never, {} as never, h.service, {} as never, {} as never);
     const admin = { id: 7 };
 
     // No body at all → a dry-run of everything.

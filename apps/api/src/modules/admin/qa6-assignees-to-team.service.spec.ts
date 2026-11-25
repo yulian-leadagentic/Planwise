@@ -157,7 +157,7 @@ describe('QA6 P1 — backfill endpoint contract', () => {
     const meta = Reflect.getMetadata(ROLES_KEY, BackfillsController.prototype.runQa6AssigneesToTeam);
     expect(meta).toEqual([{ module: 'admin', action: 'write' }]);
     const run = jest.fn(async () => ({ dryRun: true }));
-    const ctrl = new BackfillsController({} as never, {} as never, {} as never, {} as never, { run } as never);
+    const ctrl = new BackfillsController({} as never, {} as never, {} as never, {} as never, { run } as never, {} as never);
     await ctrl.runQa6AssigneesToTeam({ id: 1 }, undefined);
     expect(run).toHaveBeenCalledWith({ dryRun: true, actorId: 1 });
     await ctrl.runQa6AssigneesToTeam({ id: 1 }, { dryRun: false });

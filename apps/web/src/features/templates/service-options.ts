@@ -67,3 +67,29 @@ export function serviceOptions<T extends ServiceRowLike>(
   }
   return (Array.isArray(rows) ? rows : []).filter((r) => isPickableService(r) || keep.has(r.id));
 }
+
+/**
+ * `GET /phases?scope=services` — the Service picker list, already filtered
+ * by the API with the same rule. Query key sits under `['/phases']` so the
+ * existing `['/phases']` invalidations (create, reorder) refresh it too.
+ */
+export const SERVICE_PICKER_URL = '/phases?scope=services';
+export const SERVICE_PICKER_QUERY_KEY = ['/phases', 'services'] as const;
+
+/**
+ * For a picker fed by SERVICE_PICKER_URL: the saved value is not in that
+ * list when it is a project phase or an inactive row, so append it (by
+ * id, with the name the caller knows) and the select still shows it
+ * instead of falling back to "none". Same intent as `keepIds` above.
+ */
+export function withSavedServiceOption<T extends { id: number; name: string }>(
+  rows: readonly T[] | null | undefined,
+  savedId: number | string | null | undefined,
+  savedName: string | null | undefined,
+): Array<T | { id: number; name: string }> {
+  const list: Array<T | { id: number; name: string }> = Array.isArray(rows) ? [...rows] : [];
+  const id = savedId === null || savedId === undefined || savedId === '' ? NaN : Number(savedId);
+  if (!Number.isFinite(id) || list.some((r) => r.id === id)) return list;
+  list.push({ id, name: savedName?.trim() || `Service #${id}` });
+  return list;
+}
