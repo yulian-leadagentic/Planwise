@@ -1069,6 +1069,9 @@ function EditorView({
         .then((r) => r.data?.data ?? r.data),
     onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ['templates', templateId] });
+      // BM2-30 — a predecessor / lag edit changes the template's
+      // Fastest (critical path) value, which the list row shows too.
+      queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
       const ar = data?.autoReorder;
       if (ar && Number.isFinite(ar.newOrder)) {
         notify.info(`סדר המשימה עודכן ל-${ar.newOrder} כדי להתאים למשימה המקדימה`, {
@@ -1358,7 +1361,7 @@ function EditorView({
                     {f != null && f > 0 && (
                       <span
                         className="inline-flex items-center gap-1 rounded-[5px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-2 py-0.5 text-[11px] font-bold tracking-[0.05em]"
-                        title={`Fastest completion (critical path, unlimited parallel): ~${f} working day${f === 1 ? '' : 's'}`}
+                        title={`Fastest completion (critical path incl. dependency waits, unlimited parallel): ~${f} working day${f === 1 ? '' : 's'}`}
                       >
                         <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                         Fastest ~{f}d
@@ -1848,7 +1851,7 @@ export function DeliverableTemplatesPage() {
                       {f != null && f > 0 && (
                         <span
                           className="inline-flex items-center gap-1 rounded-[5px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 px-2 py-0.5 text-[11px] font-bold tracking-[0.05em]"
-                          title={`Fastest completion (critical path, unlimited parallel): ~${f} working day${f === 1 ? '' : 's'}`}
+                          title={`Fastest completion (critical path incl. dependency waits, unlimited parallel): ~${f} working day${f === 1 ? '' : 's'}`}
                         >
                           <Zap className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                           Fastest ~{f}d

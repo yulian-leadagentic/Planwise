@@ -1,6 +1,12 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { extractServiceMarker } from '../planning/marker-phase-resolver';
+import {
+  applyLagForward,
+  snapToWorkingDayForward,
+  walkWorkingDaysForward,
+  type LagUnitSched,
+} from '../scheduling/scheduler.service';
 
 // DN-ext (2026-10-22) — Fields that must NEVER be edited through the
 // Deliverable Template / Zone Template editors on a row that is
@@ -14,34 +20,43 @@ const CATALOG_LINKED_READONLY_FIELDS = [
   'defaultBudgetAmount',
 ] as const;
 
-// bm2 (2026-10-28) — Two template-level "working days" calculations
+/// bm2 (2026-10-28) — Two template-level "working days" calculations
 // the Deliverable Templates screen surfaces side by side:
 //
 //   • Fastest = critical-path forward pass over the predecessor DAG,
 //     i.e. the minimum possible completion time with unlimited
-//     parallel resources. Takes each task's effective budget hours,
-//     divides by an 8h standard day for a fractional per-task
-//     duration, then runs a Kahn forward pass. The `+1` gap between
-//     a predecessor's end and a successor's start enforces the
-//     finish-to-start = 1 full working day rule locked in
-//     `docs/bm2/planwise-scheduling-business-rules-LOCKED.md` §3.
+//     parallel resources.
+//
+//     BM2-30 (QA6, 2026-11-25) — this is now the SAME forward pass the
+//     project scheduler runs (`modules/scheduling/scheduler.service.ts`,
+//     D1-Lag / D7), built from its exported pure helpers so the two
+//     can't drift: per-task duration = max(1, ceil(hours / 8)) working
+//     days (the scheduler's `resolveWorkingDaysDuration` with no
+//     assignee), a successor starts at `applyLagForward(pred.end, lag,
+//     lagUnit)` (lag 0 = the next working day, WORKING_DAYS lag adds
+//     strict working days, CALENDAR_DAYS lag adds calendar days and
+//     snaps forward), and the result is the number of working days from
+//     the first task's start to the latest finish, inclusive. The old
+//     calc ignored the per-edge lag (a 7-day wait read as ~2d) and
+//     added a full idle day per edge that the scheduler never adds.
+//     The calendar is the scheduler's default one (Fri + Sat rest, no
+//     holidays) starting on a Sunday, so a CALENDAR_DAYS lag counts
+//     the weekend it spans the same way a project would.
 //
 //   • Slowest = pure sequential execution — "what if we could only
 //     do one task at a time". `ceil(sum(budgetHours)/8 + (N-1) × 1
-//     gap day)`, ignoring the DAG entirely.
+//     gap day)`, ignoring the DAG, floored at Fastest (a lag wait can
+//     make the critical path longer than the serial work itself).
 //
-// Both deliberately ignore the calendar (holidays, weekends,
-// assignee capacity, project start) — these are the "pure standard"
-// numbers the templates screen surfaces; the real per-project
-// scheduler lives under modules/scheduling.
+// Both deliberately ignore holidays, assignee capacity and the
+// project start; these are the "pure standard" numbers the templates
+// screen surfaces. The real per-project scheduler lives under
+// modules/scheduling.
 //
 // bm2 (2026-10-28, "no hours = no measure") — Both calcs return
 // `null` when the template has no tasks OR when every task's
-// `budgetHours` is missing / zero. The old behavior (return 0)
-// produced "Slowest ~5 working days" for a 6-task template with
-// all NULL hours — nonsense, since the "sum/8 + (N-1)" formula
-// collapsed to just the (N-1) gap days. Returning null lets the
-// FE hide the chip entirely for the "we don't know yet" case.
+// `budgetHours` is missing / zero. Returning null lets the FE hide
+// the chip entirely for the "we don't know yet" case.
 //
 // Fastest also returns 0 (not null) when a cycle breaks the DAG
 // forward pass — the hours are real, we just couldn't compute a
@@ -49,6 +64,12 @@ const CATALOG_LINKED_READONLY_FIELDS = [
 // existing cycle-detection test.
 const STANDARD_DAY_HOURS = 8.0;
 const workingDaysLogger = new Logger('computeFastestWorkingDays');
+/** BM2-30 — the scheduler's default weekly rest (Fri + Sat). */
+const STANDARD_WEEKLY_REST_DAYS: readonly number[] = [5, 6];
+const isStandardWorkingDay = (d: Date): boolean =>
+  !STANDARD_WEEKLY_REST_DAYS.includes(d.getUTCDay());
+/** BM2-30 — day 1 of the estimate: Sunday 2026-01-04 (UTC). */
+const STANDARD_REFERENCE_START_MS = Date.UTC(2026, 0, 4);
 export interface SwdTask {
   id: number;
   budgetHours: number | null | undefined;
@@ -58,6 +79,10 @@ export interface SwdEdge {
   templateTaskId: number;
   // The task it depends on (predecessor).
   dependsOnTemplateTaskId: number;
+  // BM2-30 — the edge's finish-to-start wait (`TemplateTaskDependency`
+  // lag / lagUnit). Missing = 0 working days, the plain handoff.
+  lag?: number | null;
+  lagUnit?: string | null;
 }
 // Shared "has any real hours?" predicate so both compute fns agree
 // on what counts as "no measure" (null / undefined / non-finite / <= 0).
@@ -68,6 +93,33 @@ function hasAnyBudgetedHours(tasks: readonly SwdTask[]): boolean {
   }
   return false;
 }
+/**
+ * BM2-30 — a task's length in working days, exactly as the scheduler
+ * sizes an unassigned task (`resolveWorkingDaysDuration`, default 8h
+ * day): hours > 0 → ceil(hours / 8), at least 1; no hours → 1.
+ */
+export function templateTaskWorkingDays(budgetHours: number | null | undefined): number {
+  const h = Number(budgetHours ?? 0);
+  if (Number.isFinite(h) && h > 0) return Math.max(1, Math.ceil(h / STANDARD_DAY_HOURS));
+  return 1;
+}
+/** BM2-30 — normalise an edge's lag the way the scheduler does. */
+function normaliseLag(e: SwdEdge): { lag: number; lagUnit: LagUnitSched } {
+  return {
+    lag: Math.max(0, Math.floor(Number(e.lag) || 0)),
+    lagUnit: e.lagUnit === 'CALENDAR_DAYS' ? 'CALENDAR_DAYS' : 'WORKING_DAYS',
+  };
+}
+/** Working days in [from, to], both ends included, on the standard calendar. */
+function countStandardWorkingDays(from: Date, to: Date): number {
+  let count = 0;
+  const cursor = new Date(from.getTime());
+  while (cursor.getTime() <= to.getTime()) {
+    if (isStandardWorkingDay(cursor)) count++;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return count;
+}
 export function computeFastestWorkingDays(
   tasks: readonly SwdTask[],
   edges: readonly SwdEdge[],
@@ -75,60 +127,56 @@ export function computeFastestWorkingDays(
   if (!tasks || tasks.length === 0) return null;
   if (!hasAnyBudgetedHours(tasks)) return null;
 
-  // Per-task duration in days. Null/missing budgetHours → 0, which
-  // keeps the task in the DAG but adds nothing to its chain length.
   const duration = new Map<number, number>();
-  for (const t of tasks) {
-    const hours = Number(t.budgetHours ?? 0);
-    duration.set(t.id, Number.isFinite(hours) && hours > 0 ? hours / STANDARD_DAY_HOURS : 0);
-  }
+  for (const t of tasks) duration.set(t.id, templateTaskWorkingDays(t.budgetHours));
 
   // Build adjacency + in-degree over the task set. Edges that point
   // outside the task set (orphaned deps) are ignored — the live
   // schema's FKs make that unreachable for sane rows, but defensive.
   const taskIds = new Set<number>(duration.keys());
+  const predEdges = new Map<number, Array<{ pred: number; lag: number; lagUnit: LagUnitSched }>>();
   const outgoing = new Map<number, number[]>(); // pred -> [succ...]
   const inDegree = new Map<number, number>();
   for (const id of taskIds) {
+    predEdges.set(id, []);
     outgoing.set(id, []);
     inDegree.set(id, 0);
   }
   for (const e of edges) {
     if (!taskIds.has(e.templateTaskId) || !taskIds.has(e.dependsOnTemplateTaskId)) continue;
+    predEdges.get(e.templateTaskId)!.push({ pred: e.dependsOnTemplateTaskId, ...normaliseLag(e) });
     outgoing.get(e.dependsOnTemplateTaskId)!.push(e.templateTaskId);
     inDegree.set(e.templateTaskId, (inDegree.get(e.templateTaskId) ?? 0) + 1);
   }
 
-  // Kahn forward pass. `end[t]` is the finish day of task t; for roots
-  // start = 0, end = duration. For non-roots start = max(pred.end) + 1
-  // (the finish-to-start +1 gap).
-  const end = new Map<number, number>();
+  // Kahn forward pass, the scheduler's step 10 on the standard
+  // calendar: ES = max over pred edges of applyLagForward(pred.EF),
+  // snapped to a working day; EF = ES walked `duration` working days
+  // forward (inclusive).
+  const referenceStart = snapToWorkingDayForward(
+    new Date(STANDARD_REFERENCE_START_MS),
+    isStandardWorkingDay,
+  );
+  const finish = new Map<number, Date>();
   const queue: number[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) {
-      end.set(id, duration.get(id) ?? 0);
-      queue.push(id);
-    }
-  }
-
-  // Track the running max-end so each successor can read it from its
-  // predecessors without re-scanning.
-  const maxPredEnd = new Map<number, number>();
+  for (const [id, deg] of inDegree) if (deg === 0) queue.push(id);
   let processed = 0;
   while (queue.length) {
     const n = queue.shift()!;
     processed++;
-    const nEnd = end.get(n) ?? 0;
+    let start = referenceStart;
+    for (const edge of predEdges.get(n) ?? []) {
+      const pf = finish.get(edge.pred);
+      if (!pf) continue;
+      const candidate = applyLagForward(pf, edge.lag, edge.lagUnit, isStandardWorkingDay);
+      if (candidate.getTime() > start.getTime()) start = candidate;
+    }
+    start = snapToWorkingDayForward(start, isStandardWorkingDay);
+    finish.set(n, walkWorkingDaysForward(start, duration.get(n) ?? 1, isStandardWorkingDay));
     for (const s of outgoing.get(n) ?? []) {
-      const prev = maxPredEnd.get(s);
-      if (prev === undefined || nEnd > prev) maxPredEnd.set(s, nEnd);
       const deg = (inDegree.get(s) ?? 0) - 1;
       inDegree.set(s, deg);
-      if (deg === 0) {
-        const start = (maxPredEnd.get(s) ?? 0) + 1;
-        end.set(s, start + (duration.get(s) ?? 0));
-        queue.push(s);
-      }
+      if (deg === 0) queue.push(s);
     }
   }
 
@@ -139,9 +187,9 @@ export function computeFastestWorkingDays(
     return 0;
   }
 
-  let max = 0;
-  for (const v of end.values()) if (v > max) max = v;
-  return Math.ceil(max);
+  let latest = referenceStart;
+  for (const d of finish.values()) if (d.getTime() > latest.getTime()) latest = d;
+  return countStandardWorkingDays(referenceStart, latest);
 }
 
 // bm2 (2026-10-28) — Slowest = pure sequential execution with no
@@ -150,11 +198,20 @@ export function computeFastestWorkingDays(
 // "worst-case solo operator" number that pairs with the Fastest
 // critical-path calc above.
 //
+// BM2-30 (QA6) — pass the template's edges and the result is floored
+// at Fastest: a lag wait (e.g. 7 days for a customer approval) makes
+// the critical path longer than the serial work, and "Slowest ~3d"
+// next to "Fastest ~15d" would be nonsense. Without edges the value
+// is the plain sequential formula.
+//
 // Returns `null` when there are no tasks or none has any real
 // `budgetHours`. Otherwise the (N-1) gap-day term would produce
 // a non-zero figure for a template with ALL-NULL hours, which the
 // user flagged as nonsense ("אין שעות = אין מידה").
-export function computeSlowestWorkingDays(tasks: readonly SwdTask[]): number | null {
+export function computeSlowestWorkingDays(
+  tasks: readonly SwdTask[],
+  edges?: readonly SwdEdge[],
+): number | null {
   if (!tasks || tasks.length === 0) return null;
   if (!hasAnyBudgetedHours(tasks)) return null;
   const sum = tasks.reduce((s, t) => {
@@ -162,7 +219,10 @@ export function computeSlowestWorkingDays(tasks: readonly SwdTask[]): number | n
     return s + (Number.isFinite(h) && h > 0 ? h : 0);
   }, 0);
   const totalDays = sum / STANDARD_DAY_HOURS + (tasks.length - 1);
-  return Math.ceil(totalDays);
+  const sequential = Math.ceil(totalDays);
+  if (!edges || edges.length === 0) return sequential;
+  const fastest = computeFastestWorkingDays(tasks, edges) ?? 0;
+  return Math.max(sequential, fastest);
 }
 
 // DN-ext — reusable live-override: when a template task row has a
@@ -293,7 +353,7 @@ export class TemplatesService {
             description: true,
             defaultBudgetHours: true,
             catalogTask: { select: { defaultBudgetHours: true } },
-            predecessors: { select: { dependsOnTemplateTaskId: true } },
+            predecessors: { select: { dependsOnTemplateTaskId: true, lag: true, lagUnit: true } },
           },
           take: 100,
         },
@@ -399,10 +459,12 @@ export class TemplatesService {
           (row.predecessors ?? []).map((p: any) => ({
             templateTaskId: row.id,
             dependsOnTemplateTaskId: p.dependsOnTemplateTaskId,
+            lag: p.lag,
+            lagUnit: p.lagUnit,
           })),
         );
         fastestWorkingDays = computeFastestWorkingDays(tasks, edges);
-        slowestWorkingDays = computeSlowestWorkingDays(tasks);
+        slowestWorkingDays = computeSlowestWorkingDays(tasks, edges);
       }
       return {
         ...t,
@@ -695,10 +757,12 @@ export class TemplatesService {
         (row.predecessors ?? []).map((p: any) => ({
           templateTaskId: row.id,
           dependsOnTemplateTaskId: p.dependsOnTemplateTaskId,
+          lag: p.lag,
+          lagUnit: p.lagUnit,
         })),
       );
       fastestWorkingDays = computeFastestWorkingDays(tasks, edges);
-      slowestWorkingDays = computeSlowestWorkingDays(tasks);
+      slowestWorkingDays = computeSlowestWorkingDays(tasks, edges);
     }
 
     // P1 · Reference model (2026-11-10) — "Used by N templates".

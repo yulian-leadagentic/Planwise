@@ -1,15 +1,20 @@
 import {
   computeFastestWorkingDays,
   computeSlowestWorkingDays,
+  templateTaskWorkingDays,
   type SwdEdge,
   type SwdTask,
 } from './templates.service';
 
 // bm2 (2026-10-28) — Fastest = critical-path forward pass (min
-// completion time with unlimited parallelism). Covers the four
-// shapes the user locked in: linear chain, diamond, empty, and a
-// cycle. 1-day finish-to-start gap per
-// `docs/bm2/planwise-scheduling-business-rules-LOCKED.md` §3.
+// completion time with unlimited parallelism).
+//
+// BM2-30 (QA6, 2026-11-25) — Fastest now runs the scheduler's own
+// forward pass (D1-Lag / D7): a task lasts max(1, ceil(hours / 8))
+// working days, lag 0 = the successor starts the next working day (no
+// idle day in between), and each edge's lag is added in its unit.
+// `template-critical-path.parity.spec.ts` proves the value equals the
+// project scheduler's forward pass on the same graphs.
 describe('computeFastestWorkingDays', () => {
   it('returns null for an empty template', () => {
     // bm2 (2026-10-28, "no hours = no measure") — a template with
@@ -19,10 +24,6 @@ describe('computeFastestWorkingDays', () => {
   });
 
   it('returns null when every task has null / zero / missing budgetHours', () => {
-    // The real screenshot the user reported: 6 tasks, all `-`
-    // (NULL budgetHours) → the old formula collapsed to just the
-    // (N-1) gap days, producing "Slowest ~5" nonsense. Both fns
-    // now bail with null.
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: null },
       { id: 2, budgetHours: undefined },
@@ -34,8 +35,7 @@ describe('computeFastestWorkingDays', () => {
     expect(computeFastestWorkingDays(tasks, [])).toBeNull();
   });
 
-  it('linear chain: 3 tasks of 8h with 1-day gap → ceil(5) = 5 days', () => {
-    // T1=0..1, T2=2..3, T3=4..5 (gap of 1 day between each)
+  it('linear chain: 3 tasks of 8h, no lag → 3 working days (day 1, 2, 3)', () => {
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: 8 },
       { id: 2, budgetHours: 8 },
@@ -45,11 +45,10 @@ describe('computeFastestWorkingDays', () => {
       { templateTaskId: 2, dependsOnTemplateTaskId: 1 },
       { templateTaskId: 3, dependsOnTemplateTaskId: 2 },
     ];
-    expect(computeFastestWorkingDays(tasks, edges)).toBe(5);
+    expect(computeFastestWorkingDays(tasks, edges)).toBe(3);
   });
 
-  it('diamond: A → B,C → D (all 8h) → ceil(5) = 5 days', () => {
-    // A=0..1, B=2..3, C=2..3, D depends on both → start=max(3,3)+1=4, end=5
+  it('diamond: A → B,C → D (all 8h) → 3 working days', () => {
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: 8 }, // A
       { id: 2, budgetHours: 8 }, // B
@@ -62,7 +61,7 @@ describe('computeFastestWorkingDays', () => {
       { templateTaskId: 4, dependsOnTemplateTaskId: 2 },
       { templateTaskId: 4, dependsOnTemplateTaskId: 3 },
     ];
-    expect(computeFastestWorkingDays(tasks, edges)).toBe(5);
+    expect(computeFastestWorkingDays(tasks, edges)).toBe(3);
   });
 
   it('cycle: returns 0 and logs a warning', () => {
@@ -83,12 +82,12 @@ describe('computeFastestWorkingDays', () => {
     warnSpy.mockRestore();
   });
 
-  it('fractional durations: single 4h task → ceil(0.5) = 1 day', () => {
+  it('a task shorter than a day still takes one working day', () => {
     expect(computeFastestWorkingDays([{ id: 1, budgetHours: 4 }], [])).toBe(1);
+    expect(computeFastestWorkingDays([{ id: 1, budgetHours: 9 }], [])).toBe(2);
   });
 
-  it('null / zero budget hours treated as zero duration', () => {
-    // 1 (0h) → 2 (8h): start of 2 = 0 + 1 = 1, end = 2 → ceil(2) = 2
+  it('a task with no hours still takes one working day (as in the scheduler)', () => {
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: null },
       { id: 2, budgetHours: 8 },
@@ -97,9 +96,7 @@ describe('computeFastestWorkingDays', () => {
     expect(computeFastestWorkingDays(tasks, edges)).toBe(2);
   });
 
-  it('BIM-template scenario: 9 tasks with mixed hours → ceil(5.125) = 6 days', () => {
-    // The real screenshot the user showed. Numbers below are task ids
-    // 1..9 mapping to BIM-001..BIM-009; hours per `defaultBudgetHours`.
+  it('BIM-template scenario: 9 tasks, longest chain 1→3→4→8→9 → 5 working days', () => {
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: 2 },
       { id: 2, budgetHours: 2 },
@@ -111,36 +108,111 @@ describe('computeFastestWorkingDays', () => {
       { id: 8, budgetHours: 2 },
       { id: 9, budgetHours: 1 },
     ];
-    const edges: SwdEdge[] = [
-      { templateTaskId: 2, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 3, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 4, dependsOnTemplateTaskId: 3 },
-      { templateTaskId: 5, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 6, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 7, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 8, dependsOnTemplateTaskId: 4 },
-      { templateTaskId: 8, dependsOnTemplateTaskId: 2 },
-      { templateTaskId: 8, dependsOnTemplateTaskId: 5 },
-      { templateTaskId: 9, dependsOnTemplateTaskId: 8 },
-    ];
-    expect(computeFastestWorkingDays(tasks, edges)).toBe(6);
+    expect(computeFastestWorkingDays(tasks, BIM_EDGES)).toBe(5);
+  });
+
+  describe('BM2-30 · dependency lag', () => {
+    it('"CRD-036 waits 7 working days after CRD-002" (1h each) → 1 + 7 + 1 = 9 working days', () => {
+      const tasks: SwdTask[] = [
+        { id: 2, budgetHours: 1 }, // CRD-002
+        { id: 36, budgetHours: 1 }, // CRD-036
+      ];
+      const edges: SwdEdge[] = [
+        { templateTaskId: 36, dependsOnTemplateTaskId: 2, lag: 7, lagUnit: 'WORKING_DAYS' },
+      ];
+      expect(computeFastestWorkingDays(tasks, edges)).toBe(9);
+      // The same graph without the wait is the plain 2-day handoff.
+      expect(computeFastestWorkingDays(tasks, [{ templateTaskId: 36, dependsOnTemplateTaskId: 2 }])).toBe(2);
+    });
+
+    it('template 41 "תיאום ראשוני": 002 → 021 (+7 working) → 036 (+7 calendar) → 15 working days', () => {
+      // Sun 01-04 CRD-002 · next working day + 7 → Wed 01-14 CRD-021 ·
+      // +1+7 calendar days → Thu 01-22 CRD-036. Sun 01-04..Thu 01-22 =
+      // three full Sun–Thu weeks = 15 working days.
+      expect(computeFastestWorkingDays(CRD_TASKS, CRD_EDGES)).toBe(15);
+    });
+
+    it('a calendar-day lag counts the weekend it spans', () => {
+      // A (8h) on Sun; 1 + 3 calendar days after Sun = Thu → B on Thu.
+      // Sun..Thu = 5 working days.
+      const tasks: SwdTask[] = [
+        { id: 1, budgetHours: 8 },
+        { id: 2, budgetHours: 8 },
+      ];
+      expect(
+        computeFastestWorkingDays(tasks, [
+          { templateTaskId: 2, dependsOnTemplateTaskId: 1, lag: 3, lagUnit: 'CALENDAR_DAYS' },
+        ]),
+      ).toBe(5);
+      // 1 + 5 calendar days after Sun lands on Sat (rest) → snaps to
+      // Sun of week 2: 6 working days. 5 working days after the next
+      // working day (Mon) lands on Mon of week 2: 7 working days.
+      expect(
+        computeFastestWorkingDays(tasks, [
+          { templateTaskId: 2, dependsOnTemplateTaskId: 1, lag: 5, lagUnit: 'CALENDAR_DAYS' },
+        ]),
+      ).toBe(6);
+      expect(
+        computeFastestWorkingDays(tasks, [
+          { templateTaskId: 2, dependsOnTemplateTaskId: 1, lag: 5, lagUnit: 'WORKING_DAYS' },
+        ]),
+      ).toBe(7);
+    });
+
+    it('the longest path wins when only a side branch carries the lag', () => {
+      // 1 → 2 → 3 → 4 (8h each, no lag) = 4 days; 1 → 5 (+1 wd) = 3 days.
+      const tasks: SwdTask[] = [1, 2, 3, 4, 5].map((id) => ({ id, budgetHours: 8 }));
+      const edges: SwdEdge[] = [
+        { templateTaskId: 2, dependsOnTemplateTaskId: 1 },
+        { templateTaskId: 3, dependsOnTemplateTaskId: 2 },
+        { templateTaskId: 4, dependsOnTemplateTaskId: 3 },
+        { templateTaskId: 5, dependsOnTemplateTaskId: 1, lag: 1, lagUnit: 'WORKING_DAYS' },
+      ];
+      expect(computeFastestWorkingDays(tasks, edges)).toBe(4);
+      // A 4-day wait on the side branch makes it the critical path.
+      edges[3] = { templateTaskId: 5, dependsOnTemplateTaskId: 1, lag: 4, lagUnit: 'WORKING_DAYS' };
+      expect(computeFastestWorkingDays(tasks, edges)).toBe(6);
+    });
+
+    it('negative / garbage lag is treated as 0, unknown unit as working days', () => {
+      const tasks: SwdTask[] = [
+        { id: 1, budgetHours: 8 },
+        { id: 2, budgetHours: 8 },
+      ];
+      expect(
+        computeFastestWorkingDays(tasks, [
+          { templateTaskId: 2, dependsOnTemplateTaskId: 1, lag: -3, lagUnit: 'WORKING_DAYS' },
+        ]),
+      ).toBe(2);
+      expect(
+        computeFastestWorkingDays(tasks, [
+          { templateTaskId: 2, dependsOnTemplateTaskId: 1, lag: 2, lagUnit: 'SOMETHING' },
+        ]),
+      ).toBe(4);
+    });
+  });
+});
+
+describe('templateTaskWorkingDays', () => {
+  it('mirrors the scheduler duration: max(1, ceil(h / 8)), 1 without hours', () => {
+    expect(templateTaskWorkingDays(null)).toBe(1);
+    expect(templateTaskWorkingDays(0)).toBe(1);
+    expect(templateTaskWorkingDays(1)).toBe(1);
+    expect(templateTaskWorkingDays(8)).toBe(1);
+    expect(templateTaskWorkingDays(8.5)).toBe(2);
+    expect(templateTaskWorkingDays(40)).toBe(5);
   });
 });
 
 // bm2 (2026-10-28) — Slowest = pure sequential execution with no
 // parallelism. `ceil(sum(budgetHours) / 8 + (N - 1) × 1 gap day)`.
-// Dependency edges are ignored — this is the upper-bound
-// "worst-case solo operator" number that pairs with the Fastest
-// critical-path calc above.
+// BM2-30 — floored at Fastest when the edges are passed.
 describe('computeSlowestWorkingDays', () => {
   it('returns null for an empty template', () => {
     expect(computeSlowestWorkingDays([])).toBeNull();
   });
 
   it('returns null when every task has null / zero / missing budgetHours', () => {
-    // Mirror of the "no hours = no measure" case for the slowest
-    // calc: the (N-1) gap-day term alone used to produce a bogus
-    // "~5 working days" for 6 unestimated tasks.
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: null },
       { id: 2, budgetHours: undefined },
@@ -153,12 +225,10 @@ describe('computeSlowestWorkingDays', () => {
   });
 
   it('single 8h task → 1 day', () => {
-    // sum=8, totalDays = 8/8 + 0 = 1
     expect(computeSlowestWorkingDays([{ id: 1, budgetHours: 8 }])).toBe(1);
   });
 
   it('three 8h tasks → ceil(3 + 2) = 5 days (serial, regardless of edges)', () => {
-    // sum=24, totalDays = 24/8 + 2 = 5
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: 8 },
       { id: 2, budgetHours: 8 },
@@ -168,38 +238,29 @@ describe('computeSlowestWorkingDays', () => {
   });
 
   it('BIM-template scenario: 9 tasks, 22h total → ceil(22/8 + 8) = ceil(10.75) = 11 days', () => {
-    const tasks: SwdTask[] = [
-      { id: 1, budgetHours: 2 },
-      { id: 2, budgetHours: 2 },
-      { id: 3, budgetHours: 2 },
-      { id: 4, budgetHours: 2 },
-      { id: 5, budgetHours: 3 },
-      { id: 6, budgetHours: 6 },
-      { id: 7, budgetHours: 2 },
-      { id: 8, budgetHours: 2 },
-      { id: 9, budgetHours: 1 },
-    ];
-    expect(computeSlowestWorkingDays(tasks)).toBe(11);
+    expect(computeSlowestWorkingDays(BIM_TASKS)).toBe(11);
+    expect(computeSlowestWorkingDays(BIM_TASKS, BIM_EDGES)).toBe(11);
   });
 
   it('null / zero budget hours treated as zero duration', () => {
-    // sum=8, N=2, totalDays = 1 + 1 = 2
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: null },
       { id: 2, budgetHours: 8 },
     ];
     expect(computeSlowestWorkingDays(tasks)).toBe(2);
   });
+
+  it('BM2-30: never below Fastest when a lag makes the critical path longer', () => {
+    // Sequential formula alone: ceil(3/8 + 2) = 3. Fastest = 15.
+    expect(computeSlowestWorkingDays(CRD_TASKS)).toBe(3);
+    expect(computeSlowestWorkingDays(CRD_TASKS, CRD_EDGES)).toBe(15);
+  });
 });
 
-// bm2 (2026-10-28) — Fastest-vs-Slowest comparison scenarios that
-// make the semantic difference between the two calcs visible: when
-// everything is serial they should agree, when everything is
-// parallel they should diverge.
 describe('fastest vs slowest', () => {
   it('empty → both null', () => {
     expect(computeFastestWorkingDays([], [])).toBeNull();
-    expect(computeSlowestWorkingDays([])).toBeNull();
+    expect(computeSlowestWorkingDays([], [])).toBeNull();
   });
 
   it('all-null hours → both null (FE hides the chip)', () => {
@@ -209,16 +270,16 @@ describe('fastest vs slowest', () => {
       { id: 3, budgetHours: null },
     ];
     expect(computeFastestWorkingDays(tasks, [])).toBeNull();
-    expect(computeSlowestWorkingDays(tasks)).toBeNull();
+    expect(computeSlowestWorkingDays(tasks, [])).toBeNull();
   });
 
   it('single 8h task → both 1', () => {
     const tasks: SwdTask[] = [{ id: 1, budgetHours: 8 }];
     expect(computeFastestWorkingDays(tasks, [])).toBe(1);
-    expect(computeSlowestWorkingDays(tasks)).toBe(1);
+    expect(computeSlowestWorkingDays(tasks, [])).toBe(1);
   });
 
-  it('three 8h tasks linear chain → both 5 (serial anyway)', () => {
+  it('three 8h tasks linear chain → fastest 3, slowest 5', () => {
     const tasks: SwdTask[] = [
       { id: 1, budgetHours: 8 },
       { id: 2, budgetHours: 8 },
@@ -228,8 +289,8 @@ describe('fastest vs slowest', () => {
       { templateTaskId: 2, dependsOnTemplateTaskId: 1 },
       { templateTaskId: 3, dependsOnTemplateTaskId: 2 },
     ];
-    expect(computeFastestWorkingDays(tasks, edges)).toBe(5);
-    expect(computeSlowestWorkingDays(tasks)).toBe(5);
+    expect(computeFastestWorkingDays(tasks, edges)).toBe(3);
+    expect(computeSlowestWorkingDays(tasks, edges)).toBe(5);
   });
 
   it('three 8h tasks fully parallel (no edges) → fastest 1, slowest 5', () => {
@@ -239,34 +300,52 @@ describe('fastest vs slowest', () => {
       { id: 3, budgetHours: 8 },
     ];
     expect(computeFastestWorkingDays(tasks, [])).toBe(1);
-    expect(computeSlowestWorkingDays(tasks)).toBe(5);
+    expect(computeSlowestWorkingDays(tasks, [])).toBe(5);
   });
 
-  it('BIM-template scenario: fastest 6, slowest 11', () => {
-    const tasks: SwdTask[] = [
-      { id: 1, budgetHours: 2 },
-      { id: 2, budgetHours: 2 },
-      { id: 3, budgetHours: 2 },
-      { id: 4, budgetHours: 2 },
-      { id: 5, budgetHours: 3 },
-      { id: 6, budgetHours: 6 },
-      { id: 7, budgetHours: 2 },
-      { id: 8, budgetHours: 2 },
-      { id: 9, budgetHours: 1 },
-    ];
-    const edges: SwdEdge[] = [
-      { templateTaskId: 2, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 3, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 4, dependsOnTemplateTaskId: 3 },
-      { templateTaskId: 5, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 6, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 7, dependsOnTemplateTaskId: 1 },
-      { templateTaskId: 8, dependsOnTemplateTaskId: 4 },
-      { templateTaskId: 8, dependsOnTemplateTaskId: 2 },
-      { templateTaskId: 8, dependsOnTemplateTaskId: 5 },
-      { templateTaskId: 9, dependsOnTemplateTaskId: 8 },
-    ];
-    expect(computeFastestWorkingDays(tasks, edges)).toBe(6);
-    expect(computeSlowestWorkingDays(tasks)).toBe(11);
+  it('BIM-template scenario: fastest 5, slowest 11', () => {
+    expect(computeFastestWorkingDays(BIM_TASKS, BIM_EDGES)).toBe(5);
+    expect(computeSlowestWorkingDays(BIM_TASKS, BIM_EDGES)).toBe(11);
   });
 });
+
+// ─── fixtures ────────────────────────────────────────────────────────
+
+const BIM_TASKS: SwdTask[] = [
+  { id: 1, budgetHours: 2 },
+  { id: 2, budgetHours: 2 },
+  { id: 3, budgetHours: 2 },
+  { id: 4, budgetHours: 2 },
+  { id: 5, budgetHours: 3 },
+  { id: 6, budgetHours: 6 },
+  { id: 7, budgetHours: 2 },
+  { id: 8, budgetHours: 2 },
+  { id: 9, budgetHours: 1 },
+];
+
+const BIM_EDGES: SwdEdge[] = [
+  { templateTaskId: 2, dependsOnTemplateTaskId: 1 },
+  { templateTaskId: 3, dependsOnTemplateTaskId: 1 },
+  { templateTaskId: 4, dependsOnTemplateTaskId: 3 },
+  { templateTaskId: 5, dependsOnTemplateTaskId: 1 },
+  { templateTaskId: 6, dependsOnTemplateTaskId: 1 },
+  { templateTaskId: 7, dependsOnTemplateTaskId: 1 },
+  { templateTaskId: 8, dependsOnTemplateTaskId: 4 },
+  { templateTaskId: 8, dependsOnTemplateTaskId: 2 },
+  { templateTaskId: 8, dependsOnTemplateTaskId: 5 },
+  { templateTaskId: 9, dependsOnTemplateTaskId: 8 },
+];
+
+// Template 41 "תיאום ראשוני" as documented in
+// docs/bm2/planwise-DP-predecessor-lag-scheduling-BUG.md: CRD-002 /
+// CRD-021 / CRD-036, 1h each; 021 ← 002 +7 working days, 036 ← 021 +7
+// calendar days.
+const CRD_TASKS: SwdTask[] = [
+  { id: 2, budgetHours: 1 },
+  { id: 21, budgetHours: 1 },
+  { id: 36, budgetHours: 1 },
+];
+const CRD_EDGES: SwdEdge[] = [
+  { templateTaskId: 21, dependsOnTemplateTaskId: 2, lag: 7, lagUnit: 'WORKING_DAYS' },
+  { templateTaskId: 36, dependsOnTemplateTaskId: 21, lag: 7, lagUnit: 'CALENDAR_DAYS' },
+];
