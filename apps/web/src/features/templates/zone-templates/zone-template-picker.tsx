@@ -82,9 +82,10 @@ export function ZoneTemplatePicker({
           code: tpl.code || undefined,
           // QA3 follow-up: inherit the referenced template's
           // defaultZoneType so a "Level" template creates a Level
-          // zone (not a generic 'zone'). Fallback to 'zone' preserves
-          // the historical behavior for untagged templates.
-          zoneType: tpl.defaultZoneType || 'zone',
+          // zone. QA6: an untagged template falls back to 'building'
+          // (the column default); the old 'zone' fallback is a legacy
+          // code the column can't hold (it was a 500).
+          zoneType: tpl.defaultZoneType || 'building',
           parentId: parentId ?? undefined,
           referencedTemplateId: tpl.id,
         });

@@ -17,8 +17,8 @@ import { useZoneTypeOptions } from '@/hooks/use-zone-type-options';
  * `/admin/config/zone-types` catalog via `useZoneTypeOptions`
  * (replacing the previously-hardcoded `ZONE_TYPES` list), so admin
  * curates the available zone types in one place. The current form
- * state is passed as `includeValue` so the initial 'zone' default
- * still renders as a legacy option when it's not in the catalog.
+ * state is passed as `includeValue` so a value that is not in the
+ * catalog still renders (as a legacy option).
  */
 export function ManualZoneForm({
   templateId,
@@ -32,7 +32,11 @@ export function ManualZoneForm({
 }) {
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
-  const [zoneType, setZoneType] = useState<string>('zone');
+  // QA6 (2026-11-25) — start on 'building' (the column default). The
+  // old start value 'zone' is a legacy code the template_zones column
+  // can't hold; posted as-is it was the 500 on POST /templates/:id/zones
+  // (the server now maps it to 'building' too).
+  const [zoneType, setZoneType] = useState<string>('building');
   const { options: zoneTypeOptions } = useZoneTypeOptions(zoneType);
 
   const createZone = useMutation({

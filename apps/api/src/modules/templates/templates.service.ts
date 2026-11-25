@@ -5,7 +5,9 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import { Prisma, type ZoneType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { normalizeZoneType, ZONE_TYPE_VALUES } from '../zones/dto/create-zone.dto';
 import { extractServiceMarker } from '../planning/marker-phase-resolver';
 import {
   applyLagForward,
@@ -329,6 +331,79 @@ export function describeTemplateUsage(u: TemplateUsage): string {
   return parts.join(', ');
 }
 
+// ─── QA6 · template zone input (POST /templates/:id/zones 500) ─────────
+
+/** Cleaned `addZone` / `updateZone` input; undefined = not sent. */
+interface TemplateZoneInput {
+  name?: string;
+  code?: string | null;
+  zoneType?: ZoneType;
+  isTypical?: boolean;
+  typicalCount?: number;
+  instanceCount?: number;
+  sortOrder?: number;
+  parentId?: number | null;
+  linkedTaskTemplateId?: number | null;
+  referencedTemplateId?: number | null;
+}
+
+/** null / '' / 0 → null (the old `body.x || null`); else a positive integer or a 400. */
+function optionalIdOrThrow(raw: unknown, field: string, code: string): number | null {
+  if (raw === null || raw === undefined || raw === '' || raw === 0 || raw === '0') return null;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new BadRequestException({
+      code,
+      message: `${field} must be a positive integer.`,
+      details: { field, value: raw },
+    });
+  }
+  return n;
+}
+
+function positiveIntOrThrow(raw: unknown, field: string): number {
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new BadRequestException({
+      code: 'TEMPLATE_ZONE_COUNT_INVALID',
+      message: `${field} must be a whole number of at least 1.`,
+      details: { field, value: raw },
+    });
+  }
+  return n;
+}
+
+/**
+ * Last line of defence for a template-zone write: a Prisma error that a
+ * check above did not catch is still the caller's input, so it becomes
+ * a 4xx with a code, never an "Unhandled error" 500. Anything else is
+ * rethrown untouched.
+ */
+export function mapTemplateZoneWriteError(err: unknown): unknown {
+  if (err instanceof Prisma.PrismaClientValidationError) {
+    return new BadRequestException({
+      code: 'TEMPLATE_ZONE_INVALID',
+      message: 'The zone could not be saved: one of its values is not valid.',
+    });
+  }
+  if (err instanceof Prisma.PrismaClientKnownRequestError) {
+    if (err.code === 'P2003') {
+      return new BadRequestException({
+        code: 'TEMPLATE_ZONE_REFERENCE_INVALID',
+        message: 'The zone points at a parent or template that does not exist.',
+      });
+    }
+    if (err.code === 'P2000') {
+      return new BadRequestException({
+        code: 'TEMPLATE_ZONE_VALUE_TOO_LONG',
+        message: 'One of the zone values is too long.',
+      });
+    }
+    if (err.code === 'P2025') return new NotFoundException('Template zone not found');
+  }
+  return err;
+}
+
 @Injectable()
 export class TemplatesService {
   constructor(private prisma: PrismaService) {}
@@ -462,7 +537,7 @@ export class TemplatesService {
   private async assertPickableTemplate(templateId: number, field: string) {
     const tpl = await this.prisma.template.findFirst({
       where: { id: templateId, deletedAt: null },
-      select: { id: true, name: true, archivedAt: true },
+      select: { id: true, name: true, type: true, archivedAt: true },
     });
     if (!tpl) {
       throw new BadRequestException({
@@ -1509,40 +1584,221 @@ export class TemplatesService {
     return { predecessors, autoReorder };
   }
 
+  /**
+   * POST /templates/:id/zones.
+   *
+   * QA6 (2026-11-25) · `POST /templates/45/zones` answered 500 on 22.11
+   * (staging log: `Invalid value for argument zoneType. Expected
+   * ZoneType.`, body `{ name: "Basment", zoneType: "zone" }`). The Zone
+   * Template editor's "Add Zone (choose type)" form starts on the legacy
+   * code `'zone'` and the "Copy from Template" picker falls back to it;
+   * `template_zones.zone_type` only holds the `ZoneType` enum (site /
+   * building / level / wing), and the raw value went to Prisma, whose
+   * validation error is not an HttpException. Same hole §12 closed on
+   * `POST /zones`; the same normaliser is reused here (`zone` →
+   * `building`, `floor` → `level`, `area` → `site`, `section` → `wing`),
+   * so that request now succeeds as a Building zone. Every other bad
+   * input is a 4xx with a stable code before anything is written (see
+   * `validateTemplateZoneInput`), and a Prisma error that still slips
+   * through is mapped to a 400 / 404 instead of a 500.
+   */
   async addZone(templateId: number, body: any) {
     await this.findOne(templateId); // verify template exists
-    // PR-053 — a new reference must point at an active template.
-    if (body?.referencedTemplateId) {
-      await this.assertPickableTemplate(Number(body.referencedTemplateId), 'referencedTemplateId');
-    }
-    if (body?.linkedTaskTemplateId) {
-      await this.assertPickableTemplate(Number(body.linkedTaskTemplateId), 'linkedTaskTemplateId');
-    }
+    const input = await this.validateTemplateZoneInput(templateId, body ?? {}, { mode: 'create' });
     const maxOrder = await this.prisma.templateZone.aggregate({
-      where: { templateId, parentId: body.parentId || null },
+      where: { templateId, parentId: input.parentId ?? null },
       _max: { sortOrder: true },
     });
-    return this.prisma.templateZone.create({
-      data: {
-        templateId,
-        parentId: body.parentId || null,
-        zoneType: body.zoneType || 'building',
-        name: body.name,
-        code: body.code || null,
-        isTypical: body.isTypical || false,
-        typicalCount: body.typicalCount || 1,
-        // Composition multiplicity — clamp to >=1 so a malformed body can't
-        // mean "0 instances" (which would silently drop the zone at apply).
-        instanceCount: Math.max(1, Number(body.instanceCount) || 1),
-        sortOrder: body.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
-        linkedTaskTemplateId: body.linkedTaskTemplateId || null,
-        referencedTemplateId: body.referencedTemplateId || null,
-      },
-      include: {
-        linkedTaskTemplate: { select: { id: true, name: true, code: true } },
-        referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
-      },
-    });
+    try {
+      return await this.prisma.templateZone.create({
+        data: {
+          templateId,
+          parentId: input.parentId ?? null,
+          zoneType: input.zoneType ?? 'building',
+          name: input.name!,
+          code: input.code ?? null,
+          isTypical: input.isTypical ?? false,
+          typicalCount: input.typicalCount ?? 1,
+          // Composition multiplicity — clamp to >=1 so a malformed body can't
+          // mean "0 instances" (which would silently drop the zone at apply).
+          instanceCount: input.instanceCount ?? 1,
+          sortOrder: input.sortOrder ?? (maxOrder._max.sortOrder ?? 0) + 1,
+          linkedTaskTemplateId: input.linkedTaskTemplateId ?? null,
+          referencedTemplateId: input.referencedTemplateId ?? null,
+        },
+        include: {
+          linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+          referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
+        },
+      });
+    } catch (err) {
+      throw mapTemplateZoneWriteError(err);
+    }
+  }
+
+  /**
+   * QA6 · input checks shared by `addZone` (create) and `updateZone`
+   * (patch: only the fields that were sent). Throws a 4xx with an
+   * UPPER_SNAKE code; returns the cleaned values.
+   */
+  private async validateTemplateZoneInput(
+    templateId: number,
+    body: Record<string, any>,
+    opts: {
+      mode: 'create' | 'update';
+      current?: { referencedTemplateId: number | null; linkedTaskTemplateId: number | null };
+    },
+  ): Promise<TemplateZoneInput> {
+    const out: TemplateZoneInput = {};
+    const has = (k: string) => opts.mode === 'create' || body[k] !== undefined;
+
+    if (has('name')) {
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      if (!name) {
+        throw new BadRequestException({ code: 'TEMPLATE_ZONE_NAME_REQUIRED', message: 'Zone name is required.' });
+      }
+      if (name.length > 255) {
+        throw new BadRequestException({
+          code: 'TEMPLATE_ZONE_NAME_TOO_LONG',
+          message: 'Zone name can be up to 255 characters.',
+        });
+      }
+      out.name = name;
+    }
+
+    if (body.code !== undefined) {
+      const code = body.code == null ? '' : String(body.code).trim();
+      if (code.length > 50) {
+        throw new BadRequestException({
+          code: 'TEMPLATE_ZONE_CODE_TOO_LONG',
+          message: 'Zone code can be up to 50 characters.',
+        });
+      }
+      out.code = code || null;
+    }
+
+    if (body.zoneType !== undefined) {
+      const zt = normalizeZoneType(body.zoneType);
+      if (zt !== undefined) {
+        if (typeof zt !== 'string' || !(ZONE_TYPE_VALUES as string[]).includes(zt)) {
+          throw new BadRequestException({
+            code: 'TEMPLATE_ZONE_TYPE_INVALID',
+            message: `zoneType must be one of: ${ZONE_TYPE_VALUES.join(', ')}.`,
+            details: { zoneType: body.zoneType, allowed: ZONE_TYPE_VALUES },
+          });
+        }
+        out.zoneType = zt as ZoneType;
+      }
+    }
+
+    if (body.isTypical !== undefined) out.isTypical = body.isTypical === true || body.isTypical === 'true';
+
+    // 0 / '' / null keep the old `|| 1` meaning: the default.
+    if (body.typicalCount !== undefined && body.typicalCount !== null && body.typicalCount !== '' && body.typicalCount !== 0) {
+      out.typicalCount = positiveIntOrThrow(body.typicalCount, 'typicalCount');
+    }
+    if (body.instanceCount !== undefined) {
+      out.instanceCount = Math.max(1, Math.floor(Number(body.instanceCount)) || 1);
+    }
+    if (body.sortOrder !== undefined && body.sortOrder !== null && body.sortOrder !== '') {
+      const n = Number(body.sortOrder);
+      if (!Number.isInteger(n)) {
+        throw new BadRequestException({
+          code: 'TEMPLATE_ZONE_SORT_ORDER_INVALID',
+          message: 'sortOrder must be a whole number.',
+        });
+      }
+      out.sortOrder = n;
+    }
+
+    // Parent: a zone of THIS template (create only; a zone is not moved
+    // through PATCH). A missing parent used to be a foreign-key 500, a
+    // parent of another template was silently accepted.
+    if (opts.mode === 'create') {
+      const parentId = optionalIdOrThrow(body.parentId, 'parentId', 'TEMPLATE_ZONE_PARENT_INVALID');
+      if (parentId != null) {
+        const parent = await this.prisma.templateZone.findUnique({
+          where: { id: parentId },
+          select: { id: true, templateId: true },
+        });
+        if (!parent || parent.templateId !== templateId) {
+          throw new BadRequestException({
+            code: 'TEMPLATE_ZONE_PARENT_MISMATCH',
+            message: `Parent zone #${parentId} does not belong to template #${templateId}.`,
+            details: { parentId, templateId },
+          });
+        }
+      }
+      out.parentId = parentId;
+    }
+
+    // References. `null` on PATCH clears one; a new id must be an active
+    // template (PR-053), a zone reference must not point back at this
+    // template (directly or through the templates it references), and a
+    // deliverable slot must be a Deliverable (task_list) template.
+    if (body.referencedTemplateId !== undefined) {
+      const refId = optionalIdOrThrow(body.referencedTemplateId, 'referencedTemplateId', 'TEMPLATE_ZONE_REFERENCE_INVALID');
+      if (refId != null && refId !== opts.current?.referencedTemplateId) {
+        if (refId === templateId) {
+          throw new BadRequestException({
+            code: 'TEMPLATE_ZONE_SELF_REFERENCE',
+            message: 'A template cannot reference itself.',
+          });
+        }
+        await this.assertPickableTemplate(refId, 'referencedTemplateId');
+        if (await this.referencesTemplate(refId, templateId)) {
+          throw new BadRequestException({
+            code: 'TEMPLATE_ZONE_REFERENCE_CYCLE',
+            message: `Template #${refId} already references this template, directly or through another template.`,
+            details: { referencedTemplateId: refId, templateId },
+          });
+        }
+      }
+      out.referencedTemplateId = refId;
+    }
+    if (body.linkedTaskTemplateId !== undefined) {
+      const linkedId = optionalIdOrThrow(body.linkedTaskTemplateId, 'linkedTaskTemplateId', 'TEMPLATE_ZONE_LINK_INVALID');
+      if (linkedId != null && linkedId !== opts.current?.linkedTaskTemplateId) {
+        const linked = await this.assertPickableTemplate(linkedId, 'linkedTaskTemplateId');
+        if (linked.type !== 'task_list') {
+          throw new BadRequestException({
+            code: 'TEMPLATE_ZONE_LINK_WRONG_TYPE',
+            message: `Template #${linkedId} is not a Deliverable template.`,
+            details: { linkedTaskTemplateId: linkedId, type: linked.type },
+          });
+        }
+      }
+      out.linkedTaskTemplateId = linkedId;
+    }
+    return out;
+  }
+
+  /**
+   * QA6 · true when `fromTemplateId` reaches `targetId` through zone
+   * references (`TemplateZone.referencedTemplateId`), i.e. adding
+   * "target → from" would close a cycle. Breadth-first, one query per
+   * level, bounded.
+   */
+  private async referencesTemplate(fromTemplateId: number, targetId: number): Promise<boolean> {
+    const seen = new Set<number>([fromTemplateId]);
+    let frontier = [fromTemplateId];
+    for (let level = 0; level < 50 && frontier.length > 0; level++) {
+      const rows = await this.prisma.templateZone.findMany({
+        where: { templateId: { in: frontier }, referencedTemplateId: { not: null } },
+        select: { referencedTemplateId: true },
+      });
+      const next: number[] = [];
+      for (const r of rows) {
+        const id = r.referencedTemplateId!;
+        if (id === targetId) return true;
+        if (!seen.has(id)) {
+          seen.add(id);
+          next.push(id);
+        }
+      }
+      frontier = next;
+    }
+    return false;
   }
 
   // ─── P1 · Reference model (2026-11-10) ──────────────────────────────
@@ -1689,49 +1945,48 @@ export class TemplatesService {
   }
 
   async updateZone(zoneId: number, body: any) {
-    // Only set instanceCount if the caller explicitly sent it; otherwise
-    // leave whatever's in the DB. Clamp to >=1 to avoid 0 / negative values.
-    const instanceCount = body.instanceCount === undefined
-      ? undefined
-      : Math.max(1, Number(body.instanceCount) || 1);
-    // PR-053 — re-pointing a zone at another template: the new target
-    // must be active. Keeping (re-sending) the current id is always OK.
-    if (body?.referencedTemplateId || body?.linkedTaskTemplateId) {
-      const current = await this.prisma.templateZone.findUnique({
-        where: { id: zoneId },
-        select: { referencedTemplateId: true, linkedTaskTemplateId: true },
-      });
-      if (!current) throw new NotFoundException('Template zone not found');
-      const ref = Number(body.referencedTemplateId);
-      if (body.referencedTemplateId && ref !== current.referencedTemplateId) {
-        await this.assertPickableTemplate(ref, 'referencedTemplateId');
-      }
-      const linked = Number(body.linkedTaskTemplateId);
-      if (body.linkedTaskTemplateId && linked !== current.linkedTaskTemplateId) {
-        await this.assertPickableTemplate(linked, 'linkedTaskTemplateId');
-      }
-    }
-    return this.prisma.templateZone.update({
+    // QA6 · a missing zone was a Prisma P2025 500; an unknown zoneType
+    // (the inline type select can carry the legacy 'zone') was a
+    // validation 500. Same checks as `addZone`, applied to the fields
+    // that were sent; undefined leaves a field alone, as before.
+    const current = await this.prisma.templateZone.findUnique({
       where: { id: zoneId },
-      data: {
-        name: body.name,
-        code: body.code,
-        zoneType: body.zoneType,
-        isTypical: body.isTypical,
-        typicalCount: body.typicalCount,
-        instanceCount,
-        sortOrder: body.sortOrder,
-        linkedTaskTemplateId: body.linkedTaskTemplateId,
-        referencedTemplateId: body.referencedTemplateId,
-      },
-      include: {
-        linkedTaskTemplate: { select: { id: true, name: true, code: true } },
-        referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
-      },
+      select: { id: true, templateId: true, referencedTemplateId: true, linkedTaskTemplateId: true },
     });
+    if (!current) throw new NotFoundException('Template zone not found');
+    const input = await this.validateTemplateZoneInput(current.templateId, body ?? {}, {
+      mode: 'update',
+      current,
+    });
+    try {
+      return await this.prisma.templateZone.update({
+        where: { id: zoneId },
+        data: {
+          name: input.name,
+          code: input.code,
+          zoneType: input.zoneType,
+          isTypical: input.isTypical,
+          typicalCount: input.typicalCount,
+          // Only set when the caller sent it; clamped to >= 1.
+          instanceCount: input.instanceCount,
+          sortOrder: input.sortOrder,
+          linkedTaskTemplateId: input.linkedTaskTemplateId,
+          referencedTemplateId: input.referencedTemplateId,
+        },
+        include: {
+          linkedTaskTemplate: { select: { id: true, name: true, code: true } },
+          referencedTemplate: { select: { id: true, name: true, code: true, type: true } },
+        },
+      });
+    } catch (err) {
+      throw mapTemplateZoneWriteError(err);
+    }
   }
 
   async removeZone(zoneId: number) {
+    // QA6 · a missing zone was a Prisma P2025 500.
+    const zone = await this.prisma.templateZone.findUnique({ where: { id: zoneId }, select: { id: true } });
+    if (!zone) throw new NotFoundException('Template zone not found');
     // Cascade will delete children and templateZoneTasks
     await this.prisma.templateZone.delete({ where: { id: zoneId } });
     return { message: 'Template zone deleted' };
