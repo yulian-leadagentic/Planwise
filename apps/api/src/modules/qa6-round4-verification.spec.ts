@@ -36,6 +36,8 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { PermissionDeniedException } from '../common/errors/permission-denied';
 import { TasksController } from './tasks/tasks.controller';
 import { TasksService } from './tasks/tasks.service';
+import { TaskAssigneePolicyService } from './tasks/task-assignee-policy.service';
+import { ProjectPartnerRolesService } from './project-partner-roles/project-partner-roles.service';
 import { MessagesController } from './messages/messages.controller';
 import { MessagesService } from './messages/messages.service';
 import { MessageAccessService } from './messages/message-access.service';
@@ -217,7 +219,13 @@ function world() {
     Object.assign(row, dto);
     return { ...row } as any;
   });
-  const tasks = new TasksController(tasksService, access, transitions, { } as any);
+  const assigneePolicy = new TaskAssigneePolicyService(
+    prisma,
+    access,
+    new ProjectPartnerRolesService(prisma, activityLog),
+    { logProjectMemberAdded: jest.fn() } as any,
+  );
+  const tasks = new TasksController(tasksService, access, transitions, {} as any, assigneePolicy);
   const msgAccess = new MessageAccessService(prisma, access);
   const messages = new MessagesController(new MessagesService(prisma, { emit: jest.fn() } as any, msgAccess));
   return { db, prisma, access, tasks, tasksService, messages };

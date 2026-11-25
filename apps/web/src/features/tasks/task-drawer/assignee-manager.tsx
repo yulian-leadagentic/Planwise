@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { X, UserPlus, Search } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { cn } from '@/lib/utils';
 import { usersApi } from '@/api/users.api';
 import { notify } from '@/lib/notify';
 import { tasksApi } from '@/api/tasks.api';
 import { projectsApi, type AssigneeCandidate } from '@/api/projects.api';
 import { queryKeys } from '@/lib/query-keys';
+import { buildAssigneeOptions, employeeOptions, matchesSearch, type AssigneeOption } from '../assignee-picker/assignee-options';
+import { useAssigneeScope, afterAssigned, AllEmployeesToggle, JoinsTeamNote } from '../assignee-picker/use-assignee-scope';
 
 /**
  * Assignee picker inside the task drawer.
@@ -20,6 +21,11 @@ import { queryKeys } from '@/lib/query-keys';
  * task-tree picker reads, so both surfaces show the same set (Team
  * tab included). Falls back to the org-wide /users list when the task
  * has no projectId (personal tasks — see task-details-tab guard).
+ *
+ * QA6 package 1: the list is the project's Team, employees only;
+ * external contacts never appear. A leader / Admin can widen it to every
+ * employee; a non-Team pick is marked "יתווסף לצוות הפרויקט" and the
+ * server adds him to the Team as a participant before assigning.
  */
 export function AssigneeManager({
   taskId,
@@ -56,11 +62,15 @@ export function AssigneeManager({
     enabled: showPicker && !projectId,
   });
 
+  // QA6 — leader / Admin may widen the list to every employee.
+  const scope = useAssigneeScope(projectId, showPicker);
+
   const addMutation = useMutation({
-    mutationFn: (userId: number) => tasksApi.addAssignee(taskId, { userId }),
-    onSuccess: () => {
+    mutationFn: (option: AssigneeOption) => tasksApi.addAssignee(taskId, { userId: option.userId }),
+    onSuccess: (result, option) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
       queryClient.invalidateQueries({ queryKey: queryKeys.executionBoard.all });
+      afterAssigned(queryClient, projectId, [result], option.displayName);
       // Auto-close the picker after 3s — the new assignee chip animates
       // in immediately so the user sees the change, but the picker stays
       // open briefly in case they want to add multiple people in a row.
@@ -79,60 +89,23 @@ export function AssigneeManager({
     onError: (err: any) => notify.apiError(err, 'Failed to remove'),
   });
 
-  const assignedIds = new Set((assignees ?? []).map((a: any) => a.user?.id));
+  const assignedIds = new Set<number>(
+    (assignees ?? []).map((a: any) => a.user?.id).filter((id: unknown): id is number => typeof id === 'number'),
+  );
 
-  // Normalize both sources (candidate list vs org-wide users) into one
-  // display shape so the render below stays a single branch. Rows carry
-  // an optional `role`/`discipline` subtitle and a `canAssign` flag —
-  // external contacts appear disabled with a tooltip, matching the
-  // task-tree picker in planning-modal.
-  type PickerRow = {
-    key: string;
-    userId: number | null;
-    firstName: string | null;
-    lastName: string | null;
-    displayName: string;
-    email: string | null;
-    role: string | null;
-    discipline: string | null;
-    canAssign: boolean;
-  };
-  const rows: PickerRow[] = projectId
-    ? (candidates as AssigneeCandidate[]).map((m) => ({
-        key: `${m.partyId ?? 'u'}:${m.userId ?? 'x'}`,
-        userId: m.userId,
-        firstName: m.firstName,
-        lastName: m.lastName,
-        displayName: m.displayName,
-        email: m.email,
-        role: m.role,
-        discipline: m.discipline,
-        canAssign: m.canAssign,
-      }))
-    : (allUsers as any[]).map((u: any) => ({
-        key: `u:${u.id}`,
-        userId: u.id,
-        firstName: u.firstName ?? null,
-        lastName: u.lastName ?? null,
-        displayName: `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || u.email || `User #${u.id}`,
-        email: u.email ?? null,
-        role: null,
-        // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit name
-        // only; the free-text `department` field is gone.
-        discipline: u.position ?? u.orgUnit?.name ?? null,
-        canAssign: true,
-      }));
-
-  const filtered = rows.filter((r) => {
-    if (r.userId != null && assignedIds.has(r.userId)) return false;
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    const name = `${r.firstName ?? ''} ${r.lastName ?? ''} ${r.displayName}`.toLowerCase();
-    return name.includes(q)
-      || (r.email?.toLowerCase().includes(q) ?? false)
-      || (r.role?.toLowerCase().includes(q) ?? false)
-      || (r.discipline?.toLowerCase().includes(q) ?? false);
-  });
+  // Team (employees only) by default; every employee for a leader / Admin
+  // who turned the toggle on. A personal task has no Team: every
+  // employee, never an external contact.
+  const rowsBeforeSearch: AssigneeOption[] = projectId
+    ? buildAssigneeOptions({
+        candidates: candidates as AssigneeCandidate[],
+        allEmployees: scope.allEmployees,
+        canManage: scope.canManage,
+        showAllEmployees: scope.showAllEmployees,
+        assignedUserIds: assignedIds,
+      })
+    : employeeOptions(allUsers as any[], true).filter((o) => !assignedIds.has(o.userId));
+  const filtered = rowsBeforeSearch.filter((o) => matchesSearch(o, search));
 
   return (
     <div>
@@ -164,59 +137,46 @@ export function AssigneeManager({
           <div className="max-h-40 overflow-y-auto py-1">
             {filtered.length === 0 ? (
               <p className="px-3 py-2 text-[11px] text-slate-400 dark:text-slate-500">
-                {projectId && rows.length === 0
-                  ? 'No project members yet'
+                {projectId && rowsBeforeSearch.length === 0 && !search.trim()
+                  ? 'No one on the project team to assign'
                   : 'No users found'}
               </p>
             ) : (
-              filtered.slice(0, 10).map((r) => {
-                const disabled = !r.canAssign || r.userId == null;
+              filtered.slice(0, scope.showAllEmployees ? 30 : 10).map((r) => {
                 const name = `${r.firstName ?? ''} ${r.lastName ?? ''}`.trim() || r.displayName;
                 const initials = ((r.firstName?.[0] ?? '') + (r.lastName?.[0] ?? '')) || name[0] || '?';
-                const title = disabled
-                  ? 'External contact — no user account, cannot be task-assigned. Ask an admin to invite them.'
-                  : (r.role || r.discipline || name);
                 return (
                   <button
                     key={r.key}
-                    disabled={disabled}
-                    onClick={() => { if (!disabled && r.userId != null) addMutation.mutate(r.userId); }}
-                    title={title}
-                    className={cn(
-                      'flex w-full items-start gap-2 px-3 py-1.5 text-[12px]',
-                      disabled
-                        ? 'opacity-60 cursor-not-allowed'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
-                    )}
+                    disabled={addMutation.isPending}
+                    onClick={() => addMutation.mutate(r)}
+                    title={r.onTeam ? (r.role || r.discipline || name) : `${name} will be added to the project team`}
+                    className="flex w-full items-start gap-2 px-3 py-1.5 text-[12px] hover:bg-slate-50 dark:hover:bg-slate-800/50"
                   >
-                    <div className={cn(
-                      'mt-0.5 w-5 h-5 rounded-full text-[8px] font-semibold flex items-center justify-center shrink-0',
-                      disabled
-                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'
-                        : 'bg-blue-100 text-blue-600',
-                    )}>
+                    <div className="mt-0.5 w-5 h-5 rounded-full text-[8px] font-semibold flex items-center justify-center shrink-0 bg-blue-100 text-blue-600">
                       {initials}
                     </div>
                     <span className="flex-1 min-w-0 text-left">
-                      <span className="flex items-center gap-1.5">
-                        <span className="truncate text-slate-700 dark:text-slate-200">{name}</span>
-                        {disabled && (
-                          <span className="rounded bg-amber-100 text-amber-700 text-[9px] font-semibold px-1 py-[1px] shrink-0">
-                            External
-                          </span>
-                        )}
-                      </span>
+                      <span className="block truncate text-slate-700 dark:text-slate-200">{name}</span>
                       {(r.role || r.discipline) && (
                         <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">
                           {[r.role, r.discipline].filter(Boolean).join(' · ')}
                         </span>
                       )}
+                      {!r.onTeam && <JoinsTeamNote />}
                     </span>
                   </button>
                 );
               })
             )}
           </div>
+          {projectId && scope.canManage && (
+            <AllEmployeesToggle
+              checked={scope.showAllEmployees}
+              onChange={scope.setShowAllEmployees}
+              loading={scope.loadingEmployees}
+            />
+          )}
         </div>
       )}
 

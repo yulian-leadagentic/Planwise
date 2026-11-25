@@ -99,20 +99,29 @@ describe('Projects controller — access on project reads (round 4)', () => {
     expect(projectsService[method]).not.toHaveBeenCalled();
   });
 
-  it('a member reads the project', async () => {
+  it('a member reads the project; canManage is false for him', async () => {
     const { ctrl, projectsService } = makeController();
-    await expect(ctrl.findOne(MEMBER, 42)).resolves.toEqual({ id: 42 });
+    await expect(ctrl.findOne(MEMBER, 42)).resolves.toEqual({ id: 42, canManage: false });
     expect(projectsService.findOne).toHaveBeenCalledWith(42, MEMBER);
   });
 
-  it('a task assignee reads the whole project (not only his task)', async () => {
+  it('QA6 — canManage follows assertProjectManage: the leader and an Admin', async () => {
+    const { ctrl } = makeController();
+    await expect(ctrl.findOne(LEADER, 42)).resolves.toEqual({ id: 42, canManage: true });
+    await expect(ctrl.findOne(ADMIN, 42)).resolves.toEqual({ id: 42, canManage: true });
+  });
+
+  it('QA6 — a task assignment alone no longer opens the project (rule 5 removed)', async () => {
     const { ctrl, projectsService } = makeController();
-    await ctrl.findOne(ASSIGNEE, 42);
-    await ctrl.getMembers(ASSIGNEE, 42);
-    await ctrl.getActivityLogs(ASSIGNEE, 42);
-    expect(projectsService.findOne).toHaveBeenCalled();
-    expect(projectsService.getMembers).toHaveBeenCalled();
-    expect(projectsService.getActivityLogs).toHaveBeenCalled();
+    for (const call of [
+      () => ctrl.findOne(ASSIGNEE, 42),
+      () => ctrl.getMembers(ASSIGNEE, 42),
+      () => ctrl.getActivityLogs(ASSIGNEE, 42),
+    ]) {
+      const err = await call().catch((e: any) => e);
+      expect(reasonOf(err)).toBe('NOT_PROJECT_MEMBER');
+    }
+    expect(projectsService.findOne).not.toHaveBeenCalled();
   });
 
   it('a partner-role holder reads the project', async () => {

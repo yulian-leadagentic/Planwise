@@ -15,6 +15,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { TasksService } from './tasks.service';
 import { TaskChecklistService } from './task-checklist.service';
+import { TaskAssigneePolicyService } from './task-assignee-policy.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard, isAdminUser, userHasModulePermission } from '../../common/guards/roles.guard';
 import { PermissionDeniedException } from '../../common/errors/permission-denied';
@@ -56,6 +57,7 @@ export class TasksController {
     private readonly access: ProjectAccessService,
     private readonly transitions: StageTransitionService,
     private readonly checklist: TaskChecklistService,
+    private readonly assigneePolicy: TaskAssigneePolicyService,
   ) {}
 
   /**
@@ -289,11 +291,18 @@ export class TasksController {
     @Body() body: { userId: number; role?: string; hourlyRate?: number },
     @CurrentUser() user: any,
   ) {
-    await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
+    const projectId = await this.access.assertTaskAccess(user.id, taskId, isAdminUser(user));
     // Permissions round 2 (B-13) — the untyped body can carry the legacy
     // per-assignment `hourlyRate`; setting one needs finance:write.
     await assertFinanceFieldWrites(user, body, ['hourlyRate'], null);
-    return this.tasksService.addAssignee(taskId, body, user?.id);
+    // QA6 — an assignment never brings someone into a project: the target
+    // must be an employee on the Team, or the leader / an Admin adds him
+    // to the Team (participant) first. `addedToTeam` tells the web.
+    const userId = Number(body?.userId);
+    if (!Number.isInteger(userId) || userId <= 0) throw new BadRequestException('userId is required.');
+    const { addedToTeam } = await this.assigneePolicy.ensureAssignable(user, projectId, userId, taskId);
+    const result = await this.tasksService.addAssignee(taskId, { ...body, userId }, user?.id);
+    return { ...result, addedToTeam };
   }
 
   @Delete(':id/assignees/:userId')

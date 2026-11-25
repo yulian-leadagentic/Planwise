@@ -12,6 +12,8 @@ import { BusinessPartnersModule } from '../business-partners/business-partners.m
 import { UsersModule } from '../users/users.module';
 import { ProjectDeliverablesModule } from '../project-deliverables/project-deliverables.module';
 import { P1CopiesToRefsService } from './p1-copies-to-refs.service';
+import { Qa6AssigneesToTeamService } from './qa6-assignees-to-team.service';
+import { ProjectPartnerRolesModule } from '../project-partner-roles/project-partner-roles.module';
 
 @Module({
   // People UX M6 — ReportsController re-uses BusinessPartnersService for
@@ -27,7 +29,10 @@ import { P1CopiesToRefsService } from './p1-copies-to-refs.service';
   // materialize-project-deliverables endpoint delegates to
   // `ProjectDeliverablesService.materializeFromTasks` so the admin
   // backfill and the apply-template path can no longer drift.
-  imports: [AuthorizationModule, BusinessPartnersModule, UsersModule, ProjectDeliverablesModule],
+  //
+  // QA6 (2026-11-25) — ProjectPartnerRolesModule for the
+  // qa6-assignees-to-team backfill (upsertProjectMemberRelationship).
+  imports: [AuthorizationModule, BusinessPartnersModule, UsersModule, ProjectDeliverablesModule, ProjectPartnerRolesModule],
   controllers: [
     RolesController,
     ActivityLogController,
@@ -47,6 +52,6 @@ import { P1CopiesToRefsService } from './p1-copies-to-refs.service';
   // inline in BackfillsController) so the plan is unit-tested and the
   // dry-run script can share its pure functions. PrismaService comes
   // from the global PrismaModule, like every controller above.
-  providers: [P1CopiesToRefsService],
+  providers: [P1CopiesToRefsService, Qa6AssigneesToTeamService],
 })
 export class AdminModule {}

@@ -33,7 +33,7 @@ function notProjectLeader(): PermissionDeniedException {
 }
 
 /** An active partner-role row: the same window the Team tab shows. */
-function activePartnerRoleWhere(now: Date): Prisma.ProjectPartnerRoleWhereInput {
+export function activePartnerRoleWhere(now: Date): Prisma.ProjectPartnerRoleWhereInput {
   return { status: 'active', validFrom: { lte: now }, validTo: { gt: now } };
 }
 
@@ -58,19 +58,26 @@ function activePartnerRoleWhere(now: Date): Prisma.ProjectPartnerRoleWhereInput 
  * hierarchy-aware branch below. Behaviour there is bit-for-bit
  * identical to the pre-feature access checks.
  *
- * The access rule (permissions round 4, 2026-11-23). A user has access
- * to a project when any of these holds:
+ * The access rule (permissions round 4, 2026-11-23; QA6 2026-11-25).
+ * A user has access to a project when any of these holds:
  *   1. Admin (`isAdminUser`).
  *   2. Leader or creator.
  *   3. A ProjectMember row.
  *   4. An active ProjectPartnerRole whose party is the user's own
  *      BusinessPartner (the Team tab).
- *   5. Assignee of any live task of the project (gives the whole project).
+ *   5. REMOVED in QA6 (was "assignee of any live task"). Assigning a
+ *      task is no longer a way into a project: an assignee must already
+ *      be on the Team (2–4), and only the leader or an Admin can add a
+ *      new person, as a `participant` role, while assigning him
+ *      (TaskAssigneePolicyService). The `qa6-assignees-to-team` backfill
+ *      gave every earlier assignee that role. Numbers 6 and 7 are kept
+ *      so existing references stay valid.
  *   6. Home OrgUnit equals the project's OrgUnit (exact match).
- *   7. Manager, at any depth, of a user admitted by 2–5.
+ *   7. Manager, at any depth, of a user admitted by 2–4.
+ * Rules 2–4 together are "on the Team" (`isOnProjectTeam`).
  * Every admitted user has full read and write. Managing the project
  * (team, leader, settings, close, delete) is leader-or-Admin:
- * `assertProjectManage`.
+ * `assertProjectManage` / `canManageProject`.
  */
 @Injectable()
 export class ProjectAccessService {
@@ -145,7 +152,7 @@ export class ProjectAccessService {
 
     if (project.leaderId === userId || project.createdBy === userId) return;
 
-    // Rules 3–5: member row, partner role, task assignee.
+    // Rules 3–4: member row, partner role.
     if (await this.anyUserOnProject([userId], projectId)) return;
 
     // Rule 6: exact org-unit match.
@@ -158,7 +165,7 @@ export class ProjectAccessService {
       if (caller?.orgUnitId === projectOrgUnitId) return;
     }
 
-    // Rule 7: a manager of someone admitted by rules 2–5.
+    // Rule 7: a manager of someone admitted by rules 2–4.
     const subs = await this.getSubordinateUserIds(userId);
     if (subs.length > 0) {
       if (project.leaderId != null && subs.includes(project.leaderId)) return;
@@ -170,9 +177,9 @@ export class ProjectAccessService {
   }
 
   /**
-   * Rules 3–5 for a set of users: any of them has a ProjectMember row,
-   * an active partner role through his own BusinessPartner, or an
-   * assignment on a live task of the project.
+   * Rules 3–4 for a set of users: any of them has a ProjectMember row or
+   * an active partner role through his own BusinessPartner. (A task
+   * assignment no longer counts: QA6 removed rule 5.)
    */
   private async anyUserOnProject(userIds: number[], projectId: number): Promise<boolean> {
     if (userIds.length === 0) return false;
@@ -191,22 +198,32 @@ export class ProjectAccessService {
       },
       select: { id: true },
     });
-    if (partnerRole) return true;
-
-    const assignment = await this.prisma.taskAssignee.findFirst({
-      where: { userId: { in: userIds }, deletedAt: null, task: { projectId, deletedAt: null } },
-      select: { id: true },
-    });
-    return assignment != null;
+    return partnerRole != null;
   }
 
   /**
-   * Project ids where any of `userIds` is leader, creator, member,
-   * active partner-role holder or assignee of a live task (rules 2–5).
+   * QA6 — is the user on the project's Team: leader, creator, a
+   * ProjectMember row or an active partner role (rules 2–4)? Org unit
+   * (6) and manager chain (7) give access but do NOT put a person on
+   * the Team. A missing or deleted project is `false`.
+   */
+  async isOnProjectTeam(userId: number, projectId: number): Promise<boolean> {
+    const project = await this.prisma.project.findFirst({
+      where: { id: projectId, deletedAt: null },
+      select: { leaderId: true, createdBy: true },
+    });
+    if (!project) return false;
+    if (project.leaderId === userId || project.createdBy === userId) return true;
+    return this.anyUserOnProject([userId], projectId);
+  }
+
+  /**
+   * Project ids where any of `userIds` is leader, creator, member or
+   * active partner-role holder (rules 2–4).
    */
   private async projectIdsOfUsers(userIds: number[]): Promise<number[]> {
     if (userIds.length === 0) return [];
-    const [memberships, led, partnerRoles, assignedTasks] = await Promise.all([
+    const [memberships, led, partnerRoles] = await Promise.all([
       this.prisma.projectMember.findMany({
         where: { userId: { in: userIds } },
         select: { projectId: true },
@@ -222,21 +239,11 @@ export class ProjectAccessService {
         where: { ...activePartnerRoleWhere(new Date()), party: { user: { id: { in: userIds } } } },
         select: { projectId: true },
       }),
-      this.prisma.task.findMany({
-        where: {
-          deletedAt: null,
-          projectId: { not: null },
-          assignees: { some: { userId: { in: userIds }, deletedAt: null } },
-        },
-        select: { projectId: true },
-        distinct: ['projectId'],
-      }),
     ]);
     const ids = new Set<number>();
     for (const m of memberships ?? []) ids.add(m.projectId);
     for (const p of led ?? []) ids.add(p.id);
     for (const r of partnerRoles ?? []) ids.add(r.projectId);
-    for (const t of assignedTasks ?? []) if (t.projectId != null) ids.add(t.projectId);
     return [...ids];
   }
 
@@ -255,6 +262,21 @@ export class ProjectAccessService {
     if (!project) throw new NotFoundException('Project not found');
     if (user?.id != null && project.leaderId === user.id) return;
     throw notProjectLeader();
+  }
+
+  /**
+   * QA6 — `assertProjectManage` as a boolean, for payloads that tell the
+   * web whether to offer leader-only actions (GET /projects/:id
+   * `canManage`). A missing project is still a 404.
+   */
+  async canManageProject(user: { id: number } & Record<string, any>, projectId: number): Promise<boolean> {
+    try {
+      await this.assertProjectManage(user, projectId);
+      return true;
+    } catch (err) {
+      if (err instanceof PermissionDeniedException) return false;
+      throw err;
+    }
   }
 
   /**
@@ -330,24 +352,32 @@ export class ProjectAccessService {
 
   /**
    * Returns the set of project IDs the user can access under the same
-   * rule as assertProjectAccess (rules 2–7). Admins get
+   * rule as assertProjectAccess (rules 2–4, 6, 7). Admins get
    * `{ all: true, projectIds: [] }` (callers treat that as "all").
    * Used for filtering list endpoints.
+   *
+   * `analysis.withoutRule6` is for the read-only QA6 package-1ב impact
+   * script (scripts/qa6-rule6-impact.ts) only: it answers "what would
+   * this user see without the home-OrgUnit rule". No request path
+   * passes it; rule 6 itself is unchanged.
    */
   async getAccessibleProjectIds(
     userId: number,
     isAdmin: boolean,
+    analysis?: { withoutRule6?: boolean },
   ): Promise<{ all: boolean; projectIds: number[] }> {
     if (this.adminBypass(isAdmin)) return { all: true, projectIds: [] };
 
-    // Rules 2–5 for the caller.
+    // Rules 2–4 for the caller.
     const ids = new Set<number>(await this.projectIdsOfUsers([userId]));
 
     // Rule 6: projects of the caller's home OrgUnit.
-    const caller = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { orgUnitId: true },
-    });
+    const caller = analysis?.withoutRule6
+      ? null
+      : await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { orgUnitId: true },
+        });
     if (caller?.orgUnitId) {
       const unitProjects = await this.prisma.project.findMany({
         where: { orgUnitId: caller.orgUnitId, deletedAt: null },
@@ -356,7 +386,7 @@ export class ProjectAccessService {
       for (const p of unitProjects) ids.add(p.id);
     }
 
-    // Rule 7: rules 2–5 for every subordinate in the managed subtree.
+    // Rule 7: rules 2–4 for every subordinate in the managed subtree.
     const subs = await this.getSubordinateUserIds(userId);
     for (const id of await this.projectIdsOfUsers(subs)) ids.add(id);
 

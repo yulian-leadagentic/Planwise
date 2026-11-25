@@ -32,6 +32,9 @@ export interface RelationDef {
 
 export type Relations = Record<string, Record<string, RelationDef>>;
 
+/** Column defaults the database would apply on INSERT, per model. */
+export type Defaults = Record<string, () => Row>;
+
 const OPS = new Set([
   'equals', 'in', 'notIn', 'not', 'lt', 'lte', 'gt', 'gte', 'contains', 'startsWith', 'endsWith', 'mode',
 ]);
@@ -78,7 +81,11 @@ export class MemoryDb {
   readonly tables: Record<string, Row[]> = {};
   private ids: Record<string, number> = {};
 
-  constructor(private relations: Relations, seed: Record<string, Row[]> = {}) {
+  constructor(
+    private relations: Relations,
+    seed: Record<string, Row[]> = {},
+    private defaults: Defaults = PLANWISE_DEFAULTS,
+  ) {
     for (const [model, rows] of Object.entries(seed)) {
       this.tables[model] = rows.map((r) => ({ ...r }));
       this.ids[model] = Math.max(0, ...this.tables[model].map((r) => Number(r.id) || 0));
@@ -206,7 +213,7 @@ export class MemoryDb {
   }
 
   insert(model: string, data: Row): Row {
-    const row: Row = {};
+    const row: Row = { ...(this.defaults[model]?.() ?? {}) };
     const nestedCreates: Array<[RelationDef, Row[]]> = [];
     for (const [k, v] of Object.entries(data)) {
       const def = this.rel(model, k);
@@ -358,6 +365,20 @@ function aggregateRows(rows: Row[], args: any): Row {
   }
   return out;
 }
+
+/** schema.prisma column defaults the specs depend on. */
+export const PLANWISE_DEFAULTS: Defaults = {
+  projectPartnerRole: () => ({
+    isPrimary: false,
+    status: 'active',
+    validFrom: new Date(),
+    validTo: new Date('9999-12-31T00:00:00Z'),
+  }),
+  user: () => ({ isActive: true, deletedAt: null }),
+  businessPartner: () => ({ deletedAt: null }),
+  task: () => ({ deletedAt: null, isArchived: false, isPersonal: false, requiresReview: true, status: 'not_started' }),
+  taskAssignee: () => ({ deletedAt: null }),
+};
 
 /**
  * Relations of the Planwise models the access / task / message specs

@@ -71,7 +71,7 @@ function makeController() {
   };
   const access = fakeAccess();
   const transitions: any = { assertTransition: jest.fn(async () => undefined) };
-  const ctrl = new TasksController(tasksService, access as any, transitions, checklist);
+  const ctrl = new TasksController(tasksService, access as any, transitions, checklist, {} as any);
   return { ctrl, tasksService, checklist, access, transitions };
 }
 

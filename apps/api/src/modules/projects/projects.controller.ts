@@ -93,7 +93,12 @@ export class ProjectsController {
   @ApiOperation({ summary: 'Get project by ID' })
   async findOne(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
     await this.access.assertProjectAccess(user.id, id, isAdminUser(user));
-    return this.projectsService.findOne(id, user);
+    const project = await this.projectsService.findOne(id, user);
+    // QA6 — whether the caller passes assertProjectManage (leader or
+    // Admin), so the web offers leader-only actions such as assigning a
+    // task to someone who is not on the Team yet.
+    const canManage = await this.access.canManageProject(user, id);
+    return { ...project, canManage };
   }
 
   // Budget + cost endpoints are gated behind the Finance module

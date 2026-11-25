@@ -15,6 +15,7 @@ import { LIVE_EDGE } from '../../common/task-dependency-filters';
 import { buildCostRateResolver, isRateableOutcome } from './cost-rate-resolver';
 import { buildEligibleWhere, extractEligibilityRule } from './role-eligibility';
 import { canSeeFinance, omitKeys, PROJECT_MONEY_KEYS } from '../../common/finance/finance-access';
+import { INTERNAL_EMPLOYEE_WHERE } from '../../common/people/internal-employee';
 import * as Sentry from '@sentry/node';
 
 /**
@@ -1823,6 +1824,9 @@ export class ProjectsService {
       avatarUrl: string | null;
       role: string | null;
       discipline: string | null;
+      /** QA6 — an internal employee (userType employee) with an active account. */
+      isEmployee: boolean;
+      /** QA6 — same as isEmployee: only employees can be task-assigned. */
       canAssign: boolean;
     }>
   > {
@@ -2125,6 +2129,22 @@ export class ProjectsService {
       }
     }
 
+    // QA6 — only an internal employee with an active account can be
+    // assigned (TaskAssigneePolicyService enforces the same on write).
+    // A role holder with a login of userType 'partner' is an external
+    // contact: `canAssign: false`, and the pickers hide him.
+    const candidateUserIds = [...byKey.values()].map((c) => c.userId).filter((id): id is number => id != null);
+    const employeeIds = new Set(
+      candidateUserIds.length === 0
+        ? []
+        : (
+            await this.prisma.user.findMany({
+              where: { id: { in: candidateUserIds }, ...INTERNAL_EMPLOYEE_WHERE },
+              select: { id: true },
+            })
+          ).map((u) => u.id),
+    );
+
     // Stable sort — assignable rows first (so the common case is at the
     // top of the picker), then alphabetically by display name so the
     // list reads naturally.
@@ -2141,7 +2161,8 @@ export class ProjectsService {
         discipline: c.titles.length > 0
           ? c.titles.join(' / ')
           : (c.position ?? c.department ?? null),
-        canAssign: c.userId != null,
+        isEmployee: c.userId != null && employeeIds.has(c.userId),
+        canAssign: c.userId != null && employeeIds.has(c.userId),
       }))
       .sort((a, b) => {
         if (a.canAssign !== b.canAssign) return a.canAssign ? -1 : 1;

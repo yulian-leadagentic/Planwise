@@ -506,8 +506,8 @@ describe('ProjectAccessService', () => {
   });
 
   // ─── Permissions round 4 (2026-11-23) ───────────────────────────
-  // Rule 4: partner-role holders. Rule 5: task assignees get the whole
-  // project. Rule 7 now covers subordinates admitted by rules 4–5.
+  // Rule 4: partner-role holders. (Rule 5, task assignees, was removed
+  // in QA6.) Rule 7 covers subordinates admitted by rules 2–4.
 
   describe('round 4 — partner-role holders (rule 4)', () => {
     beforeEach(() => {
@@ -551,51 +551,92 @@ describe('ProjectAccessService', () => {
     });
   });
 
-  describe('round 4 — task assignees get the whole project (rule 5)', () => {
+  // QA6 (2026-11-25): rule 5 ("any task assignee") is gone. Every
+  // assignee is on the Team (TaskAssigneePolicyService + the
+  // qa6-assignees-to-team backfill), so an assignment admits nobody.
+  describe('QA6 — a task assignment no longer admits (rule 5 removed)', () => {
     beforeEach(() => {
       prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88, orgUnitId: null });
       prisma.projectMember.findFirst.mockResolvedValue(null);
     });
 
-    it('allows a user assigned to any live task of the project', async () => {
-      prisma.taskAssignee.findFirst.mockResolvedValueOnce({ id: 11 });
-      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
-      const where = prisma.taskAssignee.findFirst.mock.calls[0][0].where;
-      expect(where).toEqual({ userId: { in: [1] }, deletedAt: null, task: { projectId: 42, deletedAt: null } });
+    it('an assignee who is not on the Team is refused, and assignments are not even read', async () => {
+      prisma.taskAssignee.findFirst.mockResolvedValue({ id: 11 });
+      const err = await service.assertProjectAccess(1, 42, false).catch((e) => e);
+      expect(err).toBeInstanceOf(PermissionDeniedException);
+      expect(err.getResponse()).toMatchObject({ details: { reason: 'NOT_PROJECT_MEMBER' } });
+      expect(prisma.taskAssignee.findFirst).not.toHaveBeenCalled();
     });
 
-    it('opens a task he is NOT assigned to, in a project where he has another task', async () => {
-      // Task 10 has no assignment for user 1 …
-      prisma.task.findFirst.mockResolvedValue({ projectId: 42, createdBy: 5, assignees: [] });
-      // … but he is assigned elsewhere in project 42.
-      prisma.taskAssignee.findFirst.mockResolvedValueOnce({ id: 12 });
-      await expect(service.assertTaskAccess(1, 10, false)).resolves.toBe(42);
+    it('a task of that project is refused too', async () => {
+      prisma.task.findFirst.mockResolvedValue({ projectId: 42, createdBy: 5, assignees: [{ id: 3 }] });
+      await expect(service.assertTaskAccess(1, 10, false)).rejects.toBeInstanceOf(PermissionDeniedException);
     });
 
-    it('lists the projects of every task he is assigned to', async () => {
+    it('the accessible list ignores assignments', async () => {
       prisma.projectMember.findMany.mockResolvedValue([{ projectId: 10 }]);
       prisma.project.findMany.mockResolvedValue([]);
-      prisma.task.findMany.mockResolvedValueOnce([{ projectId: 20 }, { projectId: 30 }]);
+      prisma.task.findMany.mockResolvedValue([{ projectId: 20 }]);
       const result = await service.getAccessibleProjectIds(1, false);
-      expect([...result.projectIds].sort((a, b) => a - b)).toEqual([10, 20, 30]);
-      const args = prisma.task.findMany.mock.calls[0][0];
-      expect(args.where.deletedAt).toBeNull();
-      expect(args.where.assignees).toEqual({ some: { userId: { in: [1] }, deletedAt: null } });
+      expect(result.projectIds).toEqual([10]);
+      expect(prisma.task.findMany).not.toHaveBeenCalled();
     });
 
-    it('a manager of an assignee gets in (rule 7)', async () => {
+    it('a manager of a mere assignee does not get in (rule 7 covers rules 2–4 only)', async () => {
       prisma.orgUnit.findMany
         .mockResolvedValueOnce([{ id: 1, path: '/1/' }])
         .mockResolvedValueOnce([{ id: 1 }]);
       prisma.user.findMany.mockResolvedValue([{ id: 5 }]);
-      prisma.taskAssignee.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 13 });
-      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
+      prisma.taskAssignee.findFirst.mockResolvedValue({ id: 13 });
+      await expect(service.assertProjectAccess(1, 42, false)).rejects.toBeInstanceOf(PermissionDeniedException);
     });
 
-    it('a stranger with no role, no assignment and no org link is refused', async () => {
-      const err = await service.assertProjectAccess(1, 42, false).catch((e) => e);
-      expect(err).toBeInstanceOf(PermissionDeniedException);
-      expect(err.getResponse()).toMatchObject({ details: { reason: 'NOT_PROJECT_MEMBER' } });
+    it('personal tasks keep their own rule (creator or assignee)', async () => {
+      prisma.task.findFirst.mockResolvedValue({ projectId: null, createdBy: 5, assignees: [{ id: 3 }] });
+      await expect(service.assertTaskAccess(1, 10, false)).resolves.toBeNull();
+    });
+  });
+
+  describe('QA6 — isOnProjectTeam (rules 2–4)', () => {
+    it.each([
+      ['leader', { leaderId: 1, createdBy: 88 }, null, null, true],
+      ['creator', { leaderId: 99, createdBy: 1 }, null, null, true],
+      ['member row', { leaderId: 99, createdBy: 88 }, { id: 1 }, null, true],
+      ['active partner role', { leaderId: 99, createdBy: 88 }, null, { id: 2 }, true],
+      ['none of those', { leaderId: 99, createdBy: 88 }, null, null, false],
+    ])('%s → %p', async (_label, project, member, role, expected) => {
+      prisma.project.findFirst.mockResolvedValue(project);
+      prisma.projectMember.findFirst.mockResolvedValue(member);
+      prisma.projectPartnerRole.findFirst.mockResolvedValue(role);
+      await expect(service.isOnProjectTeam(1, 42)).resolves.toBe(expected);
+    });
+
+    it('same org unit or manager chain gives access, not a Team seat', async () => {
+      prisma.project.findFirst.mockResolvedValue({ id: 42, leaderId: 99, createdBy: 88, orgUnitId: 6 });
+      prisma.projectMember.findFirst.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValue({ orgUnitId: 6 });
+      await expect(service.assertProjectAccess(1, 42, false)).resolves.toBeUndefined();
+      await expect(service.isOnProjectTeam(1, 42)).resolves.toBe(false);
+    });
+
+    it('a missing or deleted project → false', async () => {
+      prisma.project.findFirst.mockResolvedValue(null);
+      await expect(service.isOnProjectTeam(1, 42)).resolves.toBe(false);
+      expect(prisma.project.findFirst.mock.calls[0][0].where).toEqual({ id: 42, deletedAt: null });
+    });
+  });
+
+  describe('QA6 — getAccessibleProjectIds analysis option (package 1ב script only)', () => {
+    it('withoutRule6 leaves out the home-unit projects and nothing else', async () => {
+      prisma.projectMember.findMany.mockResolvedValue([{ projectId: 10 }]);
+      prisma.project.findMany.mockImplementation(async ({ where }: any) =>
+        where.orgUnitId ? [{ id: 30 }, { id: 31 }] : [],
+      );
+      prisma.user.findUnique.mockResolvedValue({ orgUnitId: 6 });
+      const withRule = await service.getAccessibleProjectIds(1, false);
+      const without = await service.getAccessibleProjectIds(1, false, { withoutRule6: true });
+      expect([...withRule.projectIds].sort((a, b) => a - b)).toEqual([10, 30, 31]);
+      expect(without.projectIds).toEqual([10]);
     });
   });
 
@@ -665,6 +706,14 @@ describe('ProjectAccessService', () => {
     it('a missing or deleted project is a 404', async () => {
       prisma.project.findFirst.mockResolvedValue(null);
       await expect(service.assertProjectManage(LEADER, 42)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('QA6 — canManageProject is the same rule as a boolean (404 still thrown)', async () => {
+      await expect(service.canManageProject(ADMIN, 42)).resolves.toBe(true);
+      await expect(service.canManageProject(LEADER, 42)).resolves.toBe(true);
+      await expect(service.canManageProject(MEMBER_WITH_WRITE, 42)).resolves.toBe(false);
+      prisma.project.findFirst.mockResolvedValue(null);
+      await expect(service.canManageProject(LEADER, 42)).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });

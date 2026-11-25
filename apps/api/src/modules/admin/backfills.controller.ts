@@ -22,6 +22,7 @@ import {
   PERSONAL_EMAIL_DOMAIN_FALLBACK,
 } from '../business-partners/business-partners.service';
 import { P1CopiesToRefsService, parseP1CopiesToRefsBody } from './p1-copies-to-refs.service';
+import { Qa6AssigneesToTeamService, parseQa6AssigneesToTeamBody } from './qa6-assignees-to-team.service';
 
 /**
  * One-shot admin backfill endpoints — mutations that fix historical
@@ -59,6 +60,9 @@ export class BackfillsController {
     // P1 (2026-11-15) — planner + executor of the copies → reference
     // slots migration; this controller only parses the body for it.
     private readonly p1CopiesToRefs: P1CopiesToRefsService,
+    // QA6 (2026-11-25) — every task assignee who is not on his project's
+    // Team gets a `participant` role (rule 5 was removed).
+    private readonly qa6AssigneesToTeam: Qa6AssigneesToTeamService,
   ) {}
 
   /**
@@ -3000,6 +3004,38 @@ export class BackfillsController {
   ) {
     const { dryRun, templateIds } = parseP1CopiesToRefsBody(body);
     return this.p1CopiesToRefs.run({ dryRun, templateIds, actorId: user?.id });
+  }
+
+  /**
+   * QA6 package 1 (2026-11-25) — task assignment no longer opens a
+   * project (ProjectAccessService rule 5 removed). Before that deploy is
+   * live, every live assignee of a live project task who is NOT on that
+   * project's Team (leader, creator, ProjectMember row or active partner
+   * role) gets a `participant` role, so nobody loses a project he works
+   * in. Internal employees only; external contacts, inactive and deleted
+   * users are listed under `skipped` with the reason, never written.
+   *
+   * DRY-RUN IS THE DEFAULT, switch in the BODY: `{ "dryRun"?: boolean }`;
+   * only the boolean `false` writes. The owner reviews the dry-run list
+   * before the real run.
+   *
+   * Response: `{ dryRun, toAdd: [{ projectId, projectName, userId,
+   * userName, taskCount }], skipped: [... , reason], totals: { toAdd,
+   * skipped, projects }, rolesWritten }`. Idempotent: a second real run
+   * returns `toAdd: []` and `rolesWritten: 0`.
+   */
+  @Post('qa6-assignees-to-team')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'QA6 · Backfill · give every task assignee who is not on his project Team a participant role (employees only). Body { dryRun?: boolean (default TRUE, only false writes) }. Idempotent.',
+  })
+  async runQa6AssigneesToTeam(
+    @CurrentUser() user: { id?: number } | undefined,
+    @Body() body?: { dryRun?: boolean },
+  ) {
+    const { dryRun } = parseQa6AssigneesToTeamBody(body);
+    return this.qa6AssigneesToTeam.run({ dryRun, actorId: user?.id });
   }
 }
 

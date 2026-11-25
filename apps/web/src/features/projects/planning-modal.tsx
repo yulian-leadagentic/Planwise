@@ -45,6 +45,13 @@ import { CSS } from '@dnd-kit/utilities';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { PeopleMultiSelect } from '@/components/shared/people-multi-select';
 import { useProjectTabState } from './use-project-tab-state';
+import { buildAssigneeOptions, type AssigneeOption } from '@/features/tasks/assignee-picker/assignee-options';
+import {
+  useAssigneeScope,
+  afterAssigned,
+  AllEmployeesToggle,
+  JoinsTeamNote,
+} from '@/features/tasks/assignee-picker/use-assignee-scope';
 
 // QA5 UI-12: the FeasibilityBadge component (Progress bar + On Track /
 // At Risk / Impossible chip) was deleted from this file in Wave 1 — it
@@ -2210,6 +2217,9 @@ function AssigneePicker({
   const [busy, setBusy] = useState(false);
   const queryClient = useQueryClient();
   const ref = useRef<HTMLDivElement>(null);
+  // QA6 — leader / Admin may widen the list to every employee. The
+  // project read is shared by every row (one cached GET /projects/:id).
+  const scope = useAssigneeScope(projectId, true);
 
   const assignees: any[] = task.assignees ?? [];
   const assignedUserIds = new Set(
@@ -2252,7 +2262,8 @@ function AssigneePicker({
     }
   };
 
-  const addOne = async (userId: number) => {
+  const addOne = async (option: AssigneeOption) => {
+    const userId = option.userId;
     if (busy) return;
     if (!isBulk && assignedUserIds.has(userId)) return;
     setBusy(true);
@@ -2262,8 +2273,9 @@ function AssigneePicker({
           targetIds.map((id) => tasksApi.addAssignee(id, { userId })),
         );
         summarize(results, 'Assigned to');
+        afterAssigned(queryClient, projectId, results.map((r) => (r.status === 'fulfilled' ? r.value : undefined)), option.displayName);
       } else {
-        await tasksApi.addAssignee(task.id, { userId });
+        afterAssigned(queryClient, projectId, [await tasksApi.addAssignee(task.id, { userId })], option.displayName);
       }
       invalidate();
       onUpdate();
@@ -2299,17 +2311,15 @@ function AssigneePicker({
     }
   };
 
-  // Show every candidate that isn't already assigned — including rows
-  // with `canAssign === false` (external contacts). Rendering them
-  // disabled with a reason is a hard requirement (Branch 2 DoD): the
-  // previous behaviour silently omitted anyone without a User, which
-  // is exactly what made real role holders disappear from the picker.
-  const available = members.filter((m) => {
-    const uid = m.userId;
-    if (typeof uid === 'number' && assignedUserIds.has(uid)) return false;
-    return true;
+  // QA6 — the project's Team, employees only (external contacts are not
+  // shown at all); a leader / Admin may widen to every employee.
+  const available = buildAssigneeOptions({
+    candidates: members,
+    allEmployees: scope.allEmployees,
+    canManage: scope.canManage,
+    showAllEmployees: scope.showAllEmployees,
+    assignedUserIds,
   });
-  const anyAssignable = available.some((m) => m.canAssign && m.userId != null);
 
   return (
     <div ref={ref} className="relative inline-flex items-center gap-1">
@@ -2339,16 +2349,15 @@ function AssigneePicker({
         </div>
       )}
 
-      {/* Add button — always visible when there's ANY row to show
-          (assignable or not) so the user can see the reason a person
-          isn't clickable. `Plus` when at least one assignable candidate
-          remains, dashed circle when only disabled ones remain. */}
-      {available.length > 0 && (
+      {/* Add button — shown when someone on the Team is left to assign,
+          or for a leader / Admin, who can also search all employees
+          (QA6). External contacts are not listed at all. */}
+      {(available.length > 0 || scope.canManage) && (
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
           className="w-5 h-5 rounded-full border border-dashed border-slate-300 dark:border-slate-600 text-slate-400 dark:text-slate-500 flex items-center justify-center hover:border-blue-500 hover:text-blue-600"
-          title={anyAssignable ? 'Assign people' : 'External contacts only — invite them as users to assign'}
+          title="Assign people"
         >
           <Plus className="h-3 w-3" />
         </button>
@@ -2367,63 +2376,44 @@ function AssigneePicker({
               </p>
             ) : (
               available.map((m) => {
-                const uid = m.userId;
-                const name = `${m.firstName ?? ''} ${m.lastName ?? ''}`.trim() || m.displayName || 'Unknown';
-                const disabled = !m.canAssign || uid == null;
-                // Compose the tooltip so a disabled row explains itself
-                // — matches Branch 2 DoD: external contacts appear
-                // and are clearly non-assignable, not silently hidden.
-                const title = disabled
-                  ? 'External contact — no user account, cannot be task-assigned. Ask an admin to invite them.'
-                  : (m.role || m.discipline || name);
-                const initials = (m.firstName?.[0] ?? '') + (m.lastName?.[0] ?? '')
-                  || (m.displayName ? m.displayName[0] : '') || '?';
+                const name = m.displayName || 'Unknown';
+                const initials = (m.firstName?.[0] ?? '') + (m.lastName?.[0] ?? '') || name[0] || '?';
                 return (
                   <button
-                    key={`${m.partyId ?? 'u'}:${uid ?? 'x'}`}
+                    key={m.key}
                     type="button"
-                    disabled={busy || disabled}
+                    disabled={busy}
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (disabled || uid == null) return;
-                      addOne(uid);
+                      addOne(m);
                     }}
-                    title={title}
-                    className={cn(
-                      'w-full flex items-start gap-2 px-3 py-1.5 text-left text-[12px]',
-                      disabled
-                        ? 'opacity-60 cursor-not-allowed'
-                        : 'hover:bg-slate-50 dark:hover:bg-slate-800/50',
-                    )}
+                    title={m.onTeam ? (m.role || m.discipline || name) : `${name} will be added to the project team`}
+                    className="w-full flex items-start gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-slate-50 dark:hover:bg-slate-800/50"
                   >
-                    <span className={cn(
-                      'mt-0.5 w-5 h-5 rounded-full text-[9px] font-semibold flex items-center justify-center shrink-0',
-                      disabled
-                        ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500'
-                        : 'bg-violet-100 text-violet-600',
-                    )}>
+                    <span className="mt-0.5 w-5 h-5 rounded-full text-[9px] font-semibold flex items-center justify-center shrink-0 bg-violet-100 text-violet-600">
                       {initials}
                     </span>
                     <span className="flex-1 min-w-0">
-                      <span className="flex items-center gap-1.5">
-                        <span className="truncate text-slate-700 dark:text-slate-200">{name}</span>
-                        {disabled && (
-                          <span className="rounded bg-amber-100 text-amber-700 text-[9px] font-semibold px-1 py-[1px] shrink-0">
-                            External
-                          </span>
-                        )}
-                      </span>
+                      <span className="block truncate text-slate-700 dark:text-slate-200">{name}</span>
                       {(m.role || m.discipline) && (
                         <span className="block truncate text-[10px] text-slate-500 dark:text-slate-400">
                           {[m.role, m.discipline].filter(Boolean).join(' · ')}
                         </span>
                       )}
+                      {!m.onTeam && <JoinsTeamNote />}
                     </span>
                   </button>
                 );
               })
             )}
           </div>
+          {scope.canManage && (
+            <AllEmployeesToggle
+              checked={scope.showAllEmployees}
+              onChange={scope.setShowAllEmployees}
+              loading={scope.loadingEmployees}
+            />
+          )}
         </div>
       )}
     </div>

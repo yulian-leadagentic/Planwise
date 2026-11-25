@@ -21,8 +21,14 @@ export interface AssigneeCandidate {
   role: string | null;
   /** titleInProject from the role assignment, or User.position/department. */
   discipline: string | null;
-  /** True iff `userId` is set (TaskAssignee.userId writes require a User). */
+  /**
+   * QA6 — true only for an internal employee with an active account
+   * (server: TaskAssigneePolicyService). External contacts are false and
+   * the pickers hide them.
+   */
   canAssign: boolean;
+  /** QA6 — internal employee (userType employee) with an active account. */
+  isEmployee?: boolean;
 }
 
 export interface ProjectQuery extends PaginationQuery {

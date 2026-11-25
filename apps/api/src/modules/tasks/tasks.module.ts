@@ -5,6 +5,8 @@ import { TaskChecklistService } from './task-checklist.service';
 import { AuthorizationModule } from '../../common/authorization.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ProjectDeliverablesModule } from '../project-deliverables/project-deliverables.module';
+import { ProjectPartnerRolesModule } from '../project-partner-roles/project-partner-roles.module';
+import { TaskAssigneePolicyService } from './task-assignee-policy.service';
 
 @Module({
   // NotificationsModule is imported so TasksService can notify each
@@ -18,9 +20,13 @@ import { ProjectDeliverablesModule } from '../project-deliverables/project-deliv
   // `projectDeliverableId` (DP-EMPTY-3, 2026-11-08). Keeps the
   // invariant "every task with a template link has a PD" intact for
   // every future task-create surface.
-  imports: [AuthorizationModule, NotificationsModule, ProjectDeliverablesModule],
+  //
+  // ProjectPartnerRolesModule (QA6) — TaskAssigneePolicyService adds a
+  // `participant` Team role when the leader / an Admin assigns someone
+  // who is not on the project's Team yet.
+  imports: [AuthorizationModule, NotificationsModule, ProjectDeliverablesModule, ProjectPartnerRolesModule],
   controllers: [TasksController],
-  providers: [TasksService, TaskChecklistService],
+  providers: [TasksService, TaskChecklistService, TaskAssigneePolicyService],
   exports: [TasksService, TaskChecklistService],
 })
 export class TasksModule {}
