@@ -7,7 +7,9 @@ import {
   Body,
   Param,
   ParseIntPipe,
+  Query,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
@@ -27,9 +29,15 @@ export class PhasesController {
 
   @Get()
   @RequirePermissions({ module: 'templates/services', action: 'read' })
-  @ApiOperation({ summary: 'List all phases' })
-  findAll() {
-    return this.phasesService.findAll();
+  @ApiOperation({ summary: 'List all phases. ?scope=services → only rows that belong in a Service picker (PR-069)' })
+  findAll(@Query('scope') scope?: string) {
+    if (scope != null && scope !== '' && scope !== 'all' && scope !== 'services') {
+      throw new BadRequestException({
+        code: 'PHASES_SCOPE_INVALID',
+        message: 'scope must be one of: all, services.',
+      });
+    }
+    return this.phasesService.findAll(scope === 'services' ? 'services' : 'all');
   }
 
   @Post()

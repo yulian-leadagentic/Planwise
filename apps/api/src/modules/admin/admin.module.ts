@@ -16,6 +16,7 @@ import { Qa6AssigneesToTeamService } from './qa6-assignees-to-team.service';
 import { ProjectPartnerRolesModule } from '../project-partner-roles/project-partner-roles.module';
 import { Qa6OperationsGrantsController } from './qa6-operations-grants.controller';
 import { Qa6OperationsGrantsService } from './qa6-operations-grants.service';
+import { Qa6ServicePhaseCleanupService } from './qa6-service-phase-cleanup.service';
 
 @Module({
   // People UX M6 — ReportsController re-uses BusinessPartnersService for
@@ -56,6 +57,14 @@ import { Qa6OperationsGrantsService } from './qa6-operations-grants.service';
   // inline in BackfillsController) so the plan is unit-tested and the
   // dry-run script can share its pure functions. PrismaService comes
   // from the global PrismaModule, like every controller above.
-  providers: [P1CopiesToRefsService, Qa6AssigneesToTeamService, Qa6OperationsGrantsService],
+  //
+  // PR-069 (QA6, 2026-11-25) — same split for
+  // `POST /admin/backfills/qa6-service-phase-cleanup`.
+  providers: [
+    P1CopiesToRefsService,
+    Qa6AssigneesToTeamService,
+    Qa6OperationsGrantsService,
+    Qa6ServicePhaseCleanupService,
+  ],
 })
 export class AdminModule {}

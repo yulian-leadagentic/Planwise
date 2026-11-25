@@ -198,11 +198,16 @@ async function main() {
     { name: 'תכנון סופי', sortOrder: 22 },
     { name: 'תכנון לביצוע', sortOrder: 23 },
   ];
+  // PR-069 (QA6, 2026-11-25) — these are project lifecycle phases, not
+  // services: a fresh database creates them as `kind: 'phase'` so they
+  // stay out of the Service pickers. An existing row is NOT re-marked
+  // here (update leaves `kind` alone); that goes through the reviewed
+  // POST /admin/backfills/qa6-service-phase-cleanup run.
   for (const p of phases) {
     await prisma.phase.upsert({
       where: { name: p.name },
       update: p,
-      create: p,
+      create: { ...p, kind: 'phase' },
     });
   }
   console.log(`  Seeded ${phases.length} phases`);

@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { isPickableService } from './service-options';
 
 interface EditState {
   id: number;
@@ -146,7 +147,21 @@ export function PhasesPage() {
           : <span className="text-slate-300 dark:text-slate-600">—</span>
       ) },
     { accessorKey: 'name', header: 'Service Name', enableSorting: false,
-      cell: ({ row }) => <span className="font-medium">{row.original.name}</span> },
+      cell: ({ row }) => (
+        <span className="inline-flex items-center gap-2">
+          <span className="font-medium">{row.original.name}</span>
+          {/* PR-069 — a project phase / retired row stays listed here but
+              is left out of every Service picker; say so. */}
+          {!isPickableService(row.original) && (
+            <span
+              className="rounded-[5px] bg-slate-100 px-2 py-0.5 text-[11px] font-bold tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+              title="Not offered in Service pickers. Tasks and templates that already use it keep it."
+            >
+              {row.original.isActive === false ? 'Inactive' : 'Project phase'}
+            </span>
+          )}
+        </span>
+      ) },
     { id: 'actions', header: 'Actions', enableSorting: false, size: 112,
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1">

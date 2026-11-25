@@ -8,15 +8,23 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePhaseDto } from './dto/create-phase.dto';
 import { UpdatePhaseDto } from './dto/update-phase.dto';
+import { isPickableService } from './service-phase-rule';
 
 @Injectable()
 export class PhasesService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll() {
-    return this.prisma.phase.findMany({
+  /**
+   * PR-069 — `scope: 'services'` returns only the rows that belong in a
+   * Service picker (active `service` rows that are not a project
+   * lifecycle phase, see `isPickableService`). The default stays every
+   * row: lookups and filters still need the phase rows tasks point at.
+   */
+  async findAll(scope: 'all' | 'services' = 'all') {
+    const rows = await this.prisma.phase.findMany({
       orderBy: { sortOrder: 'asc' },
     });
+    return scope === 'services' ? rows.filter(isPickableService) : rows;
   }
 
   async create(dto: CreatePhaseDto) {

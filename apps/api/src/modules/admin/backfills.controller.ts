@@ -27,6 +27,10 @@ import {
   parseQa6SupplierBody,
   runQa6SupplierClassification,
 } from './qa6-supplier-classification';
+import {
+  Qa6ServicePhaseCleanupService,
+  parseServicePhaseCleanupBody,
+} from './qa6-service-phase-cleanup.service';
 
 /**
  * One-shot admin backfill endpoints — mutations that fix historical
@@ -67,6 +71,9 @@ export class BackfillsController {
     // QA6 (2026-11-25) — every task assignee who is not on his project's
     // Team gets a `participant` role (rule 5 was removed).
     private readonly qa6AssigneesToTeam: Qa6AssigneesToTeamService,
+    // PR-069 (QA6, 2026-11-25) — planner + executor of the Service /
+    // project phase cleanup; this controller only parses the body for it.
+    private readonly servicePhaseCleanup: Qa6ServicePhaseCleanupService,
   ) {}
 
   /**
@@ -3072,6 +3079,40 @@ export class BackfillsController {
   async runQa6SupplierClassification(@Body() body?: { dryRun?: boolean; orgIds?: number[] }) {
     const options = parseQa6SupplierBody(body);
     return runQa6SupplierClassification(this.prisma, options);
+  }
+
+  /**
+   * PR-069 (QA6, 2026-11-25) — separate project phases from services in
+   * the `phases` table (the app's "Service" catalog) and clean its
+   * duplicates. Rules: `qa6-service-phase-cleanup.plan.ts`.
+   *
+   * Same body convention as p1-copies-to-refs, DRY-RUN IS THE DEFAULT:
+   *
+   *   { "dryRun"?: boolean, "approvedIds"?: number[] }
+   *
+   *   • dry-run (no body, or anything but `dryRun: false`): returns every
+   *     candidate row with id, name, code, kind guess, usage counts
+   *     (tasks, templates, task-catalog items, template tasks, project
+   *     deliverables, projects) and the proposed action (`mark_phase`,
+   *     `merge` into X, `deactivate`), plus the untouched rows. Writes
+   *     nothing.
+   *   • real run: `dryRun: false` AND `approvedIds` (400 otherwise). Acts
+   *     only on candidates in `approvedIds`, in one transaction. Nothing
+   *     is deleted; a merge re-points every reference before it
+   *     deactivates the duplicate, so no task loses its service.
+   */
+  @Post('qa6-service-phase-cleanup')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'PR-069 · Backfill · mark project phases / merge duplicate services in the Service (phases) table. Body { dryRun?: boolean (default TRUE, only false writes), approvedIds?: number[] (required for a real run) }. Never deletes.',
+  })
+  async runQa6ServicePhaseCleanup(
+    @CurrentUser() user: { id?: number } | undefined,
+    @Body() body?: { dryRun?: boolean; approvedIds?: number[] },
+  ) {
+    const parsed = parseServicePhaseCleanupBody(body);
+    return this.servicePhaseCleanup.run({ ...parsed, actorId: user?.id });
   }
 }
 

@@ -27,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { CATALOG_LOCK_TOOLTIP } from './catalog-lock';
+import { serviceOptions } from './service-options';
 import { templateListQueryKey, templateListUrl, type TemplateListView } from './template-archive';
 import {
   ArchivedBadge,
@@ -1297,7 +1298,8 @@ function EditorView({
               <label className="block text-sm font-medium mb-1">Service</label>
               <select value={headerForm.phaseId} onChange={(e) => setHeaderForm((p) => ({ ...p, phaseId: e.target.value }))} className={inputClass}>
                 <option value="">-- none --</option>
-                {(phases as any[]).map((ph: any) => (
+                {/* PR-069 — services only (no project phases); the saved value stays. */}
+                {serviceOptions(phases as any[], [headerForm.phaseId]).map((ph: any) => (
                   <option key={ph.id} value={ph.id}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
                 ))}
               </select>
@@ -1736,7 +1738,8 @@ export function DeliverableTemplatesPage() {
               <label className="block text-sm font-medium mb-1">Service</label>
               <select value={phaseId} onChange={(e) => setPhaseId(e.target.value)} className={inputClass}>
                 <option value="">-- none --</option>
-                {(phases as any[]).map((ph: any) => (
+                {/* PR-069 — services only (no project phases). */}
+                {serviceOptions(phases as any[], [phaseId]).map((ph: any) => (
                   <option key={ph.id} value={ph.id}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
                 ))}
               </select>
@@ -1788,7 +1791,8 @@ export function DeliverableTemplatesPage() {
             title="Filter by Service"
           >
             <option value="">All Services</option>
-            {(phases as any[]).map((ph: any) => (
+            {/* PR-069 — services, plus any row a listed template still uses. */}
+            {serviceOptions(phases as any[], [phaseFilter, ...templateList.map((t: any) => t.phaseId)]).map((ph: any) => (
               <option key={ph.id} value={String(ph.id)}>{ph.name}{ph.code ? ` (${ph.code})` : ''}</option>
             ))}
           </select>

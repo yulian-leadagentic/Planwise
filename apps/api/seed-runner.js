@@ -33,8 +33,11 @@ async function seed() {
       { name: 'תכנון סופי', sortOrder: 22 },
       { name: 'תכנון לביצוע', sortOrder: 23 },
     ];
+    // PR-069 (QA6) — project lifecycle phases, not services: created as
+    // kind 'phase' (out of the Service pickers); an existing row is not
+    // re-marked here, see POST /admin/backfills/qa6-service-phase-cleanup.
     for (const p of phases) {
-      await prisma.phase.upsert({ where: { name: p.name }, update: p, create: p });
+      await prisma.phase.upsert({ where: { name: p.name }, update: p, create: { ...p, kind: 'phase' } });
     }
     console.log('  Seeded phases');
 
