@@ -22,6 +22,12 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { extractEligibilityRule } from '../projects/role-eligibility';
+import {
+  type HomeOrgContext,
+  isInternalParty,
+  parseOrganizationFilter,
+  parseQueryFlag,
+} from './internal-party';
 
 interface UpsertProjectRoleTypeDto {
   code?: string;
@@ -140,6 +146,19 @@ export class ProjectRoleTypesController {
   //      — which keys PeopleMultiSelect on User.id — can key off the
   //      same payload without a second lookup.
   //
+  // QA6 BM2-4 (2026-11-25) — organization-first picking for external
+  // roles. Two optional, backward-compatible query params:
+  //   • `excludeInternal=true` drops AMEC: the home org itself, people
+  //     with an active `worker_of` edge to it, and D1 employees (login
+  //     user on a home-org domain). See `internal-party.ts`.
+  //   • `organizationId=<id>` keeps only that organization (when the
+  //     role's kind allows an org) and the people with an active
+  //     `worker_of` edge to it; `organizationId=none` keeps only people
+  //     with no active employer. Anything else is a 400, so a typo can
+  //     never widen the list back to everyone.
+  // Each person row now carries `employers` (active worker_of orgs) so
+  // the picker can build its organization list from one payload.
+  //
   // Gate: `partners:read`, same as the /business-partners endpoint the
   // picker was previously calling. Anyone who can pick a party can call
   // this.
@@ -149,10 +168,15 @@ export class ProjectRoleTypesController {
   async eligibleParties(
     @CurrentUser() user: any,
     @Param('code') rawCode: string,
-    @Query() query: { projectId?: string },
+    @Query() query: { projectId?: string; organizationId?: string; excludeInternal?: string },
   ) {
     const code = rawCode?.trim().toLowerCase();
     if (!code) throw new BadRequestException('code is required');
+    const orgFilter = parseOrganizationFilter(query.organizationId);
+    if (orgFilter === null) {
+      throw new BadRequestException('organizationId must be an organization id or "none"');
+    }
+    const excludeInternal = parseQueryFlag(query.excludeInternal);
     const role = await this.prisma.projectRoleType.findUnique({
       where: { code },
       select: {
@@ -205,6 +229,59 @@ export class ProjectRoleTypesController {
       kindWhere.id = { notIn: Array.from(alreadyAssigned) };
     }
 
+    // QA6 BM2-4 — organization scope. Same active-edge test as the
+    // /business-partners `employerId` filter (validTo in the future).
+    const activeWorkerOf = { type: { code: 'worker_of' }, validTo: { gt: new Date() } };
+    if (typeof orgFilter === 'number') {
+      const org = await this.prisma.businessPartner.findFirst({
+        where: { id: orgFilter, partnerType: 'organization', deletedAt: null },
+        select: { id: true },
+      });
+      if (!org) {
+        throw new BadRequestException(`organizationId ${orgFilter} is not an organization`);
+      }
+      kindWhere.AND = [
+        {
+          OR: [
+            { id: orgFilter },
+            {
+              partnerType: 'person',
+              partnerRelationshipsA: { some: { ...activeWorkerOf, partyBId: orgFilter } },
+            },
+          ],
+        },
+      ];
+    } else if (orgFilter === 'none') {
+      kindWhere.AND = [
+        {
+          partnerType: 'person',
+          partnerRelationshipsA: {
+            none: { ...activeWorkerOf, partyB: { deletedAt: null, partnerType: 'organization' } },
+          },
+        },
+      ];
+    }
+
+    // QA6 BM2-4 — AMEC exclusion for external roles. Resolved only on
+    // request so the default call stays one query lighter.
+    let homeCtx: HomeOrgContext | null = null;
+    if (excludeInternal) {
+      const home = await this.prisma.businessPartner.findFirst({
+        where: { partnerType: 'organization', isHomeOrg: true, deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: { id: true, domains: { select: { domain: true, isPersonal: true } } },
+      });
+      homeCtx = {
+        homeOrgId: home?.id ?? null,
+        ownedDomains: (home?.domains ?? [])
+          .filter((d) => !d.isPersonal)
+          .map((d) => d.domain.toLowerCase()),
+      };
+      // Everyone at the home org is internal, so its list is empty by
+      // definition.
+      if (typeof orgFilter === 'number' && orgFilter === homeCtx.homeOrgId) return [];
+    }
+
     const parties = await this.prisma.businessPartner.findMany({
       where: kindWhere,
       select: {
@@ -217,12 +294,22 @@ export class ProjectRoleTypesController {
         user: {
           select: {
             id: true,
+            // QA6 BM2-4 — read for the D1 employee rule only; not echoed.
+            email: true,
             avatarUrl: true,
             position: true,
             // Retire-User.department Step 3/3 (2026-09-28) — OrgUnit is
             // the sole source for the picker's `department` subtitle.
             orgUnit: { select: { id: true, name: true } },
           },
+        },
+        // QA6 BM2-4 — active employers (worker_of → live organization).
+        partnerRelationshipsA: {
+          where: {
+            ...activeWorkerOf,
+            partyB: { deletedAt: null, partnerType: 'organization' },
+          },
+          select: { partyB: { select: { id: true, displayName: true } } },
         },
         // Match the write path: it just does `party.roles.some(...)`
         // with no validTo filter (project-partner-roles.service :124),
@@ -279,7 +366,26 @@ export class ProjectRoleTypesController {
       return 'aeiou'.includes(first) ? 'an' : 'a';
     };
 
-    return parties.map((p) => {
+    const withEmployers = parties.map((p) => ({
+      party: p,
+      employers: p.partnerType === 'person'
+        ? (p.partnerRelationshipsA ?? []).map((r) => r.partyB)
+        : [],
+    }));
+    const ctx = homeCtx;
+    const visible = ctx
+      ? withEmployers.filter(({ party, employers }) => !isInternalParty(
+          {
+            id: party.id,
+            partnerType: party.partnerType,
+            user: party.user,
+            employerIds: employers.map((e) => e.id),
+          },
+          ctx,
+        ))
+      : withEmployers;
+
+    return visible.map(({ party: p, employers }) => {
       const reasons: string[] = [];
       // Rule 1 — allowedPartnerKind. Filtered out server-side, but the
       // annotation stays in case a future call widens the query.
@@ -328,6 +434,8 @@ export class ProjectRoleTypesController {
         position: p.user?.position ?? null,
         // Retire-User.department Step 3/3 — OrgUnit name only.
         department: (p.user as any)?.orgUnit?.name ?? null,
+        // QA6 BM2-4 — active employer organizations (people only).
+        employers: employers.map((e) => ({ id: e.id, displayName: e.displayName })),
         eligible: reasons.length === 0,
         reasons,
       };
