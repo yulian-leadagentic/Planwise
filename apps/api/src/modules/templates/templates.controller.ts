@@ -3,7 +3,7 @@ import {
   ParseIntPipe, UseGuards, NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { TemplatesService } from './templates.service';
+import { TemplatesService, parseArchivedFilter } from './templates.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
@@ -87,14 +87,21 @@ export class TemplatesController {
 
   @Get()
   @RequirePermissions({ module: 'templates', action: 'read' })
-  @ApiOperation({ summary: 'List templates with optional type filter' })
-  findAll(@CurrentUser() user: any, @Query('type') type?: string) {
+  @ApiOperation({
+    summary:
+      'List templates with optional type filter. archived=exclude (default) | only | include (PR-053)',
+  })
+  findAll(
+    @CurrentUser() user: any,
+    @Query('type') type?: string,
+    @Query('archived') archived?: string,
+  ) {
     if (type && TYPE_TO_MODULE[type]) {
       if (!hasPerm(user, TYPE_TO_MODULE[type], 'read')) {
         throw permissionDenied(TYPE_TO_MODULE[type], 'read');
       }
     }
-    return this.templatesService.findAll(type);
+    return this.templatesService.findAll(type, parseArchivedFilter(archived));
   }
 
   @Post()
@@ -129,10 +136,30 @@ export class TemplatesController {
 
   @Delete(':id')
   @RequirePermissions({ module: 'templates', action: 'read' })
-  @ApiOperation({ summary: 'Delete a template (only if usageCount=0)' })
+  @ApiOperation({ summary: 'Delete an unused template (409 TEMPLATE_IN_USE otherwise; archive it instead)' })
   async remove(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
     await this.assertByTemplateId(user, id, 'delete');
     return this.templatesService.remove(id);
+  }
+
+  // PR-053 (QA6, 2026-11-25) — archive / restore. Archiving takes a
+  // template out of every picker without touching where it is already
+  // used, so it is gated like delete (the sub-module's delete right),
+  // and so is the way back.
+  @Post(':id/archive')
+  @RequirePermissions({ module: 'templates', action: 'read' })
+  @ApiOperation({ summary: 'Archive a template (hidden from lists and pickers, kept where used)' })
+  async archive(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.assertByTemplateId(user, id, 'delete');
+    return this.templatesService.archive(id);
+  }
+
+  @Post(':id/restore')
+  @RequirePermissions({ module: 'templates', action: 'read' })
+  @ApiOperation({ summary: 'Restore an archived template' })
+  async restore(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    await this.assertByTemplateId(user, id, 'delete');
+    return this.templatesService.restore(id);
   }
 
   // Template Tasks CRUD (for task_list type)

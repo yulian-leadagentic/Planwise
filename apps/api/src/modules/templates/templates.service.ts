@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { extractServiceMarker } from '../planning/marker-phase-resolver';
 import {
@@ -263,9 +269,217 @@ export function resolveCatalogLiveFields<T>(input: T): T {
   return row as T;
 }
 
+// ─── PR-053 (QA6, 2026-11-25) · archive + "in use" ────────────────────
+//
+// Decision 25.11: a template that is in use can be ARCHIVED (hidden from
+// every picker, untouched where it is already used, restorable). Delete
+// stays only for a template nobody uses. Applies to every `Template`
+// kind (Deliverable `task_list`, hierarchical Zone `zone`, `combined`).
+
+/** The Task Catalog is a `task_list` template too, but never archivable. */
+export const TASK_CATALOG_CODE = '__TASK_CATALOG__';
+
+/** `GET /templates?archived=` — which templates a list returns. */
+export type ArchivedFilter = 'exclude' | 'only' | 'include';
+
+export function parseArchivedFilter(raw: unknown): ArchivedFilter {
+  if (raw == null || raw === '') return 'exclude';
+  if (raw === 'exclude' || raw === 'only' || raw === 'include') return raw;
+  throw new BadRequestException({
+    code: 'TEMPLATES_ARCHIVED_FILTER_INVALID',
+    message: 'archived must be one of: exclude, only, include.',
+  });
+}
+
+/**
+ * Where a template is used. A template is "in use" when any count is
+ * above zero:
+ *   • applied             — `Template.usageCount` (times it was applied
+ *                           to a project),
+ *   • projectDeliverables — live project deliverables made from it
+ *                           (`ProjectDeliverable.sourceTemplateId`),
+ *   • projectTasks        — live project tasks that belong to it
+ *                           (`Task.deliverableTemplateId`),
+ *   • composingTemplates  — OTHER live templates that reference it: a
+ *                           zone slot (`TemplateZone.linkedTaskTemplateId`
+ *                           / `referencedTemplateId`) or a zone task of
+ *                           that deliverable (`TemplateZoneTask
+ *                           .deliverableTemplateId`). Archived composing
+ *                           templates still count (they can be restored).
+ */
+export interface TemplateUsage {
+  applied: number;
+  projectDeliverables: number;
+  projectTasks: number;
+  composingTemplates: number;
+  inUse: boolean;
+}
+
+export function describeTemplateUsage(u: TemplateUsage): string {
+  const parts: string[] = [];
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  if (u.applied > 0) parts.push(`applied ${plural(u.applied, 'time', 'times')}`);
+  if (u.projectDeliverables > 0) {
+    parts.push(plural(u.projectDeliverables, 'project deliverable', 'project deliverables'));
+  }
+  if (u.projectTasks > 0) parts.push(plural(u.projectTasks, 'project task', 'project tasks'));
+  if (u.composingTemplates > 0) {
+    parts.push(`used by ${plural(u.composingTemplates, 'other template', 'other templates')}`);
+  }
+  return parts.join(', ');
+}
+
 @Injectable()
 export class TemplatesService {
   constructor(private prisma: PrismaService) {}
+
+  /**
+   * PR-053 — usage of each given template (see `TemplateUsage`). Four
+   * grouped reads regardless of how many templates are asked about, so
+   * the list endpoint can carry `usage` on every row.
+   */
+  async getUsage(
+    rows: ReadonlyArray<{ id: number; usageCount?: number | null }>,
+  ): Promise<Map<number, TemplateUsage>> {
+    const out = new Map<number, TemplateUsage>();
+    const ids = rows.map((r) => r.id);
+    for (const r of rows) {
+      out.set(r.id, {
+        applied: Math.max(0, Number(r.usageCount ?? 0) || 0),
+        projectDeliverables: 0,
+        projectTasks: 0,
+        composingTemplates: 0,
+        inUse: false,
+      });
+    }
+    if (ids.length === 0) return out;
+
+    const [deliverables, tasks, zoneRefs, zoneTasks] = await Promise.all([
+      this.prisma.projectDeliverable.groupBy({
+        by: ['sourceTemplateId'],
+        where: { sourceTemplateId: { in: ids }, deletedAt: null },
+        _count: { _all: true },
+      }),
+      this.prisma.task.groupBy({
+        by: ['deliverableTemplateId'],
+        where: { deliverableTemplateId: { in: ids }, deletedAt: null },
+        _count: { _all: true },
+      }),
+      this.prisma.templateZone.findMany({
+        where: {
+          OR: [{ linkedTaskTemplateId: { in: ids } }, { referencedTemplateId: { in: ids } }],
+          template: { deletedAt: null },
+        },
+        select: { templateId: true, linkedTaskTemplateId: true, referencedTemplateId: true },
+      }),
+      this.prisma.templateZoneTask.findMany({
+        where: {
+          deliverableTemplateId: { in: ids },
+          templateZone: { template: { deletedAt: null } },
+        },
+        select: { deliverableTemplateId: true, templateZone: { select: { templateId: true } } },
+      }),
+    ]);
+
+    for (const g of deliverables as any[]) {
+      const u = out.get(g.sourceTemplateId);
+      if (u) u.projectDeliverables = g._count?._all ?? 0;
+    }
+    for (const g of tasks as any[]) {
+      const u = out.get(g.deliverableTemplateId);
+      if (u) u.projectTasks = g._count?._all ?? 0;
+    }
+    const composers = new Map<number, Set<number>>();
+    const addComposer = (target: number | null | undefined, composer: number) => {
+      if (target == null || target === composer || !out.has(target)) return;
+      const set = composers.get(target) ?? new Set<number>();
+      set.add(composer);
+      composers.set(target, set);
+    };
+    for (const z of zoneRefs) {
+      addComposer(z.linkedTaskTemplateId, z.templateId);
+      addComposer(z.referencedTemplateId, z.templateId);
+    }
+    for (const zt of zoneTasks) {
+      addComposer(zt.deliverableTemplateId, zt.templateZone.templateId);
+    }
+    for (const [id, set] of composers) out.get(id)!.composingTemplates = set.size;
+
+    for (const u of out.values()) {
+      u.inUse =
+        u.applied > 0 || u.projectDeliverables > 0 || u.projectTasks > 0 || u.composingTemplates > 0;
+    }
+    return out;
+  }
+
+  /**
+   * PR-053 — archive a template: hidden from every list / picker,
+   * readable by id, restorable. Idempotent. The Task Catalog can't be
+   * archived (its pages would re-create a second catalog).
+   */
+  async archive(id: number) {
+    const tpl = await this.prisma.template.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, code: true, archivedAt: true },
+    });
+    if (!tpl) throw new NotFoundException('Template not found');
+    if (tpl.code === TASK_CATALOG_CODE) {
+      throw new BadRequestException({
+        code: 'TEMPLATE_CATALOG_NOT_ARCHIVABLE',
+        message: 'The Task Catalog cannot be archived.',
+      });
+    }
+    if (tpl.archivedAt) return { id: tpl.id, archivedAt: tpl.archivedAt };
+    return this.prisma.template.update({
+      where: { id },
+      data: { archivedAt: new Date() },
+      select: { id: true, archivedAt: true },
+    });
+  }
+
+  /** PR-053 — bring an archived template back to the lists. Idempotent. */
+  async restore(id: number) {
+    const tpl = await this.prisma.template.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, archivedAt: true },
+    });
+    if (!tpl) throw new NotFoundException('Template not found');
+    if (!tpl.archivedAt) return { id: tpl.id, archivedAt: null };
+    return this.prisma.template.update({
+      where: { id },
+      data: { archivedAt: null },
+      select: { id: true, archivedAt: true },
+    });
+  }
+
+  /**
+   * PR-053 — a template picked into another template (zone slot or zone
+   * reference) must exist and be active. Archived ones are hidden from
+   * the pickers; this closes the door for a stale tab or a direct call.
+   * Already-saved references are never checked here, so a composing
+   * template that used it before the archive keeps working.
+   */
+  private async assertPickableTemplate(templateId: number, field: string) {
+    const tpl = await this.prisma.template.findFirst({
+      where: { id: templateId, deletedAt: null },
+      select: { id: true, name: true, archivedAt: true },
+    });
+    if (!tpl) {
+      throw new BadRequestException({
+        code: 'TEMPLATE_REF_NOT_FOUND',
+        message: `${field}: template #${templateId} not found.`,
+        details: { field, templateId },
+      });
+    }
+    if (tpl.archivedAt) {
+      throw new ConflictException({
+        code: 'TEMPLATE_ARCHIVED',
+        message: `Template "${tpl.name}" is archived. Restore it before adding it to another template.`,
+        details: { field, templateId },
+      });
+    }
+    return tpl;
+  }
 
   /**
    * QA4 · DN-2 (2026-10-04) — Server-side resolve a Deliverable
@@ -325,7 +539,16 @@ export class TemplatesService {
     return null;
   }
 
-  async findAll(type?: string) {
+  /**
+   * PR-053 — `archived` picks which templates come back: `exclude`
+   * (default, every picker in the app) leaves archived ones out, `only`
+   * is the templates page's Archived view, `include` returns both.
+   * Archived templates are still loaded for the composition rollup below
+   * so a composing template keeps counting the tasks of an archived
+   * deliverable it references; the filter applies to the response rows.
+   * Every row carries `archivedAt` and `usage` (see `TemplateUsage`).
+   */
+  async findAll(type?: string, archived: ArchivedFilter = 'exclude') {
     const where: any = { deletedAt: null };
     if (type) where.type = type;
 
@@ -425,7 +648,14 @@ export class TemplatesService {
       return { tasks, services };
     };
 
-    return templates.map((t: any) => {
+    // PR-053 — usage for the rows the caller will see, then the
+    // archived filter (the rollup above already saw every template).
+    const visible = (templates as any[]).filter((t) =>
+      archived === 'include' ? true : archived === 'only' ? t.archivedAt != null : t.archivedAt == null,
+    );
+    const usageById = await this.getUsage(visible);
+
+    return visible.map((t: any) => {
       const expandedZones = (t.templateZones ?? []).reduce(
         (sum: number, z: any) => sum + Math.max(1, Number(z.instanceCount) || 1),
         0,
@@ -477,6 +707,7 @@ export class TemplatesService {
         },
         fastestWorkingDays,
         slowestWorkingDays,
+        usage: usageById.get(t.id),
         // Effective service list for the UI to count distinct services
         // without needing to walk descriptions itself. Replaces the direct
         // templateTasks list (which the picker only used for service extraction).
@@ -812,8 +1043,18 @@ export class TemplatesService {
 
   async remove(id: number) {
     const template = await this.findOne(id);
-    if (template.usageCount > 0) {
-      throw new BadRequestException(`Cannot delete: template has been used ${template.usageCount} times`);
+    // PR-053 — delete only an unused template. "Used" is wider than the
+    // old `usageCount > 0`: a template a project deliverable / task or
+    // another template points at can't be deleted either (that left the
+    // reference dangling). The answer is a 409 with a stable code; the
+    // way out is Archive.
+    const usage = (await this.getUsage([template])).get(id)!;
+    if (usage.inUse) {
+      throw new ConflictException({
+        code: 'TEMPLATE_IN_USE',
+        message: `"${template.name}" is in use (${describeTemplateUsage(usage)}). Archive it instead of deleting it.`,
+        details: { templateId: id, ...usage },
+      });
     }
     await this.prisma.template.update({
       where: { id },
@@ -1270,6 +1511,13 @@ export class TemplatesService {
 
   async addZone(templateId: number, body: any) {
     await this.findOne(templateId); // verify template exists
+    // PR-053 — a new reference must point at an active template.
+    if (body?.referencedTemplateId) {
+      await this.assertPickableTemplate(Number(body.referencedTemplateId), 'referencedTemplateId');
+    }
+    if (body?.linkedTaskTemplateId) {
+      await this.assertPickableTemplate(Number(body.linkedTaskTemplateId), 'linkedTaskTemplateId');
+    }
     const maxOrder = await this.prisma.templateZone.aggregate({
       where: { templateId, parentId: body.parentId || null },
       _max: { sortOrder: true },
@@ -1352,12 +1600,21 @@ export class TemplatesService {
     // template type sees a specific 400 instead of a cryptic FK error.
     const deliverable = await this.prisma.template.findFirst({
       where: { id: deliverableId, deletedAt: null },
-      select: { id: true, name: true, code: true, type: true },
+      select: { id: true, name: true, code: true, type: true, archivedAt: true },
     });
     if (!deliverable) {
       throw new BadRequestException({
         code: 'DELIVERABLE_REF_NOT_FOUND',
         message: `Deliverable template #${deliverableId} not found.`,
+      });
+    }
+    // PR-053 — archived deliverables are out of the pickers; refuse a
+    // new slot for one (existing slots are untouched).
+    if (deliverable.archivedAt) {
+      throw new ConflictException({
+        code: 'TEMPLATE_ARCHIVED',
+        message: `Template "${deliverable.name}" is archived. Restore it before adding it to another template.`,
+        details: { field: 'deliverableTemplateId', templateId: deliverable.id },
       });
     }
     if (deliverable.type !== 'task_list') {
@@ -1437,6 +1694,23 @@ export class TemplatesService {
     const instanceCount = body.instanceCount === undefined
       ? undefined
       : Math.max(1, Number(body.instanceCount) || 1);
+    // PR-053 — re-pointing a zone at another template: the new target
+    // must be active. Keeping (re-sending) the current id is always OK.
+    if (body?.referencedTemplateId || body?.linkedTaskTemplateId) {
+      const current = await this.prisma.templateZone.findUnique({
+        where: { id: zoneId },
+        select: { referencedTemplateId: true, linkedTaskTemplateId: true },
+      });
+      if (!current) throw new NotFoundException('Template zone not found');
+      const ref = Number(body.referencedTemplateId);
+      if (body.referencedTemplateId && ref !== current.referencedTemplateId) {
+        await this.assertPickableTemplate(ref, 'referencedTemplateId');
+      }
+      const linked = Number(body.linkedTaskTemplateId);
+      if (body.linkedTaskTemplateId && linked !== current.linkedTaskTemplateId) {
+        await this.assertPickableTemplate(linked, 'linkedTaskTemplateId');
+      }
+    }
     return this.prisma.templateZone.update({
       where: { id: zoneId },
       data: {

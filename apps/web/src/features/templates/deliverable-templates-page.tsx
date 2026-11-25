@@ -27,6 +27,13 @@ import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { CATALOG_LOCK_TOOLTIP } from './catalog-lock';
+import { templateListQueryKey, templateListUrl, type TemplateListView } from './template-archive';
+import {
+  ArchivedBadge,
+  TemplateArchiveToggle,
+  TemplateRowActions,
+  useTemplateArchiveActions,
+} from './template-archive-controls';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -1609,7 +1616,6 @@ function EditorView({
 // ---------------------------------------------------------------------------
 
 export function DeliverableTemplatesPage() {
-  const confirm = useConfirm();
   const scrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -1624,11 +1630,13 @@ export function DeliverableTemplatesPage() {
   // template list so users can quickly narrow a long deliverable catalog.
   const [searchTerm, setSearchTerm] = useState('');
   const [phaseFilter, setPhaseFilter] = useState<string>('');
+  // PR-053 — Active (the picker list) or Archived (restore from here).
+  const [view, setView] = useState<TemplateListView>('active');
 
   const { data: templates, isLoading } = useQuery({
-    queryKey: ['templates', 'task_list'],
+    queryKey: templateListQueryKey('task_list', view),
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/templates?type=task_list').then((r) => r.data.data ?? r.data),
+    queryFn: () => client.get(templateListUrl('task_list', view)).then((r) => r.data.data ?? r.data),
   });
 
   const { data: phases = [] } = useQuery({
@@ -1652,14 +1660,7 @@ export function DeliverableTemplatesPage() {
     onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates', 'task_list'] });
-      notify.success('Deliverable template deleted', { code: 'TPL-DELETE-200' });
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
-  });
+  const archiveActions = useTemplateArchiveActions('Deliverable template');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1754,9 +1755,13 @@ export function DeliverableTemplatesPage() {
         </form>
       )}
 
-      {/* Search + Service filter — narrows the deliverable list below. */}
-      {!isLoading && templateList.length > 0 && (
-        <div className="flex flex-wrap items-center gap-3">
+      {/* Search + Service filter — narrows the deliverable list below.
+          PR-053 — the Active / Archived toggle leads the row and is always
+          shown, so an empty Active list can still reach the archive. */}
+      <div className="flex flex-wrap items-center gap-3">
+        <TemplateArchiveToggle value={view} onChange={setView} />
+        {!isLoading && templateList.length > 0 && (
+        <>
           <div className="relative flex-1 min-w-[220px] max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <input
@@ -1799,11 +1804,18 @@ export function DeliverableTemplatesPage() {
           <span className="ml-auto text-xs text-muted-foreground">
             {visibleTemplates.length} of {templateList.length} template{templateList.length !== 1 ? 's' : ''}
           </span>
-        </div>
-      )}
+        </>
+        )}
+      </div>
 
       {isLoading ? (
         <TableSkeleton rows={3} cols={3} />
+      ) : templateList.length === 0 && view === 'archived' ? (
+        <div className="rounded-lg border border-border bg-background p-8 text-center">
+          <Copy className="mx-auto h-12 w-12 text-muted-foreground" />
+          <h3 className="mt-3 text-sm font-medium">No archived deliverable templates</h3>
+          <p className="mt-1 text-sm text-muted-foreground">An archived template is hidden from every picker and stays as is where it is already used.</p>
+        </div>
       ) : templateList.length === 0 ? (
         <div className="rounded-lg border border-border bg-background p-8 text-center">
           <Copy className="mx-auto h-12 w-12 text-muted-foreground" />
@@ -1829,6 +1841,7 @@ export function DeliverableTemplatesPage() {
                 <div className="flex items-center gap-2">
                   <Copy className="h-4 w-4 flex-shrink-0 text-brand-600" />
                   <span className="text-sm font-medium">{t.name}</span>
+                  {t.archivedAt && <ArchivedBadge />}
                   {t.code && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">{t.code}</span>}
                   {t.phase && <span className="rounded-full bg-cyan-100 px-2 py-0.5 text-xs font-medium text-cyan-700">{t.phase.name}</span>}
                 </div>
@@ -1871,15 +1884,7 @@ export function DeliverableTemplatesPage() {
                   );
                 })()}
               </div>
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (await confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
-                }}
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+              <TemplateRowActions template={t} actions={archiveActions} />
             </div>
           ))}
         </div>

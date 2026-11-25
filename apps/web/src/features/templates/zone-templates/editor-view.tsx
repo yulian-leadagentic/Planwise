@@ -54,14 +54,24 @@ export function EditorView({
     ? rawTaskTemplates.filter((t: any) => t.code !== '__TASK_CATALOG__')
     : [];
 
+  // PR-053 — the pickers above get the active list only; the name →
+  // phase lookup below also needs archived deliverables, because a zone
+  // template that used one before it was archived still shows it.
+  const { data: rawAllTaskTemplates = [] } = useQuery({
+    queryKey: ['templates', 'task_list', 'include'],
+    staleTime: 10 * 60 * 1000,
+    queryFn: () => client.get('/templates?type=task_list&archived=include').then((r) => r.data.data ?? r.data),
+  });
+
   // Lookup: service name → phase (for displaying phase on service groups)
   const servicePhaseMap = useMemo(() => {
     const map = new Map<string, { name: string; code?: string | null }>();
-    for (const t of taskTemplates) {
+    for (const t of Array.isArray(rawAllTaskTemplates) ? rawAllTaskTemplates : []) {
+      if (t.code === '__TASK_CATALOG__') continue;
       if (t.phase) map.set(t.name, { name: t.phase.name, code: t.phase.code });
     }
     return map;
-  }, [taskTemplates]);
+  }, [rawAllTaskTemplates]);
 
   // ---- fetch phases for task form dropdown ----
   const { data: phases = [] } = useQuery({

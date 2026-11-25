@@ -1868,6 +1868,12 @@ model Template {
   createdAt   DateTime     @default(now()) @map("created_at")
   updatedAt   DateTime     @updatedAt @map("updated_at")
   deletedAt   DateTime?    @map("deleted_at")
+  /// PR-053 (QA6, 2026-11-25) — archive instead of delete. An archived
+  /// template is left out of every list / picker (`GET /templates`
+  /// default) but stays fully readable by id, so projects and composing
+  /// templates that already use it keep working. NULL = active.
+  /// Restore sets it back to NULL. Delete stays for unused templates.
+  archivedAt  DateTime?    @map("archived_at")
 
   creator             User                 @relation("TemplateCreator", fields: [createdBy], references: [id])
   phase               Phase?               @relation(fields: [phaseId], references: [id])

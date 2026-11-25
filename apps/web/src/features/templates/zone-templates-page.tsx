@@ -1,22 +1,27 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, ArrowLeft, Trash2, Layers, Copy, CheckSquare } from 'lucide-react';
+import { Plus, ArrowLeft, Layers, Copy, CheckSquare } from 'lucide-react';
 import { PageHeader } from '@/components/shared/page-header';
 import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
-import { useConfirm } from '@/components/shared/confirm-dialog';
 import { inputClass, btnPrimary, btnSecondary, ZONE_DISPLAY } from './zone-templates/constants';
 import { EditorView } from './zone-templates/editor-view';
 import { useZoneTypeOptions } from '@/hooks/use-zone-type-options';
+import { templateListQueryKey, templateListUrl, type TemplateListView } from './template-archive';
+import {
+  ArchivedBadge,
+  TemplateArchiveToggle,
+  TemplateRowActions,
+  useTemplateArchiveActions,
+} from './template-archive-controls';
 
 // ---------------------------------------------------------------------------
 // Main Page (List View)
 // ---------------------------------------------------------------------------
 
 export function ZoneTemplatesPage() {
-  const confirm = useConfirm();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -37,10 +42,13 @@ export function ZoneTemplatesPage() {
   // value to preserve.
   const { options: zoneTypeOptions } = useZoneTypeOptions();
 
+  // PR-053 — Active (the picker list) or Archived (restore from here).
+  const [view, setView] = useState<TemplateListView>('active');
+
   const { data: templates, isLoading } = useQuery({
-    queryKey: ['templates', 'zone'],
+    queryKey: templateListQueryKey('zone', view),
     staleTime: 5 * 60 * 1000,
-    queryFn: () => client.get('/templates?type=zone').then((r) => r.data.data ?? r.data),
+    queryFn: () => client.get(templateListUrl('zone', view)).then((r) => r.data.data ?? r.data),
   });
 
   const createMutation = useMutation({
@@ -58,14 +66,7 @@ export function ZoneTemplatesPage() {
     onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: number) => client.delete(`/templates/${id}`).then((r) => r.data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['templates', 'zone'] });
-      notify.success('Template deleted', { code: 'TPL-DELETE-200' });
-    },
-    onError: (err: any) => notify.apiError(err, 'Failed to delete'),
-  });
+  const archiveActions = useTemplateArchiveActions('Zone template');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -150,8 +151,18 @@ export function ZoneTemplatesPage() {
         </form>
       )}
 
+      <div className="flex flex-wrap items-center gap-3">
+        <TemplateArchiveToggle value={view} onChange={setView} />
+      </div>
+
       {isLoading ? (
         <TableSkeleton rows={3} cols={4} />
+      ) : templateList.length === 0 && view === 'archived' ? (
+        <div className="rounded-lg border border-border bg-background p-8 text-center">
+          <Layers className="mx-auto h-12 w-12 text-muted-foreground" />
+          <h3 className="mt-3 text-sm font-medium">No archived zone templates</h3>
+          <p className="mt-1 text-sm text-muted-foreground">An archived template is hidden from every picker and stays as is where it is already used.</p>
+        </div>
       ) : templateList.length === 0 ? (
         <div className="rounded-lg border border-border bg-background p-8 text-center">
           <Layers className="mx-auto h-12 w-12 text-muted-foreground" />
@@ -172,6 +183,7 @@ export function ZoneTemplatesPage() {
                   <Layers className="h-4 w-4 flex-shrink-0 text-green-600" />
                   <span className="text-sm font-medium">{t.name}</span>
                   {t.code && <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-700">{t.code}</span>}
+                  {t.archivedAt && <ArchivedBadge />}
                   {/* Default zone type pill — surfaces the template's
                       declared type so "this is my Level template" is
                       visible without opening the editor. Hidden when
@@ -200,15 +212,7 @@ export function ZoneTemplatesPage() {
                   <span>Used {t.usageCount ?? 0}x</span>
                 </div>
               </div>
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  if (await confirm(`Delete "${t.name}"?`)) deleteMutation.mutate(t.id);
-                }}
-                className="rounded-md p-1.5 text-muted-foreground hover:bg-red-100 hover:text-red-600"
-              >
-                <Trash2 className="h-4 w-4" />
-              </button>
+              <TemplateRowActions template={t} actions={archiveActions} />
             </div>
           ))}
         </div>
