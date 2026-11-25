@@ -4,6 +4,7 @@ import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { usePermissions } from '@/hooks/use-permissions';
+import { CATALOG_LOCK_TOOLTIP } from '../catalog-lock';
 
 // ---------------------------------------------------------------------------
 // Zone Tasks Table (compact, displayed under zone node)
@@ -62,8 +63,8 @@ export function ZoneTasksTable({
                   {task.catalogTask && (
                     <span
                       className="inline-flex items-center gap-0.5 rounded-[5px] bg-slate-100 dark:bg-slate-800 px-1 py-0.5 text-[9px] font-bold tracking-[0.05em] text-slate-500 dark:text-slate-400"
-                      title="ערוך ב-Task Catalog · Edit in Task Catalog"
-                      aria-label="Linked to Task Catalog"
+                      title={CATALOG_LOCK_TOOLTIP}
+                      aria-label={`Catalog. ${CATALOG_LOCK_TOOLTIP}`}
                     >
                       <Lock className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
                       Catalog

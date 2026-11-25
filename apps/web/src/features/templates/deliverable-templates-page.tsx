@@ -26,6 +26,7 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { CATALOG_LOCK_TOOLTIP } from './catalog-lock';
 
 const inputClass = 'w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring';
 const btnPrimary = 'flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:opacity-50';
@@ -660,8 +661,8 @@ function SortableTaskRow({
           {task.catalogTask && (
             <span
               className="inline-flex items-center gap-0.5 rounded-[5px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-bold tracking-[0.05em] text-slate-500 dark:text-slate-400"
-              title="ערוך ב-Task Catalog · Edit in Task Catalog"
-              aria-label="Linked to Task Catalog — name and hours edit in Task Catalog"
+              title={CATALOG_LOCK_TOOLTIP}
+              aria-label={`Catalog. ${CATALOG_LOCK_TOOLTIP}`}
             >
               <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
               Catalog
