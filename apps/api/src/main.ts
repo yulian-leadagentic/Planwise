@@ -18,6 +18,7 @@ import { startWatchdog } from './common/watchdog';
 import { startWedgeKillswitch } from './common/wedge-killswitch';
 import { startVitalsLogger } from './common/vitals';
 import { installStartupSignals } from './common/startup-signals';
+import { rejectStrayWebSocketUpgrades } from './common/ws-upgrade-guard';
 import { initSentry } from './observability/sentry';
 
 async function bootstrap() {
@@ -150,6 +151,9 @@ async function bootstrap() {
     realServer.requestTimeout = 45_000;
     realServer.headersTimeout = 30_000;
     realServer.keepAliveTimeout = 65_000;
+    // PR-079: a WebSocket upgrade to a non-Socket.IO path (stale tabs
+    // still opening /api/ws) gets a 404 instead of a 502.
+    rejectStrayWebSocketUpgrades(realServer);
   }
 
   const logger = app.get(Logger);

@@ -51,6 +51,7 @@ import { DriveAdminModule } from './modules/drive-admin/drive-admin.module';
 import { DriveModule } from './modules/drive/drive.module';
 import { UserPreferencesModule } from './modules/user-preferences/user-preferences.module';
 import { HrModule } from './modules/hr/hr.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 
 @Module({
   imports: [
@@ -137,6 +138,7 @@ import { HrModule } from './modules/hr/hr.module';
     DriveModule,
     UserPreferencesModule,
     HrModule,
+    RealtimeModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

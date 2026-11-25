@@ -5,12 +5,15 @@ import { Header } from './header';
 import { ReturnPill } from '@/components/nav/return-route';
 import { useIsMobile, useIsDesktop } from '@/hooks/use-media-query';
 import { useUIStore } from '@/stores/ui.store';
+import { useRealtimeSync } from '@/hooks/use-realtime-sync';
 import { cn } from '@/lib/utils';
 
 export function AppShell() {
   const isMobile = useIsMobile();
   const isDesktop = useIsDesktop();
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  // PR-079: live task / project updates from other tabs and users.
+  useRealtimeSync();
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
