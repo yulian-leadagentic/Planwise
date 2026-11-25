@@ -22,12 +22,14 @@
  * starts, is in flight, or is already late this week.
  */
 
+import { format } from 'date-fns';
+
 export type MyTasksPeriod = 'any' | 'day' | 'week' | 'month' | 'custom';
 
 export const PERIOD_OPTIONS: ReadonlyArray<{ value: MyTasksPeriod; label: string; title: string }> = [
-  { value: 'any',    label: 'Any',    title: 'No period filter — show every task' },
+  { value: 'any',    label: 'Any',    title: 'No period filter, show every task' },
   { value: 'day',    label: 'Day',    title: 'Today (plus overdue + in-progress)' },
-  { value: 'week',   label: 'Week',   title: 'This calendar week, Sunday–Friday (plus overdue + in-progress)' },
+  { value: 'week',   label: 'Week',   title: 'This calendar week, Sunday to Friday (plus overdue + in-progress)' },
   { value: 'month',  label: 'Month',  title: 'This calendar month (plus overdue + in-progress)' },
   { value: 'custom', label: 'Custom', title: 'Pick an explicit due-date range below' },
 ];
@@ -112,7 +114,14 @@ export function matchesPeriod(
   now: number = Date.now(),
   customFromIso: string = '',
   customToIso: string = '',
+  /**
+   * PR-072 · overdue open tasks (due before now, so also before the
+   * range) pass Day / Week / Month. On by default; the My Tasks
+   * "Include overdue" checkbox turns it off.
+   */
+  opts: { includeOverdue?: boolean } = {},
 ): boolean {
+  const includeOverdue = opts.includeOverdue ?? true;
   if (period === 'any') return true;
 
   if (period === 'custom') {
@@ -131,8 +140,8 @@ export function matchesPeriod(
   if (task.endDate) {
     const dueMs = new Date(task.endDate).getTime();
     if (Number.isFinite(dueMs)) {
-      // Overdue open task — always pass.
-      if (dueMs < now && !TERMINAL_STATUSES.has(status)) return true;
+      // Overdue open task: passes while "Include overdue" is on.
+      if (includeOverdue && dueMs < now && !TERMINAL_STATUSES.has(status)) return true;
     }
   }
 
@@ -154,4 +163,44 @@ export function matchesPeriod(
   if (sMs != null && sMs >= r.startMs && sMs <= r.endMs) return true;
 
   return false;
+}
+
+/**
+ * PR-072 · the calendar range a Day / Week / Month period covers, or
+ * null for Any / Custom (Custom shows its own date inputs).
+ * Week start: there is no org-level week-start setting (HrSettings only
+ * carries weeklyRestDays, default Fri + Sat), so the week starts on
+ * Sunday, and per the QA5 UI-6 decision Week runs Sunday to Friday.
+ */
+export function periodRange(
+  period: MyTasksPeriod,
+  now: number = Date.now(),
+): { startMs: number; endMs: number } | null {
+  if (period === 'day') return dayRangeToday(now);
+  if (period === 'week') return weekRangeSunFri(now);
+  if (period === 'month') return monthRangeToday(now);
+  return null;
+}
+
+/**
+ * PR-072 · readable label for a date range, with the shared month / year
+ * written once: "Wed 25 Nov 2026", "Sun 22 – Fri 27 Nov 2026",
+ * "Sun 29 Nov – Fri 4 Dec 2026", "Sun 27 Dec 2026 – Fri 1 Jan 2027".
+ */
+export function formatRangeLabel(startMs: number, endMs: number): string {
+  const s = new Date(startMs);
+  const e = new Date(endMs);
+  const sameYear = s.getFullYear() === e.getFullYear();
+  const sameMonth = sameYear && s.getMonth() === e.getMonth();
+  const sameDay = sameMonth && s.getDate() === e.getDate();
+  const end = format(e, 'EEE d MMM yyyy');
+  if (sameDay) return end;
+  const start = format(s, sameMonth ? 'EEE d' : sameYear ? 'EEE d MMM' : 'EEE d MMM yyyy');
+  return `${start} – ${end}`;
+}
+
+/** PR-072 · label for the selected period's range, or null (Any / Custom). */
+export function periodRangeLabel(period: MyTasksPeriod, now: number = Date.now()): string | null {
+  const r = periodRange(period, now);
+  return r ? formatRangeLabel(r.startMs, r.endMs) : null;
 }

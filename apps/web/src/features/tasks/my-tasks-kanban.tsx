@@ -14,12 +14,12 @@ import { queryKeys } from '@/lib/query-keys';
 import { TaskCardBody } from '@/components/shared/task-card-body';
 import type { TabMode } from './my-tasks-kanban/types';
 import { columns } from './my-tasks-kanban/constants';
-import { getTaskScore } from './my-tasks-kanban/helpers';
+import { KANBAN_SORT_OPTIONS, KANBAN_SORT_STORAGE_KEY, parseKanbanSort, sortKanbanColumn, type KanbanSort } from './my-tasks-kanban/kanban-sort';
 import { DroppableColumn } from './my-tasks-kanban/droppable-column';
 import { UpcomingTab } from './my-tasks-kanban/upcoming-tab';
 import { TimeReportingTab } from './my-tasks-kanban/time-reporting-tab';
 import { PersonalTaskDialog } from './my-tasks-kanban/personal-task-dialog';
-import { PERIOD_OPTIONS, matchesPeriod, weekRangeSunFri, monthRangeToday, type MyTasksPeriod } from '@/lib/period-filter';
+import { PERIOD_OPTIONS, matchesPeriod, periodRangeLabel, weekRangeSunFri, monthRangeToday, type MyTasksPeriod } from '@/lib/period-filter';
 
 // UI-7 — The Done column auto-clears every Sunday to a this-week-only
 // view, with a "Show all" dropdown for peeking at earlier closed
@@ -90,6 +90,19 @@ export function MyTasksKanbanPage() {
   // `due-window.ts` control AND the "Include future tasks" checkbox;
   // both are gone (behavior preserved via the week overlay).
   const [period, setPeriod] = useState<MyTasksPeriod>('week');
+  // PR-072 · Day / Week / Month also show overdue open tasks whose due
+  // date is before the range (marked "Overdue" on the card). On by
+  // default; unticking narrows the view to the range itself.
+  const [includeOverdue, setIncludeOverdue] = useState(true);
+  // PR-072 · Kanban sort. 'default' keeps the per-column order below;
+  // 'due' sorts every column by due date (no date last). Per browser.
+  const [kanbanSort, setKanbanSort] = useState<KanbanSort>(() => {
+    try { return parseKanbanSort(localStorage.getItem(KANBAN_SORT_STORAGE_KEY)); } catch { return 'default'; }
+  });
+  const setKanbanSortAndPersist = (next: KanbanSort) => {
+    setKanbanSort(next);
+    try { localStorage.setItem(KANBAN_SORT_STORAGE_KEY, next); } catch { /* ignore */ }
+  };
   // Tier D #1 (personal-tasks) + #6a+b filters — personal task cut and
   // has-due-date cut. Both default to 'any' so the initial view is
   // unfiltered.
@@ -182,7 +195,7 @@ export function MyTasksKanbanPage() {
   };
   const tasks = useMemo(() => {
     return allTasks.filter((t) => {
-      if (!matchesPeriod(t, period, now, filterDueFrom, filterDueTo)) return false;
+      if (!matchesPeriod(t, period, now, filterDueFrom, filterDueTo, { includeOverdue })) return false;
       if (filterProjectId && t.project?.id !== filterProjectId) return false;
       if (filterServiceId && t.phaseId !== filterServiceId) return false;
       if (filterPhaseName) {
@@ -207,9 +220,11 @@ export function MyTasksKanbanPage() {
       if (activeTab === 'kanban' && !revealHiddenKanban && !kanbanBoardShouldShow(t)) return false;
       return true;
     });
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, revealHiddenKanban, period, now]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, revealHiddenKanban, period, now, includeOverdue]);
 
-  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo || filterKind || filterHasDue || period !== 'week');
+  const hasActiveFilter = !!(filterProjectId || filterServiceId || filterPhaseName || filterPriority || filterDueFrom || filterDueTo || filterKind || filterHasDue || period !== 'week' || !includeOverdue);
+  // PR-072 · the selected Day / Week / Month range, spelled out.
+  const rangeLabel = periodRangeLabel(period, now);
 
   // Count of tasks the Kanban-only "needs due date or in_progress"
   // rule is excluding right now — feeds the "N hidden — no due date
@@ -220,7 +235,7 @@ export function MyTasksKanbanPage() {
     if (revealHiddenKanban) return 0;
     let count = 0;
     for (const t of allTasks) {
-      if (!matchesPeriod(t, period, now, filterDueFrom, filterDueTo)) continue;
+      if (!matchesPeriod(t, period, now, filterDueFrom, filterDueTo, { includeOverdue })) continue;
       if (filterProjectId && t.project?.id !== filterProjectId) continue;
       if (filterServiceId && t.phaseId !== filterServiceId) continue;
       if (filterPhaseName) {
@@ -235,7 +250,7 @@ export function MyTasksKanbanPage() {
       if (!kanbanBoardShouldShow(t)) count++;
     }
     return count;
-  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, revealHiddenKanban, period, now]);
+  }, [allTasks, filterProjectId, filterServiceId, filterPhaseName, filterPriority, filterDueFrom, filterDueTo, filterKind, filterHasDue, activeTab, revealHiddenKanban, period, now, includeOverdue]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -273,22 +288,12 @@ export function MyTasksKanbanPage() {
         other[status].push(task);
       }
     }
-    map.not_started.sort((a, b) => getTaskScore(b) - getTaskScore(a));
-    map.in_progress.sort((a, b) => {
-      if (!a.endDate && !b.endDate) return 0;
-      if (!a.endDate) return 1;
-      if (!b.endDate) return -1;
-      return new Date(a.endDate).getTime() - new Date(b.endDate).getTime();
-    });
-    // Newest completions first in the Done column so the freshest
-    // finishes float to the top.
-    map.completed.sort((a, b) => {
-      const au = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
-      const bu = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
-      return bu - au;
-    });
+    // Column order: 'default' = To Do by urgency score, In Progress by
+    // due date, Done newest first; 'due' (PR-072) = every column by due
+    // date ascending, no date last. See kanban-sort.ts.
+    for (const col of columns) map[col.id] = sortKanbanColumn(col.id, map[col.id], kanbanSort);
     return { columnMap: map, otherByStatus: other };
-  }, [tasks, doneWindow, now]);
+  }, [tasks, doneWindow, now, kanbanSort]);
 
   // Keep the original name so existing consumers below still work.
   const columnTasks = columnMap;
@@ -476,6 +481,30 @@ export function MyTasksKanbanPage() {
             <option key={opt.value} value={opt.value} title={opt.title}>{opt.label}</option>
           ))}
         </select>
+        {/* PR-072 · spell out the selected range, and let the user drop
+            the overdue carry-over (on by default). */}
+        {rangeLabel && (
+          <>
+            <span
+              className="text-[12px] font-medium text-slate-700 dark:text-slate-200 tabular-nums whitespace-nowrap"
+              aria-live="polite"
+            >
+              {rangeLabel}
+            </span>
+            <label
+              className="flex items-center gap-1.5 text-[12px] text-slate-600 dark:text-slate-300 cursor-pointer select-none"
+              title="Also show open tasks whose due date has already passed"
+            >
+              <input
+                type="checkbox"
+                checked={includeOverdue}
+                onChange={(e) => setIncludeOverdue(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-slate-300 dark:border-slate-600 cursor-pointer"
+              />
+              Include overdue
+            </label>
+          </>
+        )}
         {/* Due-date range — only visible when period='custom'. The
             period select above IS the primary period filter now; the
             range inputs are the escape hatch for a specific slice. */}
@@ -514,6 +543,7 @@ export function MyTasksKanbanPage() {
               // overrides), not "any" — that's what the user lands on
               // when they first open the page.
               setPeriod('week');
+              setIncludeOverdue(true);
             }}
             className="text-[12px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline"
           >
@@ -524,6 +554,20 @@ export function MyTasksKanbanPage() {
             now, right-aligned next to the tasks-count summary. Same
             wording and behaviour as before — only the position moved. */}
         <div className="ml-auto flex items-center gap-2">
+          {/* PR-072 · Kanban sort: existing per-column order, or due date. */}
+          {activeTab === 'kanban' && (
+            <select
+              value={kanbanSort}
+              onChange={(e) => setKanbanSortAndPersist(parseKanbanSort(e.target.value))}
+              className="rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] text-slate-700 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-600 focus:outline-none focus:border-blue-400"
+              title="Sort the Kanban columns"
+              aria-label="Sort the Kanban columns"
+            >
+              {KANBAN_SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          )}
           {activeTab === 'kanban' && kanbanHiddenCount > 0 && !revealHiddenKanban && (
             <button
               type="button"

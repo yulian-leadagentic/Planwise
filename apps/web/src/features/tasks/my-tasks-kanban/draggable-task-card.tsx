@@ -79,6 +79,17 @@ export function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDra
             להתחיל
           </span>
         )}
+        {/* PR-072 · explicit overdue mark. Day / Week / Month carry
+            overdue open tasks in from before the range, so say so on the
+            card, not only via the red due pill. */}
+        {health.isOverdue && (
+          <span
+            className="shrink-0 inline-block rounded-[5px] bg-red-50 dark:bg-red-500/15 text-red-600 dark:text-red-300 text-[11px] font-bold tracking-wide px-2 py-0.5"
+            title={dueReason}
+          >
+            Overdue
+          </span>
+        )}
         {showAssigneeCount && (
           <span
             className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-700 shrink-0 dark:bg-amber-500/15 dark:border-amber-500/40 dark:text-amber-300"
@@ -88,7 +99,7 @@ export function DraggableTaskCard({ task, onOpenDrawer }: { task: any; onOpenDra
             {assignees.length}
           </span>
         )}
-        {health.level === 'critical' && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
+        {health.level === 'critical' && !health.isOverdue && <AlertCircle className="h-3.5 w-3.5 text-red-600 shrink-0" />}
         {health.level === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-amber-600 shrink-0" />}
         {/* MT-2 (QA4 · 2026-09-29): task-notes affordance. When the
             task has a description, show a small (i) icon top-right;
