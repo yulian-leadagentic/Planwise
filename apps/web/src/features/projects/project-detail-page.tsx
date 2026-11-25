@@ -32,7 +32,8 @@ import { PresenceIndicator } from '@/components/shared/presence-indicator';
 import { cn } from '@/lib/utils';
 import { notify, isPermissionDenied } from '@/lib/notify';
 import client from '@/api/client';
-import { getInitials, formatShortDate } from './project-detail/utils';
+import { getInitials } from './project-detail/utils';
+import { formatProjectTimeline } from './project-end-date';
 import type { Tab } from './project-detail/types';
 import { ProjectCloseControl } from './project-detail/project-close-control';
 import { ProjectPrevNext } from './project-detail/project-prev-next';
@@ -126,9 +127,9 @@ export function ProjectDetailPage() {
 
   const leader = members?.find((m) => m.role?.toLowerCase() === 'leader' || m.role?.toLowerCase() === 'project leader');
   const memberCount = members?.length ?? 0;
-  const startLabel = formatShortDate(project.startDate);
-  const endLabel = formatShortDate(project.endDate);
-  const timeline = startLabel && endLabel ? `${startLabel} — ${endLabel}` : startLabel || endLabel || null;
+  // PR-061: an open-ended end (9999-12-31 / none) reads "ללא תאריך סיום",
+  // not "Dec 9999".
+  const timeline = formatProjectTimeline(project.startDate, project.endDate);
 
   // Per-project Workload was removed in favour of the global Operations
   // dashboard (/operations), which shows workload across all projects in one

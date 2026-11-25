@@ -14,6 +14,11 @@ import { cn } from '@/lib/utils';
 import { PeopleMultiSelect, type Person } from '@/components/shared/people-multi-select';
 import { Field, SelectField } from '@/components/shared/field';
 import { buildTree } from '@/features/admin/organization-page/build-tree';
+import {
+  OPEN_ENDED_END_DATE,
+  isOpenEnded,
+  nextEndDateOnStartChange,
+} from './project-end-date';
 
 // Empty-string → undefined preprocessor. Lets `.optional()` pass for
 // blank fields without z.coerce.number() turning '' into NaN and
@@ -256,10 +261,12 @@ export function ProjectFormPage() {
   const [quickLinkUrl, setQuickLinkUrl] = useState('');
   const [quickLinkName, setQuickLinkName] = useState('');
 
-  // Default end date is "open-ended" — projects without a known finish date
-  // get 9999-12-31, matching how SAP-style time-bounded relationships use a
-  // far-future sentinel. Users can pick a real date if they have one.
-  const DEFAULT_OPEN_END_DATE = '9999-12-31';
+  // PR-061: a new project's End Date is Start + 3 years and follows Start
+  // until the user edits End by hand (see project-end-date.ts). Edit mode
+  // keeps the old far-future sentinel as the fallback for projects saved
+  // without an end date, so the field is never blank there.
+  const DEFAULT_OPEN_END_DATE = OPEN_ENDED_END_DATE;
+  const endDateEditedByUser = useRef(false);
 
   const {
     register,
@@ -267,13 +274,16 @@ export function ProjectFormPage() {
     reset,
     watch,
     setValue,
+    getValues,
     trigger,
     formState: { errors },
   } = useForm<ProjectFormData>({
     resolver: zodResolver(projectSchema),
     defaultValues: {
       status: 'draft',
-      endDate: DEFAULT_OPEN_END_DATE,
+      // PR-061: blank until Start is picked, then Start + 3 years.
+      startDate: '',
+      endDate: '',
       // Array default so the chip picker starts empty and zod's min(1)
       // fires as "please select at least one" instead of a
       // "Required"/"undefined" schema mismatch.
@@ -355,6 +365,11 @@ export function ProjectFormPage() {
   }, [project, isEdit, reset, existingCustomerRel]);
 
   if (isEdit && projectLoading) return <PageSkeleton />;
+
+  // PR-061: wrapped below so Start can drive End on a new project.
+  const startDateField = register('startDate');
+  const endDateField = register('endDate');
+  const endDateValue = watch('endDate');
 
   // Helper: detect cloud-storage providers in a URL so we can give a sensible
   // default display name (mirrors the heuristic in files-tab.tsx).
@@ -928,19 +943,51 @@ export function ProjectFormPage() {
                   </div>
                 )}
 
-                {/* Start Date */}
+                {/* Start Date. PR-061: on a new project, End follows
+                    Start (+3 years) until End is edited by hand. */}
                 <div>
                   <label className={labelClass}>Start Date</label>
-                  <input {...register('startDate')} type="date" className={inputClass} />
+                  <input
+                    {...startDateField}
+                    onChange={(e) => {
+                      void startDateField.onChange(e);
+                      if (isEdit) return;
+                      setValue(
+                        'endDate',
+                        nextEndDateOnStartChange({
+                          startDate: e.target.value,
+                          currentEndDate: getValues('endDate'),
+                          endDateEditedByUser: endDateEditedByUser.current,
+                        }),
+                        { shouldDirty: true },
+                      );
+                    }}
+                    type="date"
+                    className={inputClass}
+                  />
                 </div>
 
                 {/* End Date */}
                 <div>
                   <label className={labelClass}>End Date</label>
-                  <input {...register('endDate')} type="date" className={inputClass} />
-                  <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-                    Defaults to <code>9999-12-31</code> (open-ended) — set a real date when the project has a known finish.
-                  </p>
+                  <input
+                    {...endDateField}
+                    onChange={(e) => {
+                      endDateEditedByUser.current = true;
+                      void endDateField.onChange(e);
+                    }}
+                    type="date"
+                    className={inputClass}
+                  />
+                  {!isEdit ? (
+                    <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                      Fills in as 3 years after the start date. Change it if the project has a known finish.
+                    </p>
+                  ) : isOpenEnded(endDateValue) ? (
+                    <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                      No end date set. Pick a real date when the project has a known finish.
+                    </p>
+                  ) : null}
                 </div>
 
                 {/* Authoring Tool Version — free text (Y2). Also editable
