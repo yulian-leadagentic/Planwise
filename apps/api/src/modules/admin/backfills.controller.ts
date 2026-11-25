@@ -23,6 +23,10 @@ import {
 } from '../business-partners/business-partners.service';
 import { P1CopiesToRefsService, parseP1CopiesToRefsBody } from './p1-copies-to-refs.service';
 import { Qa6AssigneesToTeamService, parseQa6AssigneesToTeamBody } from './qa6-assignees-to-team.service';
+import {
+  parseQa6SupplierBody,
+  runQa6SupplierClassification,
+} from './qa6-supplier-classification';
 
 /**
  * One-shot admin backfill endpoints — mutations that fix historical
@@ -3036,6 +3040,38 @@ export class BackfillsController {
   ) {
     const { dryRun } = parseQa6AssigneesToTeamBody(body);
     return this.qa6AssigneesToTeam.run({ dryRun, actorId: user?.id });
+  }
+
+  /**
+   * QA6 package 9 · Supplier (2026-11-25). The project "Supplier" role
+   * showed "No eligible organizations": the role requires the org to
+   * hold the `supplier` partner role and no organization does (imports
+   * type new orgs as `partner`; nothing tags suppliers automatically).
+   * Full diagnosis + rules: `qa6-supplier-classification.ts`.
+   *
+   * Same contract as `p1-copies-to-refs`: DRY-RUN IS THE DEFAULT and
+   * the switch is in the BODY:
+   *
+   *   { "dryRun"?: boolean, "orgIds"?: number[] }
+   *
+   *   • `dryRun` — only the boolean `false` writes.
+   *   • `orgIds` — classify exactly these organizations (hand-picked
+   *     from the dry-run's `otherOrganizations`). Without it only
+   *     organizations with a supplier signal are planned. A malformed
+   *     list is a 400.
+   *
+   * Writes only `business_partner_roles` (+ `main_role_type_id` where
+   * it was null), one transaction, never the home org. Idempotent.
+   */
+  @Post('qa6-supplier-classification')
+  @RequirePermissions({ module: 'admin', action: 'write' })
+  @ApiOperation({
+    summary:
+      'QA6 · Backfill · give organizations the Supplier partner role so the project Supplier role has eligible parties. Body { dryRun?: boolean (default TRUE, only false writes), orgIds?: number[] }. Returns the rule, findings, plan with reasons, counts.',
+  })
+  async runQa6SupplierClassification(@Body() body?: { dryRun?: boolean; orgIds?: number[] }) {
+    const options = parseQa6SupplierBody(body);
+    return runQa6SupplierClassification(this.prisma, options);
   }
 }
 

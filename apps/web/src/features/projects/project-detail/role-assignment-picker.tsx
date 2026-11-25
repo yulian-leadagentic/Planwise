@@ -378,6 +378,11 @@ export function RoleAssignmentPicker({
   });
 
   const criteria = useMemo(() => roleCriteriaLines(role, orgFirst), [role, orgFirst]);
+  // QA6 Supplier — actionable empty state: name the partner role the
+  // organization is missing (e.g. "supplier") and where to set it.
+  const requiredRoleLabel = role.requiredPartnerRoleCode
+    ? role.requiredPartnerRoleCode.replace(/_/g, ' ').toLowerCase()
+    : null;
   const isDirty =
     selectedOrgKey !== ''
     || selectedPartyId != null
@@ -459,8 +464,9 @@ export function RoleAssignmentPicker({
                 </select>
                 {!candidatesLoading && step1Orgs.length === 0 && (orgIsParty || independentCount === 0) && (
                   <p className={emptyClass}>
-                    No eligible organizations yet.
-                    Add one that meets the criteria above under Organizations first.
+                    {requiredRoleLabel
+                      ? `No organization is marked as ${article(requiredRoleLabel)} ${requiredRoleLabel} yet. Open it under Organizations and add ${requiredRoleLabel.charAt(0).toUpperCase()}${requiredRoleLabel.slice(1)} to its Role(s), then try again.`
+                      : 'No eligible organizations yet. Add one that meets the criteria above under Organizations first.'}
                   </p>
                 )}
                 {/* Organization-only roles: explain the ineligible
