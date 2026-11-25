@@ -815,7 +815,9 @@ export class ExecutionPlanningService {
       const budget = Number(p.budget ?? 0);
       const budgetUsed = bd ? bd.budgetAmount : 0;
       const budgetPct = budget > 0 ? Math.round(budgetUsed / budget * 100) : 0;
-      const daysLeft = p.endDate ? Math.round((new Date(p.endDate).getTime() - now.getTime()) / 86400000) : null;
+      // QA6 PR-061 — 9999-12-31 = no end date: never a days-left figure.
+      const openEnded = isOpenEndedDate(p.endDate);
+      const daysLeft = p.endDate && !openEnded ? Math.round((new Date(p.endDate).getTime() - now.getTime()) / 86400000) : null;
       const loggedHours = bd ? Math.round(bd.loggedMinutes / 60) : 0;
       const budgetHours = bd ? bd.budgetHours : 0;
       const progressPct = budgetHours > 0 ? Math.min(100, Math.round(loggedHours / budgetHours * 100)) : 0;
@@ -837,7 +839,7 @@ export class ExecutionPlanningService {
         // B-11 — budget, budgetUsed and budgetPct go together (any two
         // give the third away).
         ...(showFinance ? { budget, budgetUsed, budgetPct } : {}),
-        daysLeft, riskFactors,
+        endDate: p.endDate ?? null, openEnded, daysLeft, riskFactors,
         overdueTasks: projectOverdue.map((t) => ({
           id: t.id, code: t.code, name: t.name,
           zone: t.zone?.name ?? 'Project Root',
@@ -1494,12 +1496,19 @@ export class ExecutionPlanningService {
   // for its group-by / filter / sort / CSV — status, priority, phase,
   // department, service, assignee, dates, hours.
   //
-  // Pagination is applied server-side: capped at `take` rows (default
-  // 200), the total available count is returned so the UI can show a
-  // "showing first N of M" affordance rather than silently truncating.
+  // QA6 PR-080 — NO page cap any more (it was 200 by default, so staging
+  // showed 200 of 341). Every open task in scope comes back in one
+  // response: the tab's search, column filters, due window, department
+  // filter, group-by and CSV all work on the whole set, which server
+  // pagination would break (each of them would have to move server-side).
+  // 341 rows is ~240 KB of JSON before gzip; the web renders the rows
+  // progressively. EXECUTIVE_REVIEW_MAX_ROWS is only a guardrail
+  // (`truncated: true` past it). `take` is still read so an older client
+  // can ask for less; it is never a default.
   async getExecutiveReview(user: { id: number; isAdmin: boolean }, myDeptOnlyRaw?: string, takeRaw?: string) {
     const { scopeToMyDept } = this.resolveOpsScope(user, myDeptOnlyRaw);
-    const take = Math.min(500, Math.max(50, Number(takeRaw ?? 200) || 200));
+    const asked = Number(takeRaw);
+    const take = Number.isInteger(asked) && asked > 0 ? Math.min(asked, EXECUTIVE_REVIEW_MAX_ROWS) : EXECUTIVE_REVIEW_MAX_ROWS;
 
     const acc = await this.access.getAccessibleProjectIds(user.id, user.isAdmin);
     const projectScope = acc.all ? {} : { id: { in: acc.projectIds } };
@@ -1528,6 +1537,7 @@ export class ExecutionPlanningService {
       return {
         tasks: [],
         totalCount: 0,
+        truncated: false,
         take,
         scope: { myDeptOnly: applyDeptScope, deptName: applyDeptScope ? callerDept : null },
       };
@@ -1547,7 +1557,13 @@ export class ExecutionPlanningService {
           id: true, code: true, name: true, status: true, priority: true,
           budgetHours: true, endDate: true, startDate: true, updatedAt: true,
           zone: { select: { id: true, name: true } },
-          project: { select: { id: true, name: true, number: true, department: { select: { id: true, name: true } } } },
+          project: {
+            select: {
+              id: true, name: true, number: true,
+              orgUnit: { select: { id: true, name: true } },
+              department: { select: { id: true, name: true } },
+            },
+          },
           phase: { select: { id: true, name: true } },
           serviceType: { select: { id: true, name: true, code: true, color: true } },
           assignees: {
@@ -1584,7 +1600,12 @@ export class ExecutionPlanningService {
       zone: t.zone ? { id: t.zone.id, name: t.zone.name } : null,
       project: t.project ? {
         id: t.project.id, name: t.project.name, number: t.project.number,
-        department: t.project.department ? { id: t.project.department.id, name: t.project.department.name } : null,
+        // QA6 PR-080 — the department filter / group-by read the org
+        // tree: the project's OrgUnit, else the legacy Department
+        // (Project.orgUnitId is preferred, departmentId is the fallback).
+        department: t.project.orgUnit
+          ? { id: t.project.orgUnit.id, name: t.project.orgUnit.name }
+          : t.project.department ? { id: t.project.department.id, name: t.project.department.name } : null,
       } : null,
       phase: t.phase ? { id: t.phase.id, name: t.phase.name } : null,
       service: t.serviceType ? { id: t.serviceType.id, name: t.serviceType.name, code: t.serviceType.code ?? null, color: t.serviceType.color ?? null } : null,
@@ -1603,6 +1624,8 @@ export class ExecutionPlanningService {
     return {
       tasks: shaped,
       totalCount,
+      // QA6 PR-080 — true only past the guardrail / an explicit smaller `take`.
+      truncated: shaped.length < totalCount,
       take,
       scope: { myDeptOnly: applyDeptScope, deptName: applyDeptScope ? callerDept : null },
     };
@@ -1785,6 +1808,26 @@ export class ExecutionPlanningService {
     return { days: Math.ceil(maxPath), cycleIds: [...detectedCycleIds] };
   }
 }
+
+// ─── QA6 PR-061 ────────────────────────────────────────────────────────
+
+/**
+ * The "no end date" sentinel projects were imported with (9999-12-31);
+ * any end date from year 9000 on. Same rule as the web's
+ * `apps/web/src/lib/project-dates.ts` › isOpenEnded.
+ */
+export function isOpenEndedDate(endDate: Date | string | null | undefined): boolean {
+  if (endDate == null) return false;
+  const d = endDate instanceof Date ? endDate : new Date(endDate);
+  return !Number.isNaN(d.getTime()) && d.getUTCFullYear() >= 9000;
+}
+
+/**
+ * QA6 PR-080 — Executive Review returns every task in scope. This is a
+ * guardrail against a pathological payload, not a page size: at ~0.7 KB
+ * a row it is ~7 MB; past it the response says `truncated: true`.
+ */
+export const EXECUTIVE_REVIEW_MAX_ROWS = 10_000;
 
 // ─── QA6 P3 helpers ────────────────────────────────────────────────────
 

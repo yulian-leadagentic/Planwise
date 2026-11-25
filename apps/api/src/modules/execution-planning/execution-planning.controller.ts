@@ -281,9 +281,9 @@ export class ExecutionPlanningController {
     );
   }
 
-  // Executive Review tab — capped task list (default 200) with
-  // per-task ops note (the "Comment" column). totalCount is returned
-  // so the UI can render "showing first N of M". (feat/ops-complete)
+  // Executive Review tab — EVERY open task in scope (QA6 PR-080: the
+  // 200-row cap is gone; `take` only narrows) with the per-task ops note
+  // (the "Comment" column) and totalCount / truncated. (feat/ops-complete)
   @Get('dashboard/operations/executive-review')
   @RequirePermissions(OPERATIONS_READ)
   @ApiOperation({ summary: 'Operations dashboard — executive review task list with per-task ops note' })

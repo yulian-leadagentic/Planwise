@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ClipboardList, Download, ExternalLink, MessageSquare, Search, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -11,20 +11,29 @@ import { StatusBadge } from '@/components/shared/status-badge';
 import { PriorityBadge } from '@/components/shared/priority-badge';
 import { ColumnFilter, useColumnFilters, type ColumnFilterConfig } from '@/components/shared/column-filter';
 import { OpsAvatar, OpsErrorBanner, opsErrorMessage } from './ops-shared';
+import {
+  RENDER_STEP,
+  countLabel,
+  departmentOptions,
+  matchesDepartment,
+  windowGroups,
+} from './executive-review.util';
 
 /**
  * Executive Review tab (feat/ops-complete).
  *
- * Server-side capped task list (default 200, max 500) with a Comment
- * column persisted per-task via TaskOpsNote. Group-by, filter and
- * sort operate on the current page. CSV export writes the current
- * VIEW (filters + group applied), not the raw response — that matches
- * what the operator actually sees on-screen.
+ * QA6 PR-080 — the WHOLE task list in scope (the server's 200-row cap is
+ * gone: staging showed 200 of 341), with a Comment column persisted
+ * per-task via TaskOpsNote. Group-by, filters (incl. department) and
+ * sort operate on every row; the rows enter the DOM RENDER_STEP at a
+ * time as the list is scrolled. CSV export writes the current VIEW
+ * (filters + group applied, all rows), not the raw response — that
+ * matches what the operator actually sees on-screen.
  *
  * Comment column is inline-editable. Save on blur or Enter; Escape
  * cancels; empty content clears the note server-side. Optimistic-ish:
  * the mutation invalidates the tab's cache on success rather than
- * patching a single cell — the whole tab is 200 rows max, so the
+ * patching a single cell — the whole tab is a few hundred rows, so the
  * refetch is cheap and stays honest to the server's canonical state.
  */
 
@@ -55,6 +64,8 @@ type ExecTask = {
 type ExecutiveReviewResponse = {
   tasks: ExecTask[];
   totalCount: number;
+  /** QA6 PR-080 — true only past the server guardrail. */
+  truncated?: boolean;
   take: number;
   scope: { myDeptOnly: boolean; deptName: string | null };
 };
@@ -170,6 +181,11 @@ export function ExecutiveReviewTab({
   // QA4 Wave-2 ER-2 — "With due date only" toggle. Defaults to false so
   // we don't change what an existing user sees until they opt in.
   const [withDueOnly, setWithDueOnly] = useState(false);
+  // QA6 PR-080 — department filter (the project's org unit), on top of
+  // the group-by and the page's "My department only".
+  const [deptFilter, setDeptFilter] = useState('');
+  const [renderLimit, setRenderLimit] = useState(RENDER_STEP);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<ExecutiveReviewResponse>({
     queryKey: ['dashboard', 'operations', 'executive-review', { myDeptOnly }],
@@ -195,7 +211,7 @@ export function ExecutiveReviewTab({
   // endpoint used by the planning grid + task drawer, so any listener
   // downstream (activity log, planning refetch) sees the change. Empty
   // string clears the date. Refetches on success — the tab is server-
-  // capped at ~200 rows so a full invalidate is cheap.
+  // a few hundred rows (QA6 PR-080) so a full invalidate is cheap.
   const dueDateMutation = useMutation({
     mutationFn: ({ taskId, endDate }: { taskId: number; endDate: string | null }) =>
       tasksApi.update(taskId, { endDate }),
@@ -209,7 +225,7 @@ export function ExecutiveReviewTab({
 
   // QA4 Wave-2 ER-1: uniform per-column filter row driven by the
   // shared `useColumnFilters` helper (same one People / admin tables
-  // use). Filters act on the loaded rows (server returns first 200),
+  // use). Filters act on the loaded rows (every task in scope since QA6 PR-080),
   // consistent with the existing search.
   //
   // Distinct STATUS / PRIORITY options are derived from the current
@@ -278,19 +294,23 @@ export function ExecutiveReviewTab({
       if (!matchesDueWindow(t.endDate, dueWindow, now)) return false;
       if (sf && !(t.service?.name ?? '').toLowerCase().includes(sf)) return false;
       if (withDueOnly && !t.endDate) return false;
+      if (!matchesDepartment(t, deptFilter)) return false;
       return true;
     });
-  }, [colFiltered, search, dueWindow, serviceFilter, withDueOnly]);
+  }, [colFiltered, search, dueWindow, serviceFilter, withDueOnly, deptFilter]);
+
+  const deptOptions = useMemo(() => departmentOptions(tasks), [tasks]);
 
   // Convenience: "any filter active?" for the Clear-filters affordance.
   const anyFilterActive =
-    colFilterActive || !!search.trim() || dueWindow !== 'all' || !!serviceFilter.trim() || withDueOnly;
+    colFilterActive || !!search.trim() || dueWindow !== 'all' || !!serviceFilter.trim() || withDueOnly || !!deptFilter;
   const clearAllFilters = () => {
     clearColFilters();
     setSearch('');
     setDueWindow('all');
     setServiceFilter('');
     setWithDueOnly(false);
+    setDeptFilter('');
   };
 
   const grouped = useMemo(() => {
@@ -305,6 +325,21 @@ export function ExecutiveReviewTab({
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([key, tasks]) => ({ key, tasks }));
   }, [filtered, groupBy]);
+
+  // QA6 PR-080 — every row is loaded; they enter the DOM RENDER_STEP at
+  // a time. A new filter / grouping starts again from the top.
+  useEffect(() => { setRenderLimit(RENDER_STEP); }, [filtered, groupBy]);
+  const visibleGroups = useMemo(() => windowGroups(grouped, renderLimit), [grouped, renderLimit]);
+  const moreToRender = renderLimit < filtered.length;
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !moreToRender || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setRenderLimit((n) => n + RENDER_STEP);
+    }, { rootMargin: '400px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [moreToRender, visibleGroups]);
 
   const commitNote = (taskId: number) => {
     const value = editDraft.trim();
@@ -343,7 +378,12 @@ export function ExecutiveReviewTab({
     );
   }
 
-  const showingMore = (data?.totalCount ?? 0) > (data?.take ?? 0);
+  const totalLabel = countLabel({
+    loaded: tasks.length,
+    total: data?.totalCount ?? tasks.length,
+    shown: filtered.length,
+    truncated: data?.truncated === true,
+  });
 
   return (
     <div className="space-y-3">
@@ -413,6 +453,23 @@ export function ExecutiveReviewTab({
           />
         </div>
         <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-3">
+          <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400" htmlFor="exec-department">
+            Department
+          </label>
+          <select
+            id="exec-department"
+            value={deptFilter}
+            onChange={(e) => setDeptFilter(e.target.value)}
+            aria-label="Filter by department"
+            className="max-w-[180px] text-[12px] bg-transparent border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 focus:outline-none focus-visible:border-blue-500"
+          >
+            <option value="">All</option>
+            {deptOptions.map((o) => (
+              <option key={o.value} value={o.value}>{`${o.label} (${o.count})`}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-1 border-l border-slate-200 dark:border-slate-700 pl-3">
           <label className="text-[11px] font-semibold text-slate-500 dark:text-slate-400" htmlFor="exec-group">
             Group
           </label>
@@ -449,10 +506,8 @@ export function ExecutiveReviewTab({
           <Download className="h-3 w-3" aria-hidden="true" />
           CSV
         </button>
-        <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500 font-mono tabular-nums">
-          {showingMore
-            ? `Showing first ${data?.take ?? 0} of ${data?.totalCount ?? 0}`
-            : `${data?.totalCount ?? 0} task${(data?.totalCount ?? 0) === 1 ? '' : 's'}`}
+        <span className="ml-auto text-[11px] text-slate-400 dark:text-slate-500 font-mono tabular-nums" data-testid="exec-count">
+          {totalLabel}
         </span>
       </div>
 
@@ -470,13 +525,13 @@ export function ExecutiveReviewTab({
         </div>
       ) : (
         <div className="space-y-4">
-          {grouped.map((g) => (
+          {visibleGroups.map((g) => (
             <div key={g.key || 'ungrouped'}>
               {g.key && (
                 <div className="flex items-center gap-2 mb-2">
                   <span className="w-1 h-4 rounded-sm bg-indigo-500" />
                   <h3 className="text-[13px] font-bold text-slate-900 dark:text-slate-100">{g.key}</h3>
-                  <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500 font-mono tabular-nums">— {g.tasks.length}</span>
+                  <span className="text-[11px] font-medium text-slate-400 dark:text-slate-500 font-mono tabular-nums">· {g.total}</span>
                 </div>
               )}
               <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden">
@@ -698,6 +753,18 @@ export function ExecutiveReviewTab({
               </div>
             </div>
           ))}
+          {moreToRender && (
+            <div ref={sentinelRef} className="flex items-center justify-center gap-2 py-3 text-[11px] text-slate-400 dark:text-slate-500">
+              <span className="font-mono tabular-nums">{Math.min(renderLimit, filtered.length)} of {filtered.length}</span>
+              <button
+                type="button"
+                onClick={() => setRenderLimit(filtered.length)}
+                className="font-semibold text-blue-600 hover:underline focus-visible:outline-none"
+              >
+                Show all
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
