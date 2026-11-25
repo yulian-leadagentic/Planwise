@@ -16,6 +16,18 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { createPickedMenuFocus } from '@/components/ui/menu-focus';
+import {
+  type ColFilters,
+  type PlanningTabFilters,
+  PLANNING_FILTERS_DEFAULT,
+  EMPTY_COL_FILTERS,
+  EMPTY_BUCKET,
+  COL_FILTER_KEYS,
+  resolveTaskService,
+  serviceFilterOptions,
+  taskPassesColFilter,
+  taskPassesPlanningFilters,
+} from './planning-task-filter';
 import { planningApi, zonesApi, templatesApi } from '@/api/zones.api';
 import { projectsApi, type AssigneeCandidate } from '@/api/projects.api';
 import { tasksApi } from '@/api/tasks.api';
@@ -622,49 +634,11 @@ function usePersistedCollapse(
 // prop-drilling. The ColHeader component below renders the label plus a
 // funnel icon; clicking opens a small popover with a text input or a
 // value picker depending on the column kind.
-
-export interface ColFilters {
-  code: string;
-  name: string;
-  zone: string;
-  deliverable: string;
-  service: string;
-  status: string;
-  assignee: string; // user id as string
-}
-
-// #5 · persisted Planning-tab filter block.
 //
-// Combined shape stored under
-// `planwise:project:<projectId>:planning-filters`. Keeps the main
-// "Filters" popover (status / priority / assignee / date / has-due)
-// alongside the per-column funnels (`col`) so one localStorage write
-// covers both, and the user sees exactly the view they left behind
-// after switching tabs. Field names stay plain and JSON-serialisable
-// (no Map / Set / Date) so the hook's try/catch read is bulletproof.
-export interface PlanningTabFilters {
-  status: string;
-  priority: string;
-  assigneeIds: number[];
-  startFrom: string;
-  startTo: string;
-  dueFrom: string;
-  dueTo: string;
-  hasDue: '' | 'yes' | 'no';
-  col: ColFilters;
-}
-
-const PLANNING_FILTERS_DEFAULT: PlanningTabFilters = {
-  status: '',
-  priority: '',
-  assigneeIds: [],
-  startFrom: '',
-  startTo: '',
-  dueFrom: '',
-  dueTo: '',
-  hasDue: '',
-  col: { code: '', name: '', zone: '', deliverable: '', service: '', status: '', assignee: '' },
-};
+// The filter shapes, the persisted defaults and the predicate itself live
+// in ./planning-task-filter (pure, unit-tested; QA6 PR-068). The types are
+// re-exported here for existing importers.
+export type { ColFilters, PlanningTabFilters };
 
 interface TaskFilterCtx {
   filters: ColFilters;
@@ -751,64 +725,9 @@ const PlanningSubGroupContext = createContext<PlanningSubGroupCtx | null>(null);
 // same function is now imported at the top of this file and shared
 // with deliverable-planning-tab so both surfaces agree on the label.
 
-/**
- * Resolve the SERVICE column value for a project task. Read-time
- * fallback chain — many project tasks have `task.phaseId = NULL`
- * because applyProjectTemplate didn't consistently propagate the source
- * template's phase onto the created task. Walk every source of truth:
- *
- *   1. task.phase                                     (direct FK, editable)
- *   2. task.projectDeliverable.service                (parent deliverable's service,
- *                                                      NOW included on the payload)
- *   3. task.deliverableTemplate.phase                 (source template's phase,
- *                                                      NOW included on the payload)
- *   4. projectDeliverable(byId).service               (via ProjectDeliverablesContext)
- *   5. projectDeliverable(byTemplateId).service       (via ProjectDeliverablesContext)
- *
- * Returns `{ name, color }` or nulls when nothing resolves.
- */
-function resolveTaskService(
-  t: any,
-  lookups?: ProjectDeliverableLookups,
-): { name: string | null; color: string | null } {
-  // Server-resolved service (planning.service.ts walks the full chain,
-  // including a marker→template.name JOIN for legacy inline zone-tasks
-  // that have no deliverableTemplateId FK). Preferred over any local
-  // fallback because it has DB access to the templates table.
-  if (t.service?.name) {
-    return { name: t.service.name, color: t.service.color ?? null };
-  }
-  if (t.phase?.name) {
-    return { name: t.phase.name, color: t.phase.color ?? null };
-  }
-  // Direct on the task payload (planning-data endpoint includes these
-  // relations for exactly this fallback — see planning.service.ts).
-  if (t.projectDeliverable?.service?.name) {
-    return {
-      name: t.projectDeliverable.service.name,
-      color: t.projectDeliverable.service.color ?? null,
-    };
-  }
-  if (t.deliverableTemplate?.phase?.name) {
-    return {
-      name: t.deliverableTemplate.phase.name,
-      color: t.deliverableTemplate.phase.color ?? null,
-    };
-  }
-  // Fall through to the context lookups (used by callers that don't
-  // have the include, e.g. the group-header aggregation path).
-  if (lookups) {
-    if (t.projectDeliverableId != null) {
-      const d = lookups.byId.get(t.projectDeliverableId);
-      if (d?.service?.name) return { name: d.service.name, color: d.service.color ?? null };
-    }
-    if (t.deliverableTemplateId != null) {
-      const d = lookups.byTemplateId.get(t.deliverableTemplateId);
-      if (d?.service?.name) return { name: d.service.name, color: d.service.color ?? null };
-    }
-  }
-  return { name: null, color: null };
-}
+// resolveTaskService (the SERVICE column's resolver) moved to
+// ./planning-task-filter (QA6 PR-068) so the Service filter and the
+// column share one resolver and it can be unit-tested.
 
 /**
  * Column header cell with an optional filter funnel. `kind` decides the
@@ -5599,7 +5518,10 @@ function PlanningView({ projectId }: { projectId: number }) {
     (filterAssigneeIds.length > 0 ? 1 : 0) +
     (filterStartFrom || filterStartTo ? 1 : 0) +
     (filterDueFrom || filterDueTo ? 1 : 0) +
-    (filterHasDue ? 1 : 0);
+    (filterHasDue ? 1 : 0) +
+    // PR-068: Service lives in `col.service` (shared with the Service
+    // column funnel) but is a Task Filters field too, so it counts here.
+    (colFilters.service ? 1 : 0);
 
   // ─── Undo Stack ─────────────────────────────────────────────────────────────
   const undoStackRef = useRef<{ label: string; fn: () => Promise<void> }[]>([]);
@@ -6054,83 +5976,14 @@ function PlanningView({ projectId }: { projectId: number }) {
   // All task IDs for the global sortable context
   const allTaskIds = useMemo(() => tasks.map((t: any) => t.id), [tasks]);
 
-  // Filter
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return tasks.filter((t: any) => {
-      // Free-text search (code / name / zone / service)
-      if (q) {
-        const hit =
-          t.code?.toLowerCase().includes(q) ||
-          t.name?.toLowerCase().includes(q) ||
-          t.zone?.name?.toLowerCase().includes(q) ||
-          t.serviceType?.name?.toLowerCase().includes(q);
-        if (!hit) return false;
-      }
-      // Status (must be exact enum match if set)
-      if (filterStatus && t.status !== filterStatus) return false;
-      // Priority (must be exact enum match if set) — V7
-      if (filterPriority && t.priority !== filterPriority) return false;
-      // Assignee — match if ANY of the selected people is on the task.
-      // UNION semantics matches the chip stack the user sees. Empty
-      // set = no assignee filter.
-      if (filterAssigneeIds.length > 0) {
-        const filterSet = new Set(filterAssigneeIds);
-        const hasAssignee = Array.isArray(t.assignees)
-          && t.assignees.some((a: any) => {
-            const aid: number | undefined = a.userId ?? a.user?.id;
-            return typeof aid === 'number' && filterSet.has(aid);
-          });
-        if (!hasAssignee) return false;
-      }
-      // Estimated-start range — uses the planning field, NOT actual startDate.
-      const ts = t.estimatedStartDate ? String(t.estimatedStartDate).slice(0, 10) : '';
-      if (filterStartFrom && (!ts || ts < filterStartFrom)) return false;
-      if (filterStartTo && (!ts || ts > filterStartTo)) return false;
-      // Due-date range
-      const td = t.endDate ? String(t.endDate).slice(0, 10) : '';
-      if (filterDueFrom && (!td || td < filterDueFrom)) return false;
-      if (filterDueTo && (!td || td > filterDueTo)) return false;
-      // Has-due-date filter (yes/no/any)
-      if (filterHasDue === 'yes' && !td) return false;
-      if (filterHasDue === 'no' && td) return false;
-
-      // Y1 — per-column funnel filters. Text columns substring-match;
-      // select columns exact-match on the resolved value.
-      if (colFilters.code && !t.code?.toLowerCase().includes(colFilters.code.toLowerCase())) return false;
-      if (colFilters.name && !t.name?.toLowerCase().includes(colFilters.name.toLowerCase())) return false;
-      if (colFilters.zone) {
-        const zn = t.zone?.name ?? 'Project Root';
-        if (zn !== colFilters.zone) return false;
-      }
-      if (colFilters.deliverable) {
-        // QA4 B2: '(empty)' bucket — deliverables that resolve to
-        // 'No Deliverable' match this pick.
-        const resolved = resolveTaskDeliverable(t, deliverableLookups);
-        const rl = resolved === 'No Deliverable' ? '(empty)' : resolved;
-        if (rl !== colFilters.deliverable) return false;
-      }
-      if (colFilters.service) {
-        // QA4 Wave-2 PG-1: match on the SAME resolution the column
-        // renders — `resolveTaskService(...)` (includes the server
-        // marker-resolved service + deliverable.service fallbacks) —
-        // so the funnel filters exactly what the user sees. Before
-        // this fix `t.phase?.name` alone would miss every marker-only
-        // task even when its column cell showed a service name.
-        const svName = resolveTaskService(t, deliverableLookups)?.name ?? null;
-        const sv = svName ? svName : '(empty)';
-        if (sv !== colFilters.service) return false;
-      }
-      if (colFilters.status && t.status !== colFilters.status) return false;
-      if (colFilters.assignee) {
-        const aid = Number(colFilters.assignee);
-        const has = Array.isArray(t.assignees)
-          && t.assignees.some((a: any) => a.userId === aid || a.user?.id === aid);
-        if (!has) return false;
-      }
-      return true;
-    });
-  }, [tasks, search, filterStatus, filterPriority, filterAssigneeIds, filterStartFrom, filterStartTo, filterDueFrom, filterDueTo, filterHasDue, colFilters, deliverableLookups]);
+  // Filter — one pure predicate for search, the Task Filters popover and
+  // the column funnels (./planning-task-filter, QA6 PR-068). Runs before
+  // sort + grouping, so every grouping mode (and nested sub-group) is
+  // built from the same filtered list.
+  const filtered = useMemo(
+    () => tasks.filter((t: any) => taskPassesPlanningFilters(t, filters, search, deliverableLookups)),
+    [tasks, filters, search, deliverableLookups],
+  );
 
   // Distinct option lists for the column funnels. QA4 B2 — cascading.
   //
@@ -6144,46 +5997,15 @@ function PlanningView({ projectId }: { projectId: number }) {
   // whole task set; they participate as gates on the OTHER columns'
   // option lists but don't themselves need option lists.
   const colFilterOptions = useMemo(() => {
-    // Per-column predicate — a task PASSES `col` when either the
-    // filter for that col is empty, or the task's resolved value for
-    // that col matches. Kept in sync with the `filtered` memo above so
-    // the option lists never advertise a value that would produce zero
+    // Tasks that pass EVERY column filter except `exclude`. Uses the
+    // same per-column predicate as the `filtered` memo above so the
+    // option lists never advertise a value that would produce zero
     // rows when picked.
-    const passes = (t: any, col: string): boolean => {
-      const v = (colFilters as any)[col];
-      if (!v) return true;
-      switch (col) {
-        case 'code':
-          return !!t.code && String(t.code).toLowerCase().includes(String(v).toLowerCase());
-        case 'name':
-          return !!t.name && String(t.name).toLowerCase().includes(String(v).toLowerCase());
-        case 'zone':
-          return (t.zone?.name ?? 'Project Root') === v;
-        case 'deliverable':
-          return resolveTaskDeliverable(t, deliverableLookups) === v;
-        case 'service': {
-          // QA4 Wave-2 PG-1 — mirror the filter apply above.
-          const nm = resolveTaskService(t, deliverableLookups)?.name ?? null;
-          return (nm ?? '(empty)') === v;
-        }
-        case 'status':
-          return t.status === v;
-        case 'assignee': {
-          const aid = Number(v);
-          return Array.isArray(t.assignees)
-            && t.assignees.some((a: any) => a.userId === aid || a.user?.id === aid);
-        }
-        default:
-          return true;
-      }
-    };
-
-    // Tasks that pass EVERY column filter except `exclude`.
-    const eligibleFor = (exclude: string) =>
+    const eligibleFor = (exclude: keyof ColFilters) =>
       tasks.filter((t: any) =>
-        ['code', 'name', 'zone', 'deliverable', 'service', 'status', 'assignee']
+        COL_FILTER_KEYS
           .filter((c) => c !== exclude)
-          .every((c) => passes(t, c)),
+          .every((c) => taskPassesColFilter(t, c, colFilters[c], deliverableLookups)),
       );
 
     const zoneEligible = eligibleFor('zone');
@@ -6200,19 +6022,14 @@ function PlanningView({ projectId }: { projectId: number }) {
       // ("No Deliverable") surface as the "(empty)" bucket below.
       const dn = resolveTaskDeliverable(t, deliverableLookups);
       if (dn && dn !== 'No Deliverable') deliverable.add(dn);
-      else deliverable.add('(empty)');
+      else deliverable.add(EMPTY_BUCKET);
     }
 
-    const serviceEligible = eligibleFor('service');
-    const service = new Set<string>();
-    for (const t of serviceEligible) {
-      // QA4 Wave-2 PG-1: use the SAME resolver the SERVICE cell
-      // renders through — so the dropdown lists exactly the services
-      // shown on screen (including marker-resolved rows).
-      const svName = resolveTaskService(t, deliverableLookups)?.name ?? null;
-      if (svName) service.add(svName);
-      else service.add('(empty)');
-    }
+    // QA4 Wave-2 PG-1: the SAME resolver the SERVICE cell renders
+    // through, so the dropdown lists exactly the services shown on
+    // screen (including marker-resolved rows) plus the (empty) bucket.
+    // Shared with the Task Filters popover's Service field (PR-068).
+    const service = serviceFilterOptions(eligibleFor('service'), deliverableLookups);
 
     const statusEligible = eligibleFor('status');
     const status = new Set<string>();
@@ -6232,7 +6049,7 @@ function PlanningView({ projectId }: { projectId: number }) {
     return {
       zone: Array.from(zone).sort(),
       deliverable: Array.from(deliverable).sort(),
-      service: Array.from(service).sort(),
+      service,
       status: Array.from(status),
       assignee: Array.from(assigneeMap.entries()).map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
     };
@@ -6249,10 +6066,7 @@ function PlanningView({ projectId }: { projectId: number }) {
     setFilterDueFrom('');
     setFilterDueTo('');
     setFilterHasDue('');
-    setFilters((f) => ({
-      ...f,
-      col: { code: '', name: '', zone: '', deliverable: '', service: '', status: '', assignee: '' },
-    }));
+    setFilters((f) => ({ ...f, col: EMPTY_COL_FILTERS }));
   };
 
   // Sort
@@ -6966,6 +6780,34 @@ function PlanningView({ projectId }: { projectId: number }) {
                     <option value="high">High</option>
                     <option value="medium">Medium</option>
                     <option value="low">Low</option>
+                  </select>
+                </label>
+                {/* PR-068: Service as a task filter (before, Service was
+                    only a grouping). Bound to `col.service`, the same
+                    persisted value the Service column funnel uses, so
+                    the two can't contradict each other. Applied before
+                    grouping, so it hides other services' tasks in every
+                    grouping mode. Options = the services actually shown
+                    in the SERVICE column, narrowed by the other column
+                    filters. */}
+                <label className="block col-span-2">
+                  <span className="block text-[11px] font-semibold text-slate-500 dark:text-slate-400 mb-1">Service</span>
+                  <select
+                    value={colFilters.service}
+                    onChange={(e) => setColFilter('service', e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-[13px] text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none"
+                  >
+                    <option value="">Any service</option>
+                    {/* Keep a persisted pick selectable even when other
+                        filters have narrowed it out of the list. */}
+                    {colFilters.service && !colFilterOptions.service.includes(colFilters.service) && (
+                      <option value={colFilters.service}>
+                        {colFilters.service === EMPTY_BUCKET ? 'No service' : colFilters.service}
+                      </option>
+                    )}
+                    {colFilterOptions.service.map((s) => (
+                      <option key={s} value={s}>{s === EMPTY_BUCKET ? 'No service' : s}</option>
+                    ))}
                   </select>
                 </label>
                 <div className="block col-span-2">
