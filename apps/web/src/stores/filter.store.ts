@@ -16,6 +16,8 @@ interface FilterState {
   // Project filters
   projectStatus: string[];
   projectSearch: string;
+  /** PR-066 Team Leader filter: `u:<userId>` / `p:<partyId>` / `__none__`. */
+  projectLeaders: string[];
 
   // Contract filters
   contractStatus: string[];
@@ -35,7 +37,7 @@ interface FilterState {
   // Actions
   setTaskFilters: (filters: Partial<Pick<FilterState, 'taskStatus' | 'taskPriority' | 'taskProjectId' | 'taskAssigneeId' | 'taskSearch'>>) => void;
   setTimeFilters: (filters: Partial<Pick<FilterState, 'timeProjectId' | 'timeWeekStart'>>) => void;
-  setProjectFilters: (filters: Partial<Pick<FilterState, 'projectStatus' | 'projectSearch'>>) => void;
+  setProjectFilters: (filters: Partial<Pick<FilterState, 'projectStatus' | 'projectSearch' | 'projectLeaders'>>) => void;
   setContractFilters: (filters: Partial<Pick<FilterState, 'contractStatus' | 'contractSearch'>>) => void;
   setPeopleFilters: (filters: Partial<Pick<FilterState, 'peopleTab' | 'peopleSearch' | 'peopleStatus'>>) => void;
   setReportFilters: (filters: Partial<Pick<FilterState, 'reportDateFrom' | 'reportDateTo' | 'reportProjectId' | 'reportUserId'>>) => void;
@@ -52,6 +54,7 @@ const initialState = {
   timeWeekStart: null,
   projectStatus: [],
   projectSearch: '',
+  projectLeaders: [] as string[],
   contractStatus: [],
   contractSearch: '',
   peopleTab: 'employees' as const,

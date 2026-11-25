@@ -14,6 +14,12 @@ import { notify } from '@/lib/notify';
 import client from '@/api/client';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { PeopleMultiSelect } from '@/components/shared/people-multi-select';
+import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
+import {
+  matchesTeamLeaderFilter,
+  teamLeaderFilterOptions,
+  userIdFromLeaderKey,
+} from './project-leader-filter';
 
 // localStorage key for the per-user "which Project Role Type columns
 // are visible on the projects list" preference. Stored as a JSON
@@ -76,7 +82,10 @@ export function ProjectListPage() {
   const tableScrollRef = useStickyHScroll();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { projectSearch, projectStatus, setProjectFilters } = useFilterStore();
+  const { projectSearch, projectStatus, projectLeaders: persistedLeaders, setProjectFilters } = useFilterStore();
+  // PR-066: Team Leader filter (multi-select, persisted with the other
+  // project filters). Guarded for persisted state from before the key.
+  const projectLeaders: string[] = Array.isArray(persistedLeaders) ? persistedLeaders : [];
   // Finance permission gate — controls visibility of the Budget /
   // Cost / Hours columns. NO admin short-circuit: even admins need
   // an explicit Finance read grant in /admin/roles.
@@ -189,6 +198,12 @@ export function ProjectListPage() {
 
   // Visible role-type column descriptors, sorted by the catalog's
   // sortOrder so the columns line up with the admin's canonical order.
+  // PR-066: the seeded `team_leader` Project Role Type, if present.
+  const teamLeaderRoleId = useMemo(
+    () => roleTypes.find((rt) => rt.code === 'team_leader')?.id ?? null,
+    [roleTypes],
+  );
+
   const visibleRoleColumns = useMemo(() => {
     const byId = new Map(roleTypes.map((rt) => [rt.id, rt]));
     return selectedRoleIds
@@ -245,6 +260,8 @@ export function ProjectListPage() {
       if (!allIds.has(colFilters.type)) return false;
     }
     if (colFilters.status && String(p.status ?? '') !== colFilters.status) return false;
+    // PR-066: Team Leader multi-select (ANY of the project's leaders).
+    if (!matchesTeamLeaderFilter(p, projectLeaders, teamLeaderRoleId)) return false;
     // Role-column filters — one per visible role-type column. Value is
     // a party.displayName (matched exactly against the assignments on
     // that role). Synthetic `__none__` bucket matches projects with no
@@ -333,6 +350,16 @@ export function ProjectListPage() {
     }
     return out;
   }, [rawList, visibleRoleColumns]);
+
+  /** PR-066: Team Leader options from the server-returned rows, plus any
+   *  persisted selection no longer on screen (named from active users). */
+  const teamLeaderOptions = useMemo(() => {
+    const userNames = new Map(activeUsers.map((u) => [u.id, `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim()]));
+    return teamLeaderFilterOptions(rawList, teamLeaderRoleId, projectLeaders, (key) => {
+      const uid = userIdFromLeaderKey(key);
+      return uid != null ? userNames.get(uid) : null;
+    }).map((o) => ({ value: o.key, label: o.label }));
+  }, [rawList, teamLeaderRoleId, projectLeaders, activeUsers]);
 
   // ─── Group By ─────────────────────────────────────────────────────────
   // Single-value grouping (or null = no grouping). The dropdown lists
@@ -720,6 +747,18 @@ export function ProjectListPage() {
           triggerClassName="w-64"
         />
 
+        {/* PR-066: Team Leader filter. Multi-select, persisted in the
+            filter store, applied client-side so it composes with search,
+            status, the column filters and Group by. */}
+        <MultiSelectFilter<string>
+          options={teamLeaderOptions}
+          selected={new Set(projectLeaders)}
+          onChange={(next) => setProjectFilters({ projectLeaders: Array.from(next) })}
+          placeholder="Team Leaders"
+          title="Filter projects by team leader"
+          triggerClassName="w-52 rounded-lg border-slate-200 dark:border-slate-700"
+        />
+
         {/* Group By — single dropdown. Options include the three
             "structural" project fields plus any role-type column the
             user has enabled. Persisted in localStorage so the chosen
@@ -836,13 +875,13 @@ export function ProjectListPage() {
         // sticks across reloads.
         <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 py-12 text-center space-y-3">
           {(() => {
-            const hasFilter = !!projectSearch || projectStatus.length > 0 || memberFilter.length > 0;
+            const hasFilter = !!projectSearch || projectStatus.length > 0 || memberFilter.length > 0 || projectLeaders.length > 0;
             return hasFilter ? (
               <>
                 <p className="text-sm text-slate-500 dark:text-slate-400">No projects match your current filters.</p>
                 <button
                   onClick={() => {
-                    setProjectFilters({ projectSearch: '', projectStatus: [] });
+                    setProjectFilters({ projectSearch: '', projectStatus: [], projectLeaders: [] });
                     setMemberFilter([]);
                   }}
                   className="rounded-lg bg-slate-200 dark:bg-slate-700 px-4 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600"
