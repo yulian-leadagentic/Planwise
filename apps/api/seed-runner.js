@@ -61,6 +61,9 @@ async function seed() {
       { name: 'Templates', route: '/templates', icon: 'Copy', sortOrder: 8 },
       { name: 'Admin', route: '/admin', icon: 'Settings', sortOrder: 9 },
       { name: 'HR', route: '/hr', icon: 'ClipboardList', sortOrder: 10 },
+      // QA6 P7 (PR-056) — Operations is its own permission module
+      // (migration 20261125180000_operations_module; see prisma/seed.ts).
+      { name: 'Operations', route: '/operations', icon: 'Activity', sortOrder: 11 },
     ];
     for (const m of modules) {
       const existing = await prisma.module.findFirst({ where: { name: m.name } });
@@ -186,6 +189,8 @@ async function seed() {
           Reports:   { R: true, E: true },
           Templates: { R: true, W: true, D: true, A: true, E: true },
           Admin:     { R: true, W: true, D: true, A: true, E: true },
+          // QA6 P7 — same as prisma/seed.ts (Admin › Roles shows it).
+          Operations: { R: true },
           'Data Import': { R: true, W: true },
           // Same explicit importer grants as prisma/seed.ts (round 4).
           'Import Employees': { R: true, W: true },
@@ -253,6 +258,26 @@ async function seed() {
       }
     }
     console.log('  Seeded 7 default system roles + role_modules');
+
+    // QA6 P7 (PR-056) — operations:read for the client's roles that run
+    // Operations, by EXACT name (typo included, as on staging). Those
+    // roles are admin-created: never created here, never wiped; a row is
+    // added only when the role has none for the module. Same set as
+    // prisma/seed.ts and POST /admin/backfills/qa6-operations-grants.
+    const operationsMod = await prisma.module.findFirst({ where: { route: '/operations' } });
+    if (operationsMod) {
+      const namedRoles = (await prisma.role.findMany({
+        where: { name: { in: ['Depatment lead', 'BIM leader'] } },
+        select: { id: true, name: true },
+      })).filter((r) => r.name === 'Depatment lead' || r.name === 'BIM leader');
+      for (const r of namedRoles) {
+        const has = await prisma.roleModule.findFirst({ where: { roleId: r.id, moduleId: operationsMod.id } });
+        if (!has) {
+          await prisma.roleModule.create({ data: { roleId: r.id, moduleId: operationsMod.id, canRead: true } });
+          console.log('  [qa6] operations:read -> ' + r.name + ' (#' + r.id + ')');
+        }
+      }
+    }
 
     console.log('Seed complete!');
   } catch (e) {

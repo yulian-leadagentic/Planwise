@@ -1,15 +1,10 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { MoreHorizontal, X } from 'lucide-react';
 import { NAV_ITEMS } from '@/lib/constants';
+import { isNavItemVisible } from '@/lib/nav-permissions';
+import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
-
-// Show the first four destinations inline; everything else lives behind a
-// "More" sheet so that ALL top-level destinations are reachable on mobile.
-// (Previously mobile only exposed NAV_ITEMS.slice(0,5), leaving Inbox, Time,
-// Contracts, Partners, Contacts, Reports, Templates and Admin unreachable.)
-const PRIMARY = NAV_ITEMS.slice(0, 4);
-const OVERFLOW = NAV_ITEMS.slice(4);
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   cn(
@@ -19,6 +14,14 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
 
 export function MobileNav() {
   const [moreOpen, setMoreOpen] = useState(false);
+  // Same permission filter as the sidebar (QA6 P7: Operations is hidden
+  // without operations:read). Show the first four destinations inline;
+  // everything else lives behind a "More" sheet so that ALL top-level
+  // destinations are reachable on mobile.
+  const { can, isAdmin } = usePermissions();
+  const items = useMemo(() => NAV_ITEMS.filter((i) => isNavItemVisible(i.href, can, isAdmin)), [can, isAdmin]);
+  const PRIMARY = items.slice(0, 4);
+  const OVERFLOW = items.slice(4);
 
   return (
     <>

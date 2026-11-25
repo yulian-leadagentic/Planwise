@@ -5,11 +5,23 @@ import { ExecutionPlanningService } from './execution-planning.service';
 import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
-import { RequirePermissions, OwnData } from '../../common/decorators/roles.decorator';
+import { RequirePermissions, OwnData, RequiredPermission } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { EmployeeScopeService } from '../../common/services/employee-scope.service';
 import { canSeeFinance } from '../../common/finance/finance-access';
+
+/**
+ * QA6 P7 (PR-056, owner's decision 25.11) — Operations is its own
+ * permission module (`modules.route = '/operations'`, migration
+ * 20261125180000_operations_module). Every `dashboard/operations*` and
+ * `workload/*` route needs `operations:read`, except `workload/me`
+ * (own data). The per-project workload panel calls
+ * `projects/:id/workload`, which stays on projects:read + project access.
+ * Admin passes through the RolesGuard bypass like any module not in
+ * NO_ADMIN_BYPASS.
+ */
+export const OPERATIONS_READ: RequiredPermission = { module: 'operations', action: 'read' };
 
 @ApiTags('Execution Planning')
 @ApiBearerAuth()
@@ -28,7 +40,7 @@ export class ExecutionPlanningController {
   // logged hours per day, so it follows the timesheet rule — self, hr:read
   // or the manager chain. Admin is no longer an exception.
   @Get('workload/user/:userId')
-  @RequirePermissions({ module: 'projects', action: 'read' })
+  @RequirePermissions(OPERATIONS_READ)
   @ApiOperation({ summary: 'Get user workload (planned vs capacity per day)' })
   async getUserWorkload(
     @CurrentUser() user: any,
@@ -61,7 +73,7 @@ export class ExecutionPlanningController {
    * cannot open are masked. Contract: ExecutionPlanningService.getTeamWorkload.
    */
   @Get('workload/team')
-  @RequirePermissions({ module: 'projects', action: 'read' })
+  @RequirePermissions(OPERATIONS_READ)
   @ApiOperation({ summary: 'Team workload — every active employee, planned vs capacity per working day, one call' })
   async getTeamWorkload(
     @CurrentUser() user: any,
@@ -201,14 +213,14 @@ export class ExecutionPlanningController {
 
   // ─── Operations Dashboard ──────────────────────────────────────────────
   //
-  // The Operations screen is a read-only aggregation. Its endpoints are
-  // gated on `projects:read` so anyone who can already see a project
-  // through ProjectAccessService can see the aggregation over that same
-  // set. Operations is NOT its own grantable module — see
-  // apps/api/prisma/seed.ts for the rationale (feat/ops-complete).
+  // The Operations screen is a read-only aggregation over the projects
+  // the caller can reach through ProjectAccessService. QA6 P7 (PR-056):
+  // its endpoints are gated on the `operations` module (OPERATIONS_READ
+  // above), granted per role in Admin › Roles. It used to ride on
+  // projects:read (feat/ops-complete), so every employee got in.
 
   @Get('dashboard/operations')
-  @RequirePermissions({ module: 'projects', action: 'read' })
+  @RequirePermissions(OPERATIONS_READ)
   @ApiOperation({ summary: 'Operations dashboard — projects at risk, team load, review queue, employees at risk, service intensity' })
   async getOperationsDashboard(
     @CurrentUser() user: any,
@@ -238,10 +250,10 @@ export class ExecutionPlanningController {
   // BIM Leader tab — groups accessible projects by BIM Leader with
   // per-leader counts (# active projects / # deliverables / # open
   // tasks / # overdue). Expandable to project rows. Same
-  // projects:read gate as the ops dashboard; `myDeptOnly` narrows to
+  // operations:read gate as the ops dashboard; `myDeptOnly` narrows to
   // the caller's department. (feat/ops-complete)
   @Get('dashboard/operations/bim-leaders')
-  @RequirePermissions({ module: 'projects', action: 'read' })
+  @RequirePermissions(OPERATIONS_READ)
   @ApiOperation({ summary: 'Operations dashboard — workload grouped by BIM Leader' })
   async getBimLeaderDashboard(
     @CurrentUser() user: any,
@@ -257,7 +269,7 @@ export class ExecutionPlanningController {
   // DORMANT based on upcoming due tasks + last 14d activity (time
   // entries + activity logs). (feat/ops-complete)
   @Get('dashboard/operations/active-projects')
-  @RequirePermissions({ module: 'projects', action: 'read' })
+  @RequirePermissions(OPERATIONS_READ)
   @ApiOperation({ summary: 'Operations dashboard — active/dormant projects (activity model)' })
   async getActiveProjectsDashboard(
     @CurrentUser() user: any,
@@ -273,7 +285,7 @@ export class ExecutionPlanningController {
   // per-task ops note (the "Comment" column). totalCount is returned
   // so the UI can render "showing first N of M". (feat/ops-complete)
   @Get('dashboard/operations/executive-review')
-  @RequirePermissions({ module: 'projects', action: 'read' })
+  @RequirePermissions(OPERATIONS_READ)
   @ApiOperation({ summary: 'Operations dashboard — executive review task list with per-task ops note' })
   async getExecutiveReview(
     @CurrentUser() user: any,
@@ -293,7 +305,7 @@ export class ExecutionPlanningController {
   // — the note is scoped to the same audience that can edit project
   // data. (feat/ops-complete)
   @Post('dashboard/operations/tasks/:taskId/ops-note')
-  @RequirePermissions({ module: 'projects', action: 'write' })
+  @RequirePermissions(OPERATIONS_READ, { module: 'projects', action: 'write' })
   @ApiOperation({ summary: 'Upsert (or clear when content is empty) the Executive Review ops note for a task' })
   @ApiBody({ schema: { type: 'object', properties: { content: { type: 'string' } }, required: ['content'] } })
   async upsertOpsNote(

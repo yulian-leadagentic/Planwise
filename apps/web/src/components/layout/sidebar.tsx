@@ -6,30 +6,7 @@ import { useUIStore } from '@/stores/ui.store';
 import { useIsDesktop } from '@/hooks/use-media-query';
 import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
-
-const NAV_MODULE_MAP: Record<string, string> = {
-  '/': 'dashboard',
-  // Operations is a read-only aggregation, not its own grantable module.
-  // Anyone with projects:read can see it (matches the API guards + the
-  // RoutePermissionGuard mapping). (feat/ops-complete, 2026-08.)
-  '/operations': 'projects',
-  '/execution-board': 'projects',
-  '/status-board': 'projects',
-  '/projects': 'projects',
-  '/my-tasks': 'tasks',
-  '/inbox': 'tasks',
-  '/time': 'time',
-  '/contracts': 'contracts',
-  '/partners': 'partners',
-  '/contacts': 'partners',
-  // HR Phase A4 (2026-10-15) — the HR module hides personal / medical /
-  // payroll data; `hr` is the matching permission key (see
-  // ROUTE_MODULE_MAP in route-permission-guard.tsx + the Phase A2 seed).
-  '/hr': 'hr',
-  '/reports': 'reports',
-  '/templates': 'templates',
-  '/admin': 'admin',
-};
+import { isNavItemVisible } from '@/lib/nav-permissions';
 
 export function Sidebar() {
   const isDesktop = useIsDesktop();
@@ -43,12 +20,7 @@ export function Sidebar() {
   // A section whose items all get filtered out is dropped entirely
   // (header + separator) so the user never sees a phantom label.
   const visibleSections = useMemo(() => {
-    const filterItem = (item: NavItem) => {
-      if (isAdmin) return true;
-      const mod = NAV_MODULE_MAP[item.href];
-      if (!mod) return true;
-      return can(mod, 'read');
-    };
+    const filterItem = (item: NavItem) => isNavItemVisible(item.href, can, isAdmin);
     return NAV_SECTIONS
       .map((s) => ({ title: s.title, items: s.items.filter(filterItem) }))
       .filter((s) => s.items.length > 0);

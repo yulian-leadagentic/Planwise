@@ -44,6 +44,18 @@ async function main() {
   });
   modules.push(hrMod);
 
+  // QA6 P7 (PR-056, 2026-11-25) — Operations is its own permission
+  // module again (top-level, route '/operations'; migration
+  // 20261125180000_operations_module). Upsert on `route` like HR. NOT
+  // pushed into `modules[]`: the legacy Manager / Partner loop below
+  // must not hand it out — the grants are the §14 grid (Admin) and the
+  // named roles further down.
+  await prisma.module.upsert({
+    where: { route: '/operations' },
+    update: { name: 'Operations', icon: 'Activity', sortOrder: 11, parentId: null },
+    create: { name: 'Operations', route: '/operations', icon: 'Activity', sortOrder: 11 },
+  });
+
   // Sub-modules (must be created AFTER top-level modules to reference parentId)
   const projectsMod = modules.find((m: any) => m.name === 'Projects');
   const tasksMod = modules.find((m: any) => m.name === 'Tasks');
@@ -51,9 +63,9 @@ async function main() {
   const templatesMod = modules.find((m: any) => m.name === 'Templates');
   const adminMod = modules.find((m: any) => m.name === 'Admin');
   // Dashboard is a top-level module but no sub-modules currently hang
-  // off it. Operations used to be registered here but was retired in
-  // feat/ops-complete (see block below). Leaving this line as a
-  // reference for future dashboard sub-modules.
+  // off it (Operations was one until feat/ops-complete; it is a
+  // top-level module since QA6 P7). Leaving this line as a reference
+  // for future dashboard sub-modules.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const dashboardMod = modules.find((m: any) => m.name === 'Dashboard');
 
@@ -76,13 +88,10 @@ async function main() {
     // any other role that gets it can create / rename / move / delete
     // org units and set unit managers / user home units.
     { name: 'Organization', route: 'org', icon: 'Sitemap', sortOrder: 94, parentId: adminMod?.id },
-    // Note: the Operations dashboard is intentionally NOT registered as
-    // a grantable module. Its endpoints are gated on `projects:read`
-    // and the view itself is a read-only aggregation over projects the
-    // caller already has access to — so exposing it in the permissions
-    // matrix would only invite drift ("I unchecked Operations but the
-    // person still sees it"). The '/operations' front-end route falls
-    // back to the projects:read check. (feat/ops-complete, 2026-08.)
+    // Operations is NOT a sub-module here: since QA6 P7 it is a
+    // top-level module ('/operations', upserted above) and its routes
+    // need operations:read. (It rode on projects:read from
+    // feat/ops-complete, 2026-08, until then.)
   ];
   // Idempotent sub-module upsert keyed on `route` (unique). Fixes the
   // long-standing "Operations doesn't appear in Add Module" bug — the
@@ -489,6 +498,9 @@ async function main() {
         Reports:   { R: true, E: true },
         Templates: { R: true, W: true, D: true, A: true, E: true },
         Admin:     { R: true, W: true, D: true, A: true, E: true },
+        // QA6 P7 — explicit so Admin › Roles shows it (the guard's admin
+        // bypass would let Admin in anyway).
+        Operations: { R: true },
         // Module names here are the DB `name` column, not the route.
         // See migration 20260520000000_data_import_module:
         //   parent  → name='Data Import',       route='data-import'
@@ -640,6 +652,27 @@ async function main() {
   console.log(
     `  Seeded ${SYSTEM_ROLES.length} system role groups (isSystem=true, additive mode — ${additiveAdded} new rows added, ${additivePreserved} existing rows preserved, 0 deleted)`,
   );
+
+  // QA6 P7 (PR-056) — operations:read for the client's roles that run
+  // Operations, matched by EXACT name (typo included, as on staging).
+  // These are admin-created roles, so the seed never creates them; it
+  // only adds the row when the role exists and has NO row for the
+  // module (additive — an admin who later unticks it keeps that).
+  // Same set as POST /admin/backfills/qa6-operations-grants.
+  const operationsMod = await prisma.module.findFirst({ where: { route: '/operations' }, select: { id: true } });
+  if (operationsMod) {
+    const namedRoles = (await prisma.role.findMany({
+      where: { name: { in: ['Depatment lead', 'BIM leader'] } },
+      select: { id: true, name: true },
+    })).filter((r) => r.name === 'Depatment lead' || r.name === 'BIM leader');
+    for (const r of namedRoles) {
+      const has = await prisma.roleModule.findFirst({ where: { roleId: r.id, moduleId: operationsMod.id } });
+      if (!has) {
+        await prisma.roleModule.create({ data: { roleId: r.id, moduleId: operationsMod.id, canRead: true } });
+        console.log(`  [qa6] operations:read → ${r.name} (#${r.id})`);
+      }
+    }
+  }
 
   // Admin User — permissions round 1 (2026-11-20): no hard-coded
   // password. Created only when the row is missing AND

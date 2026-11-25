@@ -77,13 +77,13 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   // and /admin/employees mappings above). tsc surfaced the collision
   // via TS1117. Keeping the intended one.
   '/partners': 'partners',
-  // Operations dashboard is a read-only aggregation and is NOT its own
-  // grantable module (see apps/api/prisma/seed.ts). Everyone with
-  // projects:read may view it; the API endpoints enforce the same. The
-  // frontend gate mirrors this so a role that can read projects can
-  // reach /operations even when no 'operations' module row exists in
-  // their role_modules. (feat/ops-complete, 2026-08.)
-  '/operations': 'projects',
+  // QA6 P7 (PR-056, owner's decision 25.11) — Operations is its own
+  // permission module; the API gates every dashboard/operations* and
+  // workload/* route on operations:read. (It rode on projects:read from
+  // feat/ops-complete until then.) The legacy /dashboard/workload
+  // redirect lands here too.
+  '/operations': 'operations',
+  '/dashboard/workload': 'operations',
 };
 
 const SORTED_PREFIXES = Object.keys(ROUTE_MODULE_MAP).sort((a, b) => b.length - a.length);
@@ -99,27 +99,37 @@ const NO_ADMIN_BYPASS_ROUTES: Record<string, string> = {
   '/hr/audit': 'hr',
 };
 
-export function RoutePermissionGuard({ children }: { children?: React.ReactNode }) {
-  const location = useLocation();
-  const { can, isAdmin } = usePermissions();
-
+/**
+ * May this user open `pathname`? Pure — the guard below and its spec
+ * share it. The longest matching prefix decides.
+ */
+export function isRouteAllowed(
+  pathname: string,
+  can: (module: string, action: 'read') => boolean,
+  isAdmin: boolean,
+): boolean {
   for (const [prefix, mod] of Object.entries(NO_ADMIN_BYPASS_ROUTES)) {
-    if (location.pathname === prefix || location.pathname.startsWith(prefix + '/')) {
-      if (!can(mod, 'read')) return <Navigate to="/" replace />;
+    if (pathname === prefix || pathname.startsWith(prefix + '/')) {
+      if (!can(mod, 'read')) return false;
     }
   }
 
   if (!isAdmin) {
     for (const prefix of SORTED_PREFIXES) {
-      if (location.pathname === prefix || location.pathname.startsWith(prefix + '/')) {
+      if (pathname === prefix || pathname.startsWith(prefix + '/')) {
         const mod = ROUTE_MODULE_MAP[prefix];
-        if (!mod.split('|').some((m) => can(m, 'read'))) { // 'a|b' = read on a OR b
-          return <Navigate to="/" replace />;
-        }
-        break;
+        return mod.split('|').some((m) => can(m, 'read')); // 'a|b' = read on a OR b
       }
     }
   }
+  return true;
+}
+
+export function RoutePermissionGuard({ children }: { children?: React.ReactNode }) {
+  const location = useLocation();
+  const { can, isAdmin } = usePermissions();
+
+  if (!isRouteAllowed(location.pathname, can, isAdmin)) return <Navigate to="/" replace />;
 
   return children ? <>{children}</> : <Outlet />;
 }
