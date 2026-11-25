@@ -8,9 +8,9 @@ import { OverloadTasksPanel } from './overload-tasks-panel';
  * Employees at Risk panel (feat/ops-complete).
  *
  * Sits alongside "Projects at Risk" on the Risk & Review tab.
- * Definition per the spec: employees who are OVERLOADED (this week's
- * logged/planned hours exceed weekly capacity) AND carry at least
- * one overdue task. Server aggregates both signals — no new sources.
+ * Definition per the spec: employees who are OVERLOADED (this work
+ * week's PLANNED hours exceed its capacity; QA6 P3, logged hours
+ * before) AND carry at least one overdue task. Server aggregates both.
  *
  * The panel is opinionated (no filter box, no sort) because the row
  * count is already small by construction. Each overdue-task chip
@@ -32,7 +32,9 @@ type EmployeeAtRisk = {
   avatarUrl: string | null;
   position: string | null;
   department: string | null;
-  /** null when the caller may not see this person's logged hours (round 3). */
+  /** QA6 P3 — planned hours this work week (visible to every Operations user). */
+  plannedWeek: number;
+  /** Logged hours; null when the caller may not see them (round 3). */
   hoursWeek: number | null;
   capacity: number;
   overloadPct: number;
@@ -101,8 +103,8 @@ export function EmployeesAtRiskPanel({
                 {e.position ?? 'Employee'}
                 {e.department && <span> · {e.department}</span>}
                 {' · '}
-                <span className="font-mono tabular-nums">{e.hoursWeek != null ? `${e.hoursWeek}h` : '—'}</span>
-                <span className="text-slate-400 dark:text-slate-500">/{e.capacity}h this week</span>
+                <span className="font-mono tabular-nums">{e.plannedWeek ?? 0}h</span>
+                <span className="text-slate-400 dark:text-slate-500">/{e.capacity}h planned this week</span>
               </p>
               <ul className="mt-2 space-y-1">
                 {e.overdueTasks.map((t) => (

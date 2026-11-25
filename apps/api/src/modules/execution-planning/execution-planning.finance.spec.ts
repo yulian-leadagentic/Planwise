@@ -30,7 +30,12 @@ function makeService() {
       aggregate: jest.fn(async () => ({ _sum: { budgetAmount: '900.00', budgetHours: '10' }, _count: 1 })),
     },
     timeEntry: { aggregate: jest.fn(async () => ({ _sum: { minutes: 0 } })), groupBy: jest.fn(async () => []) },
-    taskAssignee: { groupBy: jest.fn(async () => []) },
+    taskAssignee: { groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []) },
+    // QA6 P3 — the workload engine behind the Team tab's planned load.
+    workSchedule: { findMany: jest.fn(async () => []) },
+    absenceRecord: { findMany: jest.fn(async () => []) },
+    hrSettings: { findFirst: jest.fn(async () => null) },
+    calendarDay: { findMany: jest.fn(async () => []) },
   };
   const access: any = { getAccessibleProjectIds: jest.fn(async () => ({ all: true, projectIds: [] })) };
   return new ExecutionPlanningService(prisma, access);

@@ -194,7 +194,11 @@ describe('ExecutionPlanningService — deleted / cancelled predecessors', () => 
         aggregate: jest.fn(async () => ({ _sum: { budgetAmount: 0, budgetHours: 0 }, _count: 0 })),
       },
       timeEntry: { aggregate: jest.fn(async () => ({ _sum: { minutes: 0 } })), groupBy: jest.fn(async () => []) },
-      taskAssignee: { groupBy: jest.fn(async () => []) },
+      taskAssignee: { groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []) },
+      workSchedule: { findMany: jest.fn(async () => []) },
+      absenceRecord: { findMany: jest.fn(async () => []) },
+      hrSettings: { findFirst: jest.fn(async () => null) },
+      calendarDay: { findMany: jest.fn(async () => []) },
     };
     const access: any = { getAccessibleProjectIds: jest.fn(async () => ({ all: true, projectIds: [] })) };
     const svc = new ExecutionPlanningService(prisma, access);

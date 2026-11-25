@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
 import { WorkloadPanel } from './workload-dashboard';
+import { formatWorkRange } from './workload-range';
 import { OpsAvatar, OpsChevron, OpsLoadBar, OpsErrorBanner, opsErrorMessage, OPS_STATUS_CFG, OPS_PRI_COLORS } from './parts/ops-shared';
 import { BimLeaderTab } from './parts/bim-leader-tab';
 import { ActiveProjectsTab } from './parts/active-projects-tab';
@@ -122,6 +123,8 @@ export function OperationsDashboardPage() {
   const employeesAtRisk: any[] = data?.employeesAtRisk ?? [];
   const services: any[] = data?.services ?? [];
   const scope = data?.scope ?? { myDeptOnly: false, deptName: null };
+  // QA6 P3 (PR-074) — the week the Team / load figures cover.
+  const weekLabel = formatWorkRange(data?.week?.days ?? []);
 
   const departmentsFiltered = useMemo(() => {
     const q = memberSearch.trim().toLowerCase();
@@ -129,10 +132,11 @@ export function OperationsDashboardPage() {
     // member level, so clicking a card on the Team tab narrows the
     // visible people without changing the dept grouping.
     const cardMember = (m: any) => {
-      // hoursWeek is null for people whose hours the caller may not see
-      // (permissions round 3) — they match neither card.
-      if (cardFilter === 'overloaded') return m.hoursWeek != null && m.capacity > 0 && m.hoursWeek > m.capacity;
-      if (cardFilter === 'available') return m.hoursWeek != null && m.capacity > 0 && m.hoursWeek < m.capacity * 0.7;
+      // QA6 P3 — the cards count PLANNED load vs the week's capacity
+      // (the same figures the server's overloaded / available use).
+      const planned = Number(m.plannedWeek ?? 0);
+      if (cardFilter === 'overloaded') return m.capacity > 0 && planned > m.capacity;
+      if (cardFilter === 'available') return m.capacity > 0 && planned < m.capacity * 0.7;
       return true;
     };
     if (!q && cardFilter !== 'overloaded' && cardFilter !== 'available') return departments;
@@ -540,6 +544,14 @@ export function OperationsDashboardPage() {
       {/* ─── TAB: TEAM BY DEPARTMENT ─── */}
       {tab === 'team' && (
         <div className="space-y-3">
+          {/* QA6 P3 (PR-074) — what the bars measure, and over which days. */}
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[12px]" data-testid="team-week">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">Planned load</span>
+            {weekLabel && <span className="font-semibold text-slate-700 dark:text-slate-200">· {weekLabel}</span>}
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">
+              Bars: planned hours against capacity. Logged hours show only for people you manage.
+            </span>
+          </div>
           <div className="flex items-center gap-2 rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2">
             <Search className="h-3.5 w-3.5 text-slate-400 dark:text-slate-500" aria-hidden="true" />
             <input
@@ -598,18 +610,20 @@ export function OperationsDashboardPage() {
                       </div>
                       <div className="flex items-center gap-2.5 shrink-0">
                         {dept.totalOverdue > 0 && <span className="text-[11px] font-semibold text-red-600 font-mono tabular-nums">{dept.totalOverdue} overdue</span>}
-                        <div className="w-[80px]"><OpsLoadBar used={dept.totalHours} capacity={dept.totalCapacity} /></div>
+                        <div className="w-[80px]" title={`Planned ${dept.totalPlanned ?? 0}h of ${dept.totalCapacity ?? 0}h`}><OpsLoadBar used={dept.totalPlanned ?? 0} capacity={dept.totalCapacity} /></div>
                       </div>
                     </button>
 
                     {isExp && (
                       <div className="border-t border-slate-200 dark:border-slate-700">
                         {members.map((member: any) => {
-                          // null = hours hidden from this caller (round 3) → no load badges, "—".
-                          const hasHours = member.hoursWeek != null;
-                          const pct = hasHours && member.capacity > 0 ? Math.round(member.hoursWeek / member.capacity * 100) : 0;
-                          const isOver = hasHours && pct > 100;
-                          const isLow = hasHours && pct < 60;
+                          // QA6 P3 — load = PLANNED hours this work week (everyone);
+                          // logged hours are null when hidden from this caller (round 3).
+                          const planned = Number(member.plannedWeek ?? 0);
+                          const hasLogged = member.hoursWeek != null;
+                          const pct = member.capacity > 0 ? Math.round(planned / member.capacity * 100) : 0;
+                          const isOver = member.capacity > 0 && pct > 100;
+                          const isLow = member.capacity > 0 && pct < 60;
                           const isMExp = !!expandedMembers[member.id];
                           const memberTasks: any[] = member.taskList ?? [];
                           const hasTasks = memberTasks.length > 0;
@@ -634,16 +648,19 @@ export function OperationsDashboardPage() {
                                     {' · '}
                                     <span className="font-mono tabular-nums">{member.projectCount ?? 0}</span> proj ·{' '}
                                     <span className="font-mono tabular-nums">{member.deliverableCount ?? 0}</span> deliv ·{' '}
-                                    <span className="font-mono tabular-nums">{member.openTasks ?? member.tasks ?? 0}</span> open
+                                    <span className="font-mono tabular-nums">{member.openTasks ?? member.tasks ?? 0}</span> open ·{' '}
+                                    <span title={hasLogged ? undefined : 'Logged hours are visible only for people you manage'}>
+                                      logged <span className="font-mono tabular-nums">{hasLogged ? `${member.hoursWeek}h` : '—'}</span>
+                                    </span>
                                   </span>
                                 </div>
                                 {member.overdueTasks > 0 && (
                                   <span className="w-5 h-5 rounded-[5px] bg-red-50 flex items-center justify-center text-[10px] font-bold text-red-600 font-mono tabular-nums shrink-0">{member.overdueTasks}</span>
                                 )}
                                 <span className={cn('text-[13px] font-bold font-mono tabular-nums shrink-0', isOver ? 'text-red-600' : isLow ? 'text-emerald-600' : 'text-slate-700 dark:text-slate-200')}>
-                                  {hasHours ? `${member.hoursWeek}h` : '—'}<span className="text-[11px] text-slate-400 dark:text-slate-500 font-normal">/{member.capacity}h</span>
+                                  {`${planned}h`}<span className="text-[11px] text-slate-400 dark:text-slate-500 font-normal">/{member.capacity}h</span>
                                 </span>
-                                <div className="w-[70px] shrink-0"><OpsLoadBar used={member.hoursWeek} capacity={member.capacity} /></div>
+                                <div className="w-[70px] shrink-0"><OpsLoadBar used={planned} capacity={member.capacity} /></div>
                               </button>
 
                               {isMExp && hasTasks && (
@@ -704,7 +721,7 @@ export function OperationsDashboardPage() {
       )}
 
       {/* ─── TAB: WORKLOAD ─── */}
-      {tab === 'workload' && <WorkloadPanel />}
+      {tab === 'workload' && <WorkloadPanel myDeptOnly={myDeptOnly} />}
 
       {/* ─── TAB: EXECUTIVE REVIEW ─── */}
       {tab === 'executive' && (

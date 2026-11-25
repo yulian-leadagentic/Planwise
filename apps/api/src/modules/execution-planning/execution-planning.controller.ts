@@ -42,7 +42,43 @@ export class ExecutionPlanningController {
         { reason: 'NOT_IN_MANAGER_CHAIN' },
       );
     }
-    return this.eps.getUserWorkload(userId, from, to);
+    // QA6 P3 — same engine as /workload/team; tasks on projects the
+    // caller cannot open are listed as "Other project".
+    const acc = await this.access.getAccessibleProjectIds(user.id, isAdminUser(user));
+    const ids = new Set(acc.projectIds);
+    return this.eps.getUserWorkload(userId, from, to, {
+      canSeeProject: (pid) => (pid == null ? userId === user.id : acc.all || ids.has(pid)),
+    });
+  }
+
+  /**
+   * QA6 P3 (PR-073) — the whole team's workload in ONE call (the
+   * Operations › Workload tab). Query: `from` + `to` (YYYY-MM-DD, ≤ 93
+   * days) or `weekOf` (any date → its org work week; default: this
+   * week), `orgUnitId` (unit + sub-units) or `myDeptOnly=true`.
+   * Planned load for everyone; logged hours only for people the caller
+   * may see (round 3), others `logged: null`; tasks on projects he
+   * cannot open are masked. Contract: ExecutionPlanningService.getTeamWorkload.
+   */
+  @Get('workload/team')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Team workload — every active employee, planned vs capacity per working day, one call' })
+  async getTeamWorkload(
+    @CurrentUser() user: any,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('weekOf') weekOf?: string,
+    @Query('orgUnitId') orgUnitId?: string,
+    @Query('myDeptOnly') myDeptOnly?: string,
+  ) {
+    return this.eps.getTeamWorkload(
+      {
+        id: user.id,
+        isAdmin: isAdminUser(user),
+        visibleUserIds: await this.employeeScope.visibleUserIds(user),
+      },
+      { from, to, weekOf, orgUnitId, myDeptOnly },
+    );
   }
 
   @Get('workload/me')
@@ -64,7 +100,8 @@ export class ExecutionPlanningController {
     await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
     // Round 3: logged (actual) hours only for members the caller may see.
     const visible = await this.employeeScope.visibleUserIds(user);
-    return this.eps.getProjectWorkload(projectId, from, to, visible);
+    // QA6 P3 — tasks of members on projects the caller can't open are masked.
+    return this.eps.getProjectWorkload(projectId, from, to, visible, { id: user.id, isAdmin: isAdminUser(user) });
   }
 
   // ─── Feasibility ────────────────────────────────────────────────────────

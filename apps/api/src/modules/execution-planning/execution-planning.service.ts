@@ -5,6 +5,40 @@ import { ProjectAccessService } from '../../common/services/project-access.servi
 import { VisibleUserIds, isUserVisible } from '../../common/services/employee-scope.service';
 import { rollupTaskCompletion } from '../../common/task-completion';
 import { LIVE_PREDECESSOR_EDGE } from '../../common/task-dependency-filters';
+import {
+  OrgCalendar,
+  WorkloadTask,
+  addDaysYmd,
+  computePersonWorkload,
+  datesBetween,
+  dowOf,
+  isValidYmd,
+  keyOf,
+  round2,
+  shapeChips,
+  weekStartsOn,
+  workWeekOf,
+} from './workload-engine';
+import { loadOrgCalendar, loadPeopleInputs, todayKey } from './workload-loader';
+
+/** Longest range `GET /workload/team` computes (a quarter). */
+export const TEAM_WORKLOAD_MAX_DAYS = 93;
+
+export interface TeamWorkloadQuery {
+  from?: string;
+  to?: string;
+  /** Any date — the work week holding it (when from/to are absent). */
+  weekOf?: string;
+  orgUnitId?: string | number;
+  myDeptOnly?: string | boolean;
+}
+
+export interface TeamWorkloadCaller {
+  id: number;
+  isAdmin: boolean;
+  /** Whose LOGGED hours the caller may see (EmployeeScopeService). Missing = only himself. */
+  visibleUserIds?: VisibleUserIds;
+}
 
 /**
  * Whether a predecessor (`TaskDependency.dependsOn`) still blocks its
@@ -38,159 +72,60 @@ export class ExecutionPlanningService {
 
   // ─── WORKLOAD ENGINE ────────────────────────────────────────────────────
 
-  async getUserWorkload(userId: number, from: string, to: string) {
-    const startDate = new Date(from);
-    const endDate = new Date(to);
-
-    // Get user's work schedules
-    const schedules = await this.prisma.workSchedule.findMany({
-      where: {
-        userId,
-        isActive: true,
-        effectiveFrom: { lte: endDate },
-        OR: [{ effectiveUntil: null }, { effectiveUntil: { gte: startDate } }],
-      },
-    });
-
-    // Get calendar days (holidays/off-days) in range
-    const calendarDays = await this.prisma.calendarDay.findMany({
-      where: {
-        date: { gte: startDate, lte: endDate },
-        appliesTo: { in: ['all', 'employees_only'] },
-      },
-    });
-    const holidayDates = new Set(calendarDays.map((d) => d.date.toISOString().split('T')[0]));
-
-    // Get tasks assigned to this user with overlapping dates
-    const assignments = await this.prisma.taskAssignee.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        task: {
-          deletedAt: null,
-          isArchived: false,
-          status: { notIn: ['completed', 'cancelled'] },
-        },
-      },
-      include: {
-        task: {
-          select: {
-            id: true, name: true, code: true, budgetHours: true,
-            startDate: true, endDate: true, status: true, projectId: true,
-          },
-        },
-      },
-    });
-
-    // Get actual time entries for the period
-    const timeEntries = await this.prisma.timeEntry.findMany({
-      where: {
-        userId,
-        deletedAt: null,
-        date: { gte: startDate, lte: endDate },
-      },
-      select: { date: true, minutes: true, taskId: true },
-    });
-
-    // Build daily data
-    const dailyData: Array<{
-      date: string;
-      dayOfWeek: number;
-      capacityHours: number;
-      plannedHours: number;
-      actualHours: number;
-      utilizationPct: number;
-      isHoliday: boolean;
-      tasks: Array<{ taskId: number; taskName: string; hours: number }>;
-    }> = [];
-
-    // FEAS-1 — guard against far-future endDates (e.g. project.endDate = year
-    // 9999) wedging the event loop. The caller's `to` string is passed through
-    // to this iterator; clamp the loop bound to startDate + 10 years for the
-    // scan only (we do NOT mutate the stored project value — the clamp lives
-    // in local scope). The user is logged a warning so monitoring can see it.
-    const WORKLOAD_MAX_SPAN_MS = 10 * 365 * 86400000;
-    const clampedLoopEnd =
-      endDate.getTime() - startDate.getTime() > WORKLOAD_MAX_SPAN_MS
-        ? new Date(startDate.getTime() + WORKLOAD_MAX_SPAN_MS)
-        : endDate;
-    if (clampedLoopEnd.getTime() !== endDate.getTime()) {
-      this.logger.warn(
-        `[feasibility clamp] getUserWorkload: userId=${userId} window ${from}..${to} > 10y; clamping loop to ${clampedLoopEnd.toISOString().split('T')[0]}`,
-      );
+  /**
+   * One person's workload in the legacy `{ dailyData, summary }` shape
+   * (project workload panel, feasibility, `GET /workload/user/:id`).
+   * QA6 P3 — runs on the shared engine (`workload-engine.ts`): org work
+   * week, schedules / dailyStandardHours, holidays the scheduler's way,
+   * absences, remaining hours split between assignees.
+   *
+   * `opts.canSeeProject` — when given, a task on a project it rejects is
+   * listed as "Other project" (no id / name). Internal callers omit it.
+   */
+  async getUserWorkload(
+    userId: number,
+    from: string,
+    to: string,
+    opts: { canSeeProject?: (projectId: number | null) => boolean } = {},
+  ) {
+    const fromKey = isValidYmd(from) ? from : keyOf(new Date(from)) ?? todayKey();
+    let toKey = isValidYmd(to) ? to : keyOf(new Date(to)) ?? fromKey;
+    // FEAS-1 — guard against far-future ends (project.endDate = year 9999)
+    // wedging the event loop: the day loop is clamped to 10 years.
+    const maxTo = addDaysYmd(fromKey, 3650);
+    if (toKey > maxTo) {
+      this.logger.warn(`[feasibility clamp] getUserWorkload: userId=${userId} window ${from}..${to} > 10y; clamping loop to ${maxTo}`);
+      toKey = maxTo;
     }
+    if (toKey < fromKey) toKey = fromKey;
 
-    const current = new Date(startDate);
-    while (current <= clampedLoopEnd) {
-      const dateStr = current.toISOString().split('T')[0];
-      const dayOfWeek = current.getDay();
-      const isHoliday = holidayDates.has(dateStr);
-      const isWeekend = dayOfWeek === 5 || dayOfWeek === 6; // Fri + Sat (Israel)
+    const [cal, inputs] = await Promise.all([
+      loadOrgCalendar(this.prisma),
+      loadPeopleInputs(this.prisma, [userId], fromKey, toKey, { loggedFor: [userId] }),
+    ]);
+    const person = inputs.get(userId)!;
+    const wl = computePersonWorkload(person, cal, { dates: datesBetween(fromKey, toKey), today: todayKey() });
 
-      // Calculate capacity
-      let capacityHours = 0;
-      if (!isHoliday && !isWeekend) {
-        const schedule = schedules.find((s) => s.dayOfWeek === dayOfWeek);
-        if (schedule) {
-          const [startH, startM] = schedule.shiftStart.split(':').map(Number);
-          const [endH, endM] = schedule.shiftEnd.split(':').map(Number);
-          const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM) - schedule.breakMinutes;
-          capacityHours = Math.max(0, totalMinutes / 60);
-        } else {
-          capacityHours = 8; // Default 8h workday
-        }
-      }
-
-      // Calculate planned hours (distribute task hours across working days)
-      let plannedHours = 0;
-      const taskBreakdown: Array<{ taskId: number; taskName: string; hours: number }> = [];
-
-      for (const assignment of assignments) {
-        const task = assignment.task;
-        if (!task.budgetHours || Number(task.budgetHours) === 0) continue;
-
-        const taskStart = task.startDate ? new Date(task.startDate) : startDate;
-        const taskEnd = task.endDate ? new Date(task.endDate) : endDate;
-
-        if (current < taskStart || current > taskEnd) continue;
-        if (isHoliday || isWeekend) continue;
-
-        // Count working days in task range
-        const workingDays = this.countWorkingDays(taskStart, taskEnd, holidayDates);
-        if (workingDays === 0) continue;
-
-        const dailyHours = Number(task.budgetHours) / workingDays;
-        plannedHours += dailyHours;
-        taskBreakdown.push({ taskId: task.id, taskName: task.name, hours: Math.round(dailyHours * 100) / 100 });
-      }
-
-      // Calculate actual hours from time entries
-      const dayEntries = timeEntries.filter((e) => e.date.toISOString().split('T')[0] === dateStr);
-      const actualHours = dayEntries.reduce((sum, e) => sum + e.minutes / 60, 0);
-
-      const utilizationPct = capacityHours > 0 ? Math.round((plannedHours / capacityHours) * 100) : 0;
-
-      dailyData.push({
-        date: dateStr,
-        dayOfWeek,
-        capacityHours: Math.round(capacityHours * 100) / 100,
-        plannedHours: Math.round(plannedHours * 100) / 100,
-        actualHours: Math.round(actualHours * 100) / 100,
-        utilizationPct,
-        isHoliday,
-        tasks: taskBreakdown,
-      });
-
-      current.setDate(current.getDate() + 1);
-    }
-
+    const canSee = (t: WorkloadTask) => (opts.canSeeProject ? opts.canSeeProject(t.projectId) : true);
+    const dailyData = wl.days.map((d) => ({
+      date: d.date,
+      dayOfWeek: dowOf(d.date),
+      capacityHours: d.capacity,
+      plannedHours: d.planned,
+      actualHours: d.logged ?? 0,
+      utilizationPct: d.capacity > 0 ? Math.round((d.planned / d.capacity) * 100) : 0,
+      isHoliday: cal.nonWorking.has(d.date),
+      tasks: shapeChips(d.tasks, wl.taskById, canSee).map((c) => ({ taskId: c.taskId, taskName: c.name, hours: c.hours })),
+    }));
+    const workDays = dailyData.filter((d) => d.capacityHours > 0);
     const summary = {
-      totalPlanned: Math.round(dailyData.reduce((s, d) => s + d.plannedHours, 0) * 100) / 100,
-      totalCapacity: Math.round(dailyData.reduce((s, d) => s + d.capacityHours, 0) * 100) / 100,
-      totalActual: Math.round(dailyData.reduce((s, d) => s + d.actualHours, 0) * 100) / 100,
-      overloadedDays: dailyData.filter((d) => d.utilizationPct > 100).length,
-      avgUtilization: dailyData.length > 0
-        ? Math.round(dailyData.reduce((s, d) => s + d.utilizationPct, 0) / dailyData.filter((d) => d.capacityHours > 0).length)
+      totalPlanned: wl.totals.planned,
+      totalCapacity: wl.totals.capacity,
+      totalActual: wl.totals.logged ?? 0,
+      undatedHours: wl.totals.undatedHours,
+      overloadedDays: wl.totals.overloadedDays,
+      avgUtilization: workDays.length > 0
+        ? Math.round(workDays.reduce((s, d) => s + d.utilizationPct, 0) / workDays.length)
         : 0,
     };
 
@@ -205,15 +140,30 @@ export class ExecutionPlanningService {
    * `actualHours: null` per day and `totalActual: null`. Missing
    * `visible` = nobody (fail closed).
    */
-  async getProjectWorkload(projectId: number, from: string, to: string, visible: VisibleUserIds = []) {
+  async getProjectWorkload(
+    projectId: number,
+    from: string,
+    to: string,
+    visible: VisibleUserIds = [],
+    viewer?: { id: number; isAdmin: boolean },
+  ) {
     const members = await this.prisma.projectMember.findMany({
       where: { projectId },
       include: { user: { select: { id: true, firstName: true, lastName: true, position: true } } },
     });
 
+    // QA6 P3 — a member's tasks on projects the viewer cannot open are
+    // listed as "Other project" (no id / name). Without a viewer, as before.
+    let canSeeProject: ((pid: number | null) => boolean) | undefined;
+    if (viewer) {
+      const acc = await this.access.getAccessibleProjectIds(viewer.id, viewer.isAdmin);
+      const ids = new Set(acc.projectIds);
+      canSeeProject = (pid) => pid != null && (acc.all || ids.has(pid));
+    }
+
     const workloads = await Promise.all(
       members.map(async (m) => {
-        const workload: any = await this.getUserWorkload(m.userId, from, to);
+        const workload: any = await this.getUserWorkload(m.userId, from, to, canSeeProject ? { canSeeProject } : {});
         if (!isUserVisible(visible, m.userId)) {
           workload.dailyData = workload.dailyData.map((d: any) => ({ ...d, actualHours: null }));
           workload.summary = { ...workload.summary, totalActual: null };
@@ -223,6 +173,161 @@ export class ExecutionPlanningService {
     );
 
     return { projectId, members: workloads };
+  }
+
+  /**
+   * QA6 P3 (PR-073) — `GET /workload/team`: every active employee's
+   * workload over a range, in one call.
+   *
+   * Range: `from` + `to` (YYYY-MM-DD, at most TEAM_WORKLOAD_MAX_DAYS), or
+   * the org work week holding `weekOf`, or this work week.
+   * People: active employees (`userType` employee / both), narrowed to an
+   * org unit and its sub-units (`orgUnitId`, or the caller's own unit
+   * when `myDeptOnly=true`; a caller with no unit → no narrowing).
+   *
+   * Visibility (owner's decision 25.11): PLANNED load and capacity for
+   * everyone. LOGGED hours only for people the caller may see (round 3 —
+   * self, hr:read, manager chain); everyone else `logged: null`. Task
+   * chips on projects the caller cannot open keep their hours but are
+   * masked ("Other project"); see `shapeChips`.
+   *
+   * `days`: the range's org working weekdays (holidays included, flagged)
+   * plus any other day on which someone has capacity, planned or logged
+   * hours (a Friday shift in a WorkSchedule).
+   */
+  async getTeamWorkload(caller: TeamWorkloadCaller, q: TeamWorkloadQuery = {}) {
+    const today = todayKey();
+    const visible: VisibleUserIds = caller.visibleUserIds ?? [caller.id];
+    const [cal, units, me, acc] = await Promise.all([
+      loadOrgCalendar(this.prisma),
+      this.prisma.orgUnit.findMany({
+        where: { deletedAt: null },
+        select: { id: true, name: true, parentId: true, path: true, depth: true, sortOrder: true },
+        orderBy: [{ depth: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+      }),
+      this.prisma.user.findUnique({ where: { id: caller.id }, select: { orgUnitId: true } }),
+      this.access.getAccessibleProjectIds(caller.id, caller.isAdmin),
+    ]);
+    const range = resolveTeamRange(q, cal, today);
+
+    // Unit filter — the unit and everything under it.
+    const myDeptOnly = String(q.myDeptOnly ?? '').toLowerCase() === 'true';
+    const requestedUnit = q.orgUnitId != null && String(q.orgUnitId) !== '' ? Number(q.orgUnitId) : null;
+    if (requestedUnit != null && (!Number.isInteger(requestedUnit) || requestedUnit <= 0)) {
+      throw new BadRequestException('orgUnitId must be a positive integer');
+    }
+    const rootUnit = requestedUnit ?? (myDeptOnly ? me?.orgUnitId ?? null : null);
+    const unitIds = rootUnit == null ? null : subtreeUnitIds(rootUnit, (units ?? []) as any[]);
+
+    const employees = await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        deletedAt: null,
+        userType: { in: ['employee', 'both'] },
+        ...(unitIds ? { orgUnitId: { in: unitIds } } : {}),
+      },
+      select: {
+        id: true, firstName: true, lastName: true, position: true, avatarUrl: true,
+        dailyStandardHours: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } },
+      },
+      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+    });
+
+    const inputs = await loadPeopleInputs(
+      this.prisma,
+      employees.map((e) => e.id),
+      range.from,
+      range.to,
+      {
+        loggedFor: visible,
+        dailyStandardHours: new Map(employees.map((e) => [e.id, e.dailyStandardHours == null ? null : Number(e.dailyStandardHours)])),
+      },
+    );
+    const allDates = datesBetween(range.from, range.to);
+    const accessible = new Set(acc.projectIds);
+    const canSee = (personId: number) => (t: WorkloadTask) =>
+      t.projectId == null ? personId === caller.id : acc.all || accessible.has(t.projectId);
+
+    const computed = employees.map((e) => ({
+      e,
+      wl: computePersonWorkload(inputs.get(e.id)!, cal, { dates: allDates, today }),
+    }));
+
+    // Columns: org working weekdays + any day someone works / logged.
+    const shown = new Set<string>();
+    for (const d of allDates) if (!cal.restDays.includes(dowOf(d))) shown.add(d);
+    for (const { wl } of computed) {
+      for (const d of wl.days) if (d.capacity > 0 || d.planned > 0 || (d.logged ?? 0) > 0) shown.add(d.date);
+    }
+    const dayKeys = allDates.filter((d) => shown.has(d));
+    const days = dayKeys.map((date) => {
+      const label = cal.labels.get(date);
+      return {
+        date,
+        dayOfWeek: dowOf(date),
+        isWorkingDay: !cal.restDays.includes(dowOf(date)) && !cal.nonWorking.has(date),
+        holiday: label && label.type !== 'REGULAR'
+          ? { name: label.name, type: label.type, workingHours: cal.partial.get(date) ?? 0 }
+          : null,
+      };
+    });
+
+    let teamCap = 0;
+    let teamPlanned = 0;
+    let teamLogged = 0;
+    let anyLogged = false;
+    let teamUndated = 0;
+    const people = computed.map(({ e, wl }) => {
+      const byDate = new Map(wl.days.map((d) => [d.date, d]));
+      const see = canSee(e.id);
+      teamCap += wl.totals.capacity;
+      teamPlanned += wl.totals.planned;
+      teamUndated += wl.totals.undatedHours;
+      if (wl.totals.logged != null) { teamLogged += wl.totals.logged; anyLogged = true; }
+      return {
+        id: e.id,
+        firstName: e.firstName,
+        lastName: e.lastName,
+        name: `${e.firstName ?? ''} ${e.lastName ?? ''}`.trim(),
+        position: e.position ?? null,
+        avatarUrl: e.avatarUrl ?? null,
+        orgUnit: e.orgUnit ? { id: e.orgUnit.id, name: e.orgUnit.name } : null,
+        loggedVisible: wl.totals.logged != null,
+        days: dayKeys.map((date) => {
+          const d = byDate.get(date)!;
+          return {
+            date,
+            capacity: d.capacity,
+            planned: d.planned,
+            logged: d.logged,
+            tasks: shapeChips(d.tasks, wl.taskById, see),
+          };
+        }),
+        totals: wl.totals,
+      };
+    });
+
+    const scopeUnit = rootUnit != null ? ((units ?? []) as any[]).find((u) => u.id === rootUnit) : null;
+    return {
+      range: { from: range.from, to: range.to, today },
+      workWeek: { restDays: cal.restDays, weekStartsOn: weekStartsOn(cal.restDays) },
+      days,
+      people,
+      totals: {
+        people: people.length,
+        capacity: round2(teamCap),
+        planned: round2(teamPlanned),
+        logged: anyLogged ? round2(teamLogged) : null,
+        undatedHours: round2(teamUndated),
+        utilizationPct: teamCap > 0 ? Math.round((teamPlanned / teamCap) * 100) : 0,
+      },
+      orgUnits: ((units ?? []) as any[]).map((u) => ({ id: u.id, name: u.name, parentId: u.parentId ?? null, depth: u.depth ?? 0 })),
+      scope: {
+        myDeptOnly: myDeptOnly && requestedUnit == null && rootUnit != null,
+        orgUnitId: rootUnit,
+        deptName: scopeUnit?.name ?? null,
+      },
+    };
   }
 
   // ─── FEASIBILITY ENGINE ─────────────────────────────────────────────────
@@ -763,14 +868,23 @@ export class ExecutionPlanningService {
       select: { id: true, firstName: true, lastName: true, avatarUrl: true, position: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } }, dailyStandardHours: true },
     });
 
-    const weekStart = new Date(now); weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1); weekStart.setHours(0, 0, 0, 0);
-    const weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 4); weekEnd.setHours(23, 59, 59, 999);
+    // QA6 P3 (PR-074) — the week is the ORG work week (Sun–Thu with
+    // the default Fri + Sat rest days), not "Monday + 4": on a Sunday the
+    // old window was next Mon–Fri, so every department read 0%. Load is
+    // the PLANNED load of the workload engine (visible to every
+    // Operations user — owner's decision 25.11); logged hours stay a
+    // second, private figure (round 3).
+    const cal = await loadOrgCalendar(this.prisma);
+    const today = todayKey(now);
+    const week = workWeekOf(today, cal.restDays);
+    const weekStart = new Date(`${week.from}T00:00:00.000Z`);
+    const weekEndExclusive = new Date(`${addDaysYmd(week.to, 1)}T00:00:00.000Z`);
 
     const weekEntries = await this.prisma.timeEntry.groupBy({
       by: ['userId'],
       where: {
         deletedAt: null,
-        date: { gte: weekStart, lte: weekEnd },
+        date: { gte: weekStart, lt: weekEndExclusive },
         ...(visibleUsers === 'all' ? {} : { userId: { in: visibleUsers } }),
       },
       _sum: { minutes: true },
@@ -779,7 +893,21 @@ export class ExecutionPlanningService {
     /** This week's logged hours, or null for someone the caller may not see. */
     const hoursOf = (userId: number): number | null =>
       isUserVisible(visibleUsers, userId) ? hoursMap.get(userId) ?? 0 : null;
-    const hoursVisible = (userId: number) => isUserVisible(visibleUsers, userId);
+
+    // Planned load + capacity for the same week, one batched engine run.
+    const weekDates = datesBetween(week.from, week.to);
+    const weekInputs = await loadPeopleInputs(this.prisma, employees.map((e) => e.id), week.from, week.to, {
+      loggedFor: [],
+      dailyStandardHours: new Map(employees.map((e) => [e.id, e.dailyStandardHours == null ? null : Number(e.dailyStandardHours)])),
+    });
+    const weekLoad = new Map<number, { planned: number; capacity: number }>();
+    for (const e of employees) {
+      const t = computePersonWorkload(weekInputs.get(e.id)!, cal, { dates: weekDates, today }).totals;
+      weekLoad.set(e.id, { planned: Math.round(t.planned * 10) / 10, capacity: Math.round(t.capacity * 10) / 10 });
+    }
+    const plannedOf = (userId: number) => weekLoad.get(userId)?.planned ?? 0;
+    const capacityOf = (userId: number) => weekLoad.get(userId)?.capacity ?? 0;
+    const workingDays = weekDates.filter((d) => !cal.restDays.includes(dowOf(d)));
 
     const taskCountByUser = await this.prisma.taskAssignee.groupBy({ by: ['userId'], where: { deletedAt: null, task: { deletedAt: null, status: { notIn: ['completed', 'cancelled'] } } }, _count: true });
     const taskCountMap = new Map(taskCountByUser.map((t) => [t.userId, t._count]));
@@ -815,7 +943,7 @@ export class ExecutionPlanningService {
       const deptName = emp.orgUnit?.name || 'Unassigned';
       if (!deptMap.has(deptName)) deptMap.set(deptName, { name: deptName, members: [], _projectIds: new Set<number>(), _deliverableIds: new Set<number>(), _openTasks: 0 });
       const dept = deptMap.get(deptName);
-      const capacity = Number(emp.dailyStandardHours ?? 8) * 5;
+      const capacity = capacityOf(emp.id);
       const empTasks = memberTasksMap.get(emp.id) ?? [];
 
       const memberProjectIds = new Set<number>();
@@ -830,7 +958,7 @@ export class ExecutionPlanningService {
 
       dept.members.push({
         id: emp.id, firstName: emp.firstName, lastName: emp.lastName, avatarUrl: emp.avatarUrl, position: emp.position,
-        hoursWeek: hoursOf(emp.id), capacity, tasks: taskCountMap.get(emp.id) ?? 0,
+        plannedWeek: plannedOf(emp.id), hoursWeek: hoursOf(emp.id), capacity, tasks: taskCountMap.get(emp.id) ?? 0,
         overdueTasks: empTasks.filter((t) => t.daysOverdue !== null && t.daysOverdue > 0).length,
         openTasks: empTasks.length,
         projectCount: memberProjectIds.size,
@@ -839,17 +967,21 @@ export class ExecutionPlanningService {
       });
     }
 
-    // Round 3 — dept hour totals cover only the members whose hours the
-    // caller may see (null when none); capacity is summed over the same
-    // members so the load bar stays a fair ratio.
+    // QA6 P3 (PR-074) — the department bar is PLANNED load over the
+    // week's capacity, for every member. The logged figure (round 3)
+    // covers only the members whose hours the caller may see (null when
+    // none), with `loggedCapacity` summed over the same members so a
+    // logged ratio stays fair.
     const departments = Array.from(deptMap.values()).map((d) => {
       const counted = d.members.filter((m: any) => m.hoursWeek != null);
-      const capacityOf = counted.length > 0 ? counted : d.members;
+      const sum = (rows: any[], f: (m: any) => number) => Math.round(rows.reduce((s, m) => s + f(m), 0) * 10) / 10;
       return {
         name: d.name,
         members: d.members,
-        totalHours: counted.length > 0 ? counted.reduce((s: number, m: any) => s + m.hoursWeek, 0) : null,
-        totalCapacity: capacityOf.reduce((s: number, m: any) => s + m.capacity, 0),
+        totalPlanned: sum(d.members, (m) => m.plannedWeek),
+        totalCapacity: sum(d.members, (m) => m.capacity),
+        totalHours: counted.length > 0 ? sum(counted, (m) => m.hoursWeek) : null,
+        loggedCapacity: counted.length > 0 ? sum(counted, (m) => m.capacity) : null,
         totalOverdue: d.members.reduce((s: number, m: any) => s + m.overdueTasks, 0),
         projectCount: (d._projectIds as Set<number>).size,
         deliverableCount: (d._deliverableIds as Set<number>).size,
@@ -857,22 +989,20 @@ export class ExecutionPlanningService {
       };
     });
 
-    // Hours-derived signals: only over employees whose hours are visible.
-    const hoursEmployees = employees.filter((e) => hoursVisible(e.id));
-    const overloaded = hoursEmployees.filter((e) => (hoursMap.get(e.id) ?? 0) > Number(e.dailyStandardHours ?? 8) * 5);
-    const available = hoursEmployees.filter((e) => (hoursMap.get(e.id) ?? 0) < Number(e.dailyStandardHours ?? 8) * 5 * 0.7);
+    // Load signals — planned load vs this week's capacity, for everyone.
+    const withCapacity = employees.filter((e) => capacityOf(e.id) > 0);
+    const overloaded = withCapacity.filter((e) => plannedOf(e.id) > capacityOf(e.id));
+    const available = withCapacity.filter((e) => plannedOf(e.id) < capacityOf(e.id) * 0.7);
 
     // ── Employees at risk (feat/ops-complete) ────────────────────────
-    // Overloaded (this week hours > weekly capacity) AND carrying at
-    // least one overdue task. Reuses the overloaded + memberTasks
-    // signals above — no new data sources per the spec. Round 3: only
-    // employees whose hours the caller may see (overload IS hours data).
-    const employeesAtRisk = hoursEmployees
+    // Overloaded (this week's PLANNED hours > the week's capacity — QA6
+    // P3; logged hours before) AND carrying at least one overdue task.
+    const employeesAtRisk = withCapacity
       .map((e) => {
         const tasks = memberTasksMap.get(e.id) ?? [];
         const overdueForUser = tasks.filter((t) => t.daysOverdue !== null && t.daysOverdue > 0);
-        const cap = Number(e.dailyStandardHours ?? 8) * 5;
-        const week = hoursMap.get(e.id) ?? 0;
+        const cap = capacityOf(e.id);
+        const week = plannedOf(e.id);
         const isOverloaded = week > cap;
         return { emp: e, overdueForUser, cap, week, isOverloaded };
       })
@@ -885,7 +1015,8 @@ export class ExecutionPlanningService {
         position: r.emp.position,
         // Retire-User.department Step 3/3 — OrgUnit name only.
         department: r.emp.orgUnit?.name ?? null,
-        hoursWeek: r.week,
+        plannedWeek: r.week,
+        hoursWeek: hoursOf(r.emp.id),
         capacity: r.cap,
         overloadPct: r.cap > 0 ? Math.round(r.week / r.cap * 100) : 0,
         overdueCount: r.overdueForUser.length,
@@ -981,7 +1112,7 @@ export class ExecutionPlanningService {
         totalBlocked: blockedByOverdue.length,
         overloadedCount: overloaded.length,
         availableCount: available.length,
-        availableHours: available.reduce((s, e) => s + (Number(e.dailyStandardHours ?? 8) * 5 - (hoursMap.get(e.id) ?? 0)), 0),
+        availableHours: Math.round(available.reduce((s, e) => s + (capacityOf(e.id) - plannedOf(e.id)), 0)),
         reviewCount: reviewQueue.length,
         employeesAtRiskCount: employeesAtRisk.length,
       },
@@ -990,6 +1121,8 @@ export class ExecutionPlanningService {
       reviewQueue,
       employeesAtRisk,
       services,
+      // QA6 P3 (PR-074) — what the Team / load figures measure.
+      week: { from: week.from, to: week.to, days: workingDays, measure: 'planned' as const },
       scope: {
         myDeptOnly: applyDeptScope,
         deptName: applyDeptScope ? callerDept : null,
@@ -1651,4 +1784,48 @@ export class ExecutionPlanningService {
 
     return { days: Math.ceil(maxPath), cycleIds: [...detectedCycleIds] };
   }
+}
+
+// ─── QA6 P3 helpers ────────────────────────────────────────────────────
+
+/** Range of `GET /workload/team`: explicit from/to, or a work week. */
+export function resolveTeamRange(q: TeamWorkloadQuery, cal: OrgCalendar, today: string): { from: string; to: string } {
+  const hasFrom = q.from != null && q.from !== '';
+  const hasTo = q.to != null && q.to !== '';
+  if (hasFrom || hasTo) {
+    if (!isValidYmd(q.from) || !isValidYmd(q.to)) {
+      throw new BadRequestException('from and to must both be dates (YYYY-MM-DD)');
+    }
+    if (q.to < q.from) throw new BadRequestException('to must not be before from');
+    if (q.to > addDaysYmd(q.from, TEAM_WORKLOAD_MAX_DAYS - 1)) {
+      throw new BadRequestException(`The range may span at most ${TEAM_WORKLOAD_MAX_DAYS} days`);
+    }
+    return { from: q.from, to: q.to };
+  }
+  if (q.weekOf != null && q.weekOf !== '') {
+    if (!isValidYmd(q.weekOf)) throw new BadRequestException('weekOf must be a date (YYYY-MM-DD)');
+    return workWeekOf(q.weekOf, cal.restDays);
+  }
+  return workWeekOf(today, cal.restDays);
+}
+
+/** The unit and every unit below it (materialised path, or parentId where a path was never written). */
+export function subtreeUnitIds(
+  rootId: number,
+  units: Array<{ id: number; parentId: number | null; path?: string | null }>,
+): number[] {
+  const out = new Set<number>([rootId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const u of units) {
+      if (out.has(u.id)) continue;
+      const onPath = String(u.path ?? '').split('/').filter(Boolean).map(Number).includes(rootId);
+      if (onPath || (u.parentId != null && out.has(u.parentId))) {
+        out.add(u.id);
+        grew = true;
+      }
+    }
+  }
+  return [...out];
 }
