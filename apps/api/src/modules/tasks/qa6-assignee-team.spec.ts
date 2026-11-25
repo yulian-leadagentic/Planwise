@@ -21,6 +21,7 @@ import { ProjectAccessService } from '../../common/services/project-access.servi
 import { PermissionDeniedException } from '../../common/errors/permission-denied';
 import { ProjectPartnerRolesService } from '../project-partner-roles/project-partner-roles.service';
 import { ProjectsService } from '../projects/projects.service';
+import { SystemMessagesListener } from '../messages/system-messages.listener';
 import { TasksController } from './tasks.controller';
 import { TasksService } from './tasks.service';
 import { TaskAssigneePolicyService } from './task-assignee-policy.service';
@@ -80,6 +81,9 @@ function seed() {
     taskAssignee: [{ id: 1, taskId: 4021, userId: 101, deletedAt: null }],
     timeEntry: [] as any[],
     taskComment: [] as any[],
+    // QA6 security review — a zone of project 58, for "a task joins a project".
+    zone: [{ id: 580, projectId: 58, name: 'Zone A', path: '580', deletedAt: null }],
+    notification: [] as any[],
   };
 }
 
@@ -91,17 +95,27 @@ function world() {
     logAssigneeAdded: jest.fn(),
     logProjectMemberAdded: jest.fn(),
     logTaskCreated: jest.fn(),
+    logTaskUpdated: jest.fn(),
   };
+  const notifications = { create: jest.fn(async () => ({})) };
   const partnerRoles = new ProjectPartnerRolesService(prisma, activityLog);
-  const tasksService = new TasksService(prisma, { emit: jest.fn() } as any, activityLog, {} as any, {} as any);
   const policy = new TaskAssigneePolicyService(prisma, access, partnerRoles, activityLog);
+  const tasksService = new TasksService(
+    prisma,
+    { emit: jest.fn() } as any,
+    activityLog,
+    notifications as any,
+    { materializeFromTasks: jest.fn() } as any,
+    policy,
+    access,
+  );
   const ctrl = new TasksController(tasksService, access, {} as any, {} as any, policy);
   const projects = new ProjectsService(prisma, access, partnerRoles, {} as any, activityLog);
   const assignees = (taskId: number) =>
     db.table('taskAssignee').filter((a) => a.taskId === taskId && a.deletedAt == null).map((a) => a.userId);
   const participantRolesOf = (partyId: number | null | undefined) =>
     db.table('projectPartnerRole').filter((r) => r.projectId === 58 && r.roleId === 1 && r.partyId === partyId);
-  return { db, access, ctrl, projects, activityLog, assignees, participantRolesOf };
+  return { db, prisma, access, ctrl, tasksService, projects, activityLog, notifications, assignees, participantRolesOf };
 }
 
 const reasonOf = (e: any) => e?.getResponse?.()?.details?.reason;
@@ -202,5 +216,189 @@ describe('QA6 P1 — POST /tasks/:id/assignees', () => {
     w.db.table('taskAssignee').push({ id: 9, taskId: 4022, userId: 105, deletedAt: null });
     const err = await w.access.assertTaskAccess(NOA.id, 4022, false).catch((e) => e);
     expect(reasonOf(err)).toBe('NOT_PROJECT_MEMBER');
+  });
+});
+
+/**
+ * QA6 security review (2026-11-25), finding 2 — a personal task takes
+ * any employee as assignee, and a PATCH with a zoneId / projectId moved
+ * it into a project. That carried the assignee into the project past
+ * "only the leader or an Admin adds an outsider". Now every live
+ * assignee (but the creator himself) goes through the assignee policy
+ * before the move is written.
+ */
+describe('QA6 security review — a task that joins a project takes its assignees through the policy', () => {
+  let w: ReturnType<typeof world>;
+  beforeEach(() => {
+    w = world();
+  });
+
+  const personalTaskBy = async (who: any) => {
+    const t: any = await w.ctrl.create(who, { isPersonal: true, name: 'Mine', serviceTypeId: 1 } as any);
+    return t.id as number;
+  };
+  const row = (id: number) => w.db.table('task').find((t) => t.id === id)!;
+
+  it('personal task → assign B → PATCH zoneId into project 58 by a non-leader: 403 ASSIGNEE_NOT_ON_TEAM, nothing written', async () => {
+    const id = await personalTaskBy(PROFESSONAL);
+    const assigned: any = await w.ctrl.addAssignee(id, { userId: 105 }, PROFESSONAL);
+    expect(assigned.addedToTeam).toBe(false); // a personal task: any employee
+    expect(w.assignees(id)).toEqual([101, 105]);
+
+    const err = await w.ctrl.update(id, { zoneId: 580 } as any, PROFESSONAL).catch((e) => e);
+    expect(err).toBeInstanceOf(PermissionDeniedException);
+    expect(reasonOf(err)).toBe('ASSIGNEE_NOT_ON_TEAM');
+    expect(row(id)).toMatchObject({ projectId: null, zoneId: null });
+    expect(w.participantRolesOf(1105)).toHaveLength(0);
+    await expect(w.access.isOnProjectTeam(105, 58)).resolves.toBe(false);
+    expect(w.activityLog.logProjectMemberAdded).not.toHaveBeenCalled();
+  });
+
+  it('the same move through projectId is refused the same way', async () => {
+    const id = await personalTaskBy(PROFESSONAL);
+    await w.ctrl.addAssignee(id, { userId: 105 }, PROFESSONAL);
+    const err = await w.ctrl.update(id, { projectId: 58 } as any, PROFESSONAL).catch((e) => e);
+    expect(reasonOf(err)).toBe('ASSIGNEE_NOT_ON_TEAM');
+    expect(row(id).projectId).toBeNull();
+  });
+
+  it('the leader doing it adds B to the Team as participant, in the same write as the move', async () => {
+    const id = await personalTaskBy(LEADER);
+    await w.ctrl.addAssignee(id, { userId: 105 }, LEADER);
+
+    await w.ctrl.update(id, { zoneId: 580 } as any, LEADER);
+    expect(row(id)).toMatchObject({ projectId: 58, zoneId: 580 });
+    expect(w.participantRolesOf(1105)).toHaveLength(1);
+    await expect(w.access.isOnProjectTeam(105, 58)).resolves.toBe(true);
+    expect(w.activityLog.logProjectMemberAdded).toHaveBeenCalledWith(
+      expect.objectContaining({ actorUserId: 104, projectId: 58, entityId: 105, metadata: expect.objectContaining({ via: 'task-assign', taskId: id }) }),
+    );
+  });
+
+  it('an assignee already on the Team moves with the task; nothing is added', async () => {
+    const id = await personalTaskBy(PROFESSONAL);
+    await w.ctrl.addAssignee(id, { userId: 102 }, PROFESSONAL); // BIM leader of 58
+    await w.ctrl.update(id, { zoneId: 580 } as any, PROFESSONAL);
+    expect(row(id).projectId).toBe(58);
+    expect(w.activityLog.logProjectMemberAdded).not.toHaveBeenCalled();
+  });
+
+  it('the creator assigned to his own task is not planned: moving it into a project he can open is allowed', async () => {
+    // 120 is in the project's org unit (rule 6: access) but not on its Team.
+    w.db.table('user').push({
+      id: 120, firstName: 'Unit', lastName: 'Mate', email: 'u120@amec.co.il', roleId: 6, orgUnitId: 30,
+      businessPartnerId: null, userType: 'employee', isActive: true, deletedAt: null,
+    });
+    const UNIT_MATE = { ...PROFESSONAL, id: 120 };
+    const id = await personalTaskBy(UNIT_MATE);
+    expect(w.assignees(id)).toEqual([120]);
+
+    await w.ctrl.update(id, { zoneId: 580 } as any, UNIT_MATE);
+    expect(row(id).projectId).toBe(58);
+    expect(w.db.table('projectPartnerRole').filter((r) => r.projectId === 58)).toHaveLength(3);
+  });
+
+  it('a task that already has its project is not re-planned (a plain edit)', async () => {
+    w.db.table('taskAssignee').push({ id: 50, taskId: 4022, userId: 105, deletedAt: null }); // legacy, not on Team
+    const out: any = await w.tasksService.update(4022, { name: 'renamed' } as any, 104, LEADER);
+    expect(out.name).toBe('renamed');
+    expect(w.participantRolesOf(1105)).toHaveLength(0);
+  });
+
+  it('a failed move leaves no Team role behind', async () => {
+    const id = await personalTaskBy(LEADER);
+    await w.ctrl.addAssignee(id, { userId: 105 }, LEADER);
+    const update = w.prisma.task.update;
+    w.prisma.task.update = async () => {
+      throw new Error('write failed');
+    };
+    await expect(w.ctrl.update(id, { zoneId: 580 } as any, LEADER)).rejects.toThrow('write failed');
+    w.prisma.task.update = update;
+    expect(w.participantRolesOf(1105)).toHaveLength(0);
+    expect(row(id).projectId).toBeNull();
+    expect(w.activityLog.logProjectMemberAdded).not.toHaveBeenCalled();
+  });
+});
+
+describe('QA6 security review — the Team role and the assignment are one transaction', () => {
+  it('a failed assignment leaves no participant role (and no audit line)', async () => {
+    const w = world();
+    const upsert = w.prisma.taskAssignee.upsert;
+    w.prisma.taskAssignee.upsert = async () => {
+      throw new Error('assignment write failed');
+    };
+    await expect(w.ctrl.addAssignee(4021, { userId: 105 }, LEADER)).rejects.toThrow('assignment write failed');
+    w.prisma.taskAssignee.upsert = upsert;
+
+    expect(w.participantRolesOf(1105)).toHaveLength(0);
+    expect(w.assignees(4021)).toEqual([101]);
+    expect(w.activityLog.logProjectMemberAdded).not.toHaveBeenCalled();
+
+    // The same call succeeds once the write works: role + assignment.
+    const out: any = await w.ctrl.addAssignee(4021, { userId: 105 }, LEADER);
+    expect(out.addedToTeam).toBe(true);
+    expect(w.participantRolesOf(1105)).toHaveLength(1);
+    expect(w.assignees(4021)).toEqual([101, 105]);
+  });
+
+  it('a conflict (already assigned) writes no role either', async () => {
+    const w = world();
+    w.db.table('taskAssignee').push({ id: 60, taskId: 4021, userId: 105, deletedAt: null }); // legacy, not on Team
+    const err = await w.ctrl.addAssignee(4021, { userId: 105 }, LEADER).catch((e) => e);
+    expect(err?.getStatus?.()).toBe(409);
+    expect(w.participantRolesOf(1105)).toHaveLength(0);
+  });
+});
+
+/**
+ * Finding 3 — an assignment no longer grants the project, so it must not
+ * show the project's tasks or send their news either.
+ */
+describe('QA6 security review — an assignment alone shows nothing of the project', () => {
+  let w: ReturnType<typeof world>;
+  beforeEach(() => {
+    w = world();
+    // 105 kept an assignment on 4022 from before QA6; he is not on the Team.
+    w.db.table('taskAssignee').push({ id: 70, taskId: 4022, userId: 105, deletedAt: null });
+    w.db.table('taskAssignee').push({ id: 71, taskId: 4022, userId: 102, deletedAt: null });
+    // ... and has a personal task of his own.
+    w.db.table('task').push({
+      id: 4031, projectId: null, zoneId: null, code: 'T-4031', name: 'Own', status: 'not_started', requiresReview: false,
+      isPersonal: true, isArchived: false, createdBy: 105, deletedAt: null, createdAt: T0,
+    });
+    w.db.table('taskAssignee').push({ id: 72, taskId: 4031, userId: 105, deletedAt: null });
+  });
+
+  it('GET /tasks/mine leaves out tasks of projects he cannot open; his personal task stays', async () => {
+    const mine: any[] = await w.ctrl.findMine(NOA);
+    expect(mine.map((t) => t.id)).toEqual([4031]);
+    // On the Team: his project task is there.
+    const bim: any[] = await w.ctrl.findMine(BIM_LEADER);
+    expect(bim.map((t) => t.id)).toEqual([4022]);
+    // Admin: every assignment.
+    w.db.table('taskAssignee').push({ id: 73, taskId: 4023, userId: 1, deletedAt: null });
+    expect((await w.ctrl.findMine(ADMIN)).map((t: any) => t.id)).toEqual([4023]);
+  });
+
+  it('an attachment notifies only the assignees who can open the project', async () => {
+    await w.tasksService.addAttachment(4022, 101, { fileName: 'plan.pdf', fileUrl: '/files/plan.pdf' });
+    const told = w.notifications.create.mock.calls.map((c: any[]) => c[0].userId);
+    expect(told).toEqual([102]);
+  });
+
+  it('a status change notifies only the assignees who can open the project', async () => {
+    const listener = new SystemMessagesListener(w.prisma, { createSystemMessage: jest.fn() } as any, w.access);
+    await listener.handleTaskStatusChanged({
+      taskId: 4022, projectId: 58, userId: 101, oldStatus: 'not_started', newStatus: 'in_progress', userName: 'QA',
+    });
+    expect(w.db.table('notification').map((n) => n.userId)).toEqual([102]);
+  });
+
+  it('userHasProjectAccess: an Admin (by his roles) yes; an outsider and a missing project no', async () => {
+    w.db.table('role').push({ id: 1, name: 'Admin' });
+    w.db.table('taskAssignee').push({ id: 74, taskId: 4022, userId: 1, deletedAt: null });
+    await expect(w.access.userHasProjectAccess(1, 58)).resolves.toBe(true);
+    await expect(w.access.userHasProjectAccess(105, 58)).resolves.toBe(false);
+    await expect(w.access.userHasProjectAccess(105, 999)).resolves.toBe(false);
   });
 });

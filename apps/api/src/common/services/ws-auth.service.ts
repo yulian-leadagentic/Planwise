@@ -8,6 +8,12 @@ import { loadAuthenticatedUser, requireSecret } from '../../modules/auth/strateg
 
 export type WsAuthenticatedUser = NonNullable<Awaited<ReturnType<typeof loadAuthenticatedUser>>>;
 
+/** A verified handshake: the user, and when his access token expires (ms since epoch; null = no `exp`). */
+export interface WsSession {
+  user: WsAuthenticatedUser;
+  expiresAt: number | null;
+}
+
 /**
  * WebSocket handshake authentication (permissions round 1, 2026-11-20).
  *
@@ -53,10 +59,19 @@ export class WsAuthService {
   }
 
   async authenticate(client: Pick<Socket, 'handshake'>): Promise<WsAuthenticatedUser | null> {
+    return (await this.authenticateSession(client))?.user ?? null;
+  }
+
+  /**
+   * `authenticate` plus the token's expiry (QA6 security review): a
+   * long-lived socket must not outlive its access token, so the gateway
+   * keeps `expiresAt` and disconnects the socket once it has passed.
+   */
+  async authenticateSession(client: Pick<Socket, 'handshake'>): Promise<WsSession | null> {
     const token = this.extractToken(client);
     if (!token) return null;
 
-    let payload: { sub?: unknown };
+    let payload: { sub?: unknown; exp?: unknown };
     try {
       payload = await this.jwt.verifyAsync(token, { secret: this.secret, ignoreExpiration: false });
     } catch {
@@ -65,17 +80,30 @@ export class WsAuthService {
 
     const userId = Number(payload?.sub);
     if (!Number.isInteger(userId) || userId <= 0) return null;
+    const exp = Number(payload?.exp);
+    const expiresAt = Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
 
     try {
-      const user = await loadAuthenticatedUser(this.prisma, userId);
-      // Permissions round 3 (2026-11-22) — same rule as JwtAuthGuard: a
-      // user who still has to replace the password someone else chose
-      // gets no live channel until he does.
-      if (user?.mustChangePassword) return null;
-      return user;
+      const user = await this.loadUser(userId);
+      return user ? { user, expiresAt } : null;
     } catch (err) {
       this.logger.warn(`ws auth user lookup failed: ${(err as Error).message}`);
       return null;
     }
+  }
+
+  /**
+   * The user as an HTTP request would see him NOW: null when he is
+   * inactive, deleted or must still change his password. Throws on a
+   * database error, so a caller can tell "gone" from "could not check".
+   * Gateways use it to re-check a connected socket's user (QA6).
+   */
+  async loadUser(userId: number): Promise<WsAuthenticatedUser | null> {
+    const user = await loadAuthenticatedUser(this.prisma, userId);
+    // Permissions round 3 (2026-11-22) — same rule as JwtAuthGuard: a
+    // user who still has to replace the password someone else chose
+    // gets no live channel until he does.
+    if (!user || user.mustChangePassword) return null;
+    return user;
   }
 }

@@ -123,6 +123,24 @@ describe('WsAuthService', () => {
     const { svc } = makeWsAuth(null);
     expect(await svc.authenticate(fakeSocket({ auth: { token: signToken(5) } }) as any)).toBeNull();
   });
+
+  // QA6 security review — the realtime gateway keeps the token's expiry
+  // and re-reads the user while the socket lives.
+  it('authenticateSession returns the token expiry (ms) with the user', async () => {
+    const { svc } = makeWsAuth();
+    const before = Date.now();
+    const session = await svc.authenticateSession(fakeSocket({ auth: { token: signToken(5, TEST_ACCESS_SECRET, 600) } }) as any);
+    expect(session?.user.id).toBe(5);
+    // jsonwebtoken stores whole seconds.
+    expect(session!.expiresAt).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000 + 600_000);
+    expect(session!.expiresAt).toBeLessThanOrEqual(Date.now() + 600_000);
+  });
+
+  it('loadUser re-reads the user: null when inactive / deleted or a password change is pending', async () => {
+    expect((await makeWsAuth().svc.loadUser(5))?.id).toBe(5);
+    expect(await makeWsAuth(null).svc.loadUser(5)).toBeNull();
+    expect(await makeWsAuth({ ...defaultUserRow(5), mustChangePassword: true }).svc.loadUser(5)).toBeNull();
+  });
 });
 
 describe('NotificationsGateway — handshake auth', () => {

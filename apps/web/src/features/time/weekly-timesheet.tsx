@@ -18,6 +18,7 @@ import { timeApi, type TimeEntryPayload } from '@/api/time.api';
 import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useDeleteTimeEntry } from '@/hooks/use-time';
 import { useOverlapDialog } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
+import { createQuickTaskForMe } from './quick-task';
 import { TimeoffForm } from './timeoff-form';
 import { hrApi, type AbsenceRecord } from '@/features/hr/api/hr.api';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
@@ -217,38 +218,35 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
     if (!quickTaskName.trim() || !projectId) return;
     if (totalMinutes <= 0) { notify.warning('End time must be after start time'); return; }
 
+    if (!currentUserId) return;
+
     setSubmitting(true);
     try {
-      // 1. Resolve a zone to attach the task to — the project's first.
-      const planRes = await client.get(`/projects/${projectId}/planning-data`);
-      const pd = planRes.data?.data ?? planRes.data;
-      const zones = pd?.zones ?? [];
-      const firstZoneId = zones[0]?.id;
-      if (!firstZoneId) {
-        notify.warning('Project has no zones — create one first');
+      // 1–3. First zone → create the task → assign the current user
+      //      (quick-task.ts). QA6 security review: a refused assignment
+      //      (e.g. 403 "not on this project's team") is no longer
+      //      swallowed — the server's message is shown, the new task is
+      //      removed again (or we say it could not be), and no time is
+      //      logged on it.
+      const name = quickTaskName.trim();
+      const res = await createQuickTaskForMe(client, { projectId, name, userId: currentUserId });
+      if (!res.ok) {
+        if (res.reason !== 'ASSIGN_FAILED') {
+          notify.warning(res.reason === 'NO_ZONE' ? 'Project has no zones — create one first' : 'Task could not be created');
+        } else {
+          notify.apiError(res.error, 'Could not assign the new task to you');
+          if (res.taskRemoved) {
+            notify.info(`Task "${name}" was not created and no time was logged`);
+          } else {
+            notify.warning(`Task "${name}" was created but is NOT assigned to you`, {
+              description: 'No time was logged on it. Ask the project leader to add you to the team, or delete the task from the project.',
+            });
+          }
+          queryClient.invalidateQueries({ queryKey: ['tasks'] });
+        }
         return;
       }
-
-      // 2. Create the task.
-      const taskRes = await client.post('/tasks', {
-        zoneId: firstZoneId,
-        code: `QT-${Date.now().toString(36).toUpperCase()}`,
-        name: quickTaskName.trim(),
-      });
-      const newTask = taskRes.data?.data ?? taskRes.data;
-      if (!newTask?.id) {
-        notify.warning('Task could not be created');
-        return;
-      }
-
-      // 3. Assign current user — non-fatal if it fails (the task still
-      //    exists; the user can re-assign manually). Without this, the
-      //    user can't see the task in /tasks/mine later.
-      if (currentUserId) {
-        try {
-          await client.post(`/tasks/${newTask.id}/assignees`, { userId: currentUserId });
-        } catch { /* non-fatal */ }
-      }
+      const newTask = res.task;
 
       // 4. Optimistically inject the new task into the local /tasks/mine
       //    cache so the dropdown finds the option NOW (the invalidate

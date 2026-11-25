@@ -268,7 +268,7 @@ describe.each(ROLES)('QA6 P0 — round 4 for $label', ({ who, ownTask }) => {
     it('PATCH /tasks/4021 (a field edit) → 200', async () => {
       const out: any = await w.tasks.update(4021, { name: 'Edited by QA' } as any, who);
       expect(out.name).toBe('Edited by QA');
-      expect(w.tasksService.update).toHaveBeenCalledWith(4021, { name: 'Edited by QA' }, who.id);
+      expect(w.tasksService.update).toHaveBeenCalledWith(4021, { name: 'Edited by QA' }, who.id, who);
     });
 
     it('the project is in his accessible list and its task list opens', async () => {

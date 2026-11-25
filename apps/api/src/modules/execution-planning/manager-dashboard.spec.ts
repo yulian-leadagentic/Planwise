@@ -26,7 +26,8 @@ function make(accessible: { all: boolean; projectIds: number[] }) {
     calculateFeasibility: jest.fn(async () => ({ status: 'ON_TRACK' })),
   };
   const access: any = { getAccessibleProjectIds: jest.fn(async () => accessible) };
-  const ctrl = new ExecutionPlanningController(eps, access, {} as any);
+  const scope: any = { visibleUserIds: jest.fn(async () => [7]) };
+  const ctrl = new ExecutionPlanningController(eps, access, scope);
   return { ctrl, prisma, access };
 }
 

@@ -45,6 +45,14 @@ export async function loadOrgCalendar(prisma: PrismaService): Promise<OrgCalenda
 export interface LoadPeopleOptions {
   /** Whose logged hours per day to load ('all' | ids). Others get `loggedByDate: null`. */
   loggedFor: VisibleUserIds;
+  /**
+   * Whose absences reduce capacity ('all' for hr:read | the caller's
+   * round-3 `visibleUserIds`: self + manager chain). An absence is HR
+   * data: for everyone else no AbsenceRecord is read and capacity is
+   * computed WITHOUT absences, so a shorter day can never reveal one.
+   * Required, so every caller has to decide.
+   */
+  absencesFor: VisibleUserIds;
   /** dailyStandardHours already known (saves the user query). */
   dailyStandardHours?: Map<number, number | null>;
 }
@@ -69,6 +77,7 @@ export async function loadPeopleInputs(
   const toExclusive = parseYmd(addDaysYmd(toKey, 1));
   const to = parseYmd(toKey);
   const loggedIds = opts.loggedFor === 'all' ? ids : ids.filter((id) => isUserVisible(opts.loggedFor, id));
+  const absenceIds = opts.absencesFor === 'all' ? ids : ids.filter((id) => isUserVisible(opts.absencesFor ?? [], id));
 
   const [users, schedules, absences, assignments, logged] = await Promise.all([
     opts.dailyStandardHours
@@ -83,10 +92,12 @@ export async function loadPeopleInputs(
       },
       select: { userId: true, dayOfWeek: true, shiftStart: true, shiftEnd: true, breakMinutes: true, effectiveFrom: true },
     }),
-    prisma.absenceRecord.findMany({
-      where: { userId: { in: ids }, dateFrom: { lte: to }, dateTo: { gte: from } },
-      select: { userId: true, dateFrom: true, dateTo: true, amount: true, absenceType: { select: { unit: true } } },
-    }),
+    absenceIds.length === 0
+      ? Promise.resolve([] as any[])
+      : prisma.absenceRecord.findMany({
+          where: { userId: { in: absenceIds }, dateFrom: { lte: to }, dateTo: { gte: from } },
+          select: { userId: true, dateFrom: true, dateTo: true, amount: true, absenceType: { select: { unit: true } } },
+        }),
     prisma.taskAssignee.findMany({
       where: {
         userId: { in: ids },

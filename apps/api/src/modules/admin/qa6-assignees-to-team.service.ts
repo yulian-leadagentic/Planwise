@@ -52,6 +52,10 @@ export function parseQa6AssigneesToTeamBody(body: unknown): { dryRun: boolean } 
  *
  * Idempotent: an added person is on the Team, so the next run lists
  * nothing for him.
+ *
+ * Deploy order: it ships in the same deploy that removes rule 5, so it
+ * runs right AFTER that deploy (not before; it does not exist before).
+ * Each (project, person) pair is written in one transaction.
  */
 @Injectable()
 export class Qa6AssigneesToTeamService {
@@ -66,11 +70,15 @@ export class Qa6AssigneesToTeamService {
     let rolesWritten = 0;
     if (!opts.dryRun) {
       for (const row of toAdd) {
-        const role = await this.partnerRoles.upsertProjectMemberRelationship({
-          userId: row.userId,
-          projectId: row.projectId,
-        });
+        // One transaction per (project, person): the BP link it may need
+        // and the role land together or not at all. A failure stops the
+        // run; the pairs already written stay (idempotent re-run).
+        const role = await this.prisma.$transaction((tx) =>
+          this.partnerRoles.upsertProjectMemberRelationship({ userId: row.userId, projectId: row.projectId }, tx),
+        );
         if (!role) continue;
+        // The audit line goes after the commit (ActivityLogService writes
+        // through its own client).
         rolesWritten++;
         await this.activityLog.logProjectMemberAdded({
           actorUserId: opts.actorId ?? null,

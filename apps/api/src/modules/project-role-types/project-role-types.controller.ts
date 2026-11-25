@@ -25,6 +25,7 @@ import { extractEligibilityRule } from '../projects/role-eligibility';
 import {
   type HomeOrgContext,
   isInternalParty,
+  loadHomeOrgContext,
   parseOrganizationFilter,
   parseQueryFlag,
 } from './internal-party';
@@ -266,17 +267,8 @@ export class ProjectRoleTypesController {
     // request so the default call stays one query lighter.
     let homeCtx: HomeOrgContext | null = null;
     if (excludeInternal) {
-      const home = await this.prisma.businessPartner.findFirst({
-        where: { partnerType: 'organization', isHomeOrg: true, deletedAt: null },
-        orderBy: { id: 'asc' },
-        select: { id: true, domains: { select: { domain: true, isPersonal: true } } },
-      });
-      homeCtx = {
-        homeOrgId: home?.id ?? null,
-        ownedDomains: (home?.domains ?? [])
-          .filter((d) => !d.isPersonal)
-          .map((d) => d.domain.toLowerCase()),
-      };
+      // Same loader as the write path (ProjectPartnerRolesService, QA6).
+      homeCtx = await loadHomeOrgContext(this.prisma);
       // Everyone at the home org is internal, so its list is empty by
       // definition.
       if (typeof orgFilter === 'number' && orgFilter === homeCtx.homeOrgId) return [];

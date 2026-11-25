@@ -50,11 +50,16 @@ const ACCESS: Record<number, number[]> = { 6: [42, 43], 7: [43], 5: [] };
 
 async function setup(sockets: FakeSocket[]) {
   const access = {
-    assertProjectAccess: jest.fn(async (userId: number, projectId: number) => {
+    assertProjectAccess: jest.fn(async (userId: number, projectId: number, isAdmin?: boolean) => {
+      if (isAdmin === true) return;
       if (!(ACCESS[userId] ?? []).includes(projectId)) throw notMember();
     }),
   };
-  const wsAuth = { authenticate: jest.fn(async () => null) };
+  // QA6 — the gateway re-reads the user (active / Admin) through loadUser.
+  const wsAuth = {
+    authenticateSession: jest.fn(async (): Promise<any> => null),
+    loadUser: jest.fn(async (id: number): Promise<any> => ({ id, isAdmin: false, roleModules: [] })),
+  };
   const targets = { task: jest.fn(async (taskId: number) => ({ projectId: 42, taskId })) };
 
   const moduleRef = await Test.createTestingModule({
@@ -236,7 +241,161 @@ describe('RealtimeGateway — joining a project room', () => {
     const { moduleRef, gw, wsAuth } = await setup([]);
     const sock = fakeSocket(null);
     await gw.handleConnection(sock as any);
-    expect(wsAuth.authenticate).toHaveBeenCalled();
+    expect(wsAuth.authenticateSession).toHaveBeenCalled();
+    expect(sock.disconnect).toHaveBeenCalledWith(true);
+    await moduleRef.close();
+  });
+});
+
+/**
+ * QA6 security review (2026-11-25) — the handshake is not trusted for
+ * the life of the socket: the user is re-read (at most every 60s), the
+ * socket dies with its access token, and a project-id scan is cut off.
+ */
+describe('RealtimeGateway — QA6 hardening', () => {
+  it('a user deactivated since he connected is disconnected on the next broadcast and gets nothing', async () => {
+    const sock = fakeSocket(6, ['project-42']);
+    const { moduleRef, gw, wsAuth } = await setup([sock]);
+    wsAuth.loadUser.mockResolvedValueOnce(null);
+
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+
+    expect(wsAuth.loadUser).toHaveBeenCalledWith(6);
+    expect(sock.emit).not.toHaveBeenCalled();
+    expect(sock.disconnect).toHaveBeenCalledWith(true);
+    await moduleRef.close();
+  });
+
+  it('a demoted Admin: the re-check uses his current isAdmin, not the handshake copy', async () => {
+    const sock = fakeSocket(9, ['project-42']);
+    (sock.data as any).user.isAdmin = true; // Admin at connect time; no project rule admits him
+    const { moduleRef, gw, wsAuth, access } = await setup([sock]);
+
+    wsAuth.loadUser.mockResolvedValueOnce({ id: 9, isAdmin: false, roleModules: [] });
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+
+    expect(access.assertProjectAccess).toHaveBeenCalledWith(9, 42, false);
+    expect(sock.emit).not.toHaveBeenCalled();
+    expect(sock.leave).toHaveBeenCalledWith('project-42');
+    await moduleRef.close();
+  });
+
+  it('the user is re-read at most every 60s', async () => {
+    const sock = fakeSocket(6, ['project-42']);
+    const { moduleRef, gw, wsAuth } = await setup([sock]);
+    let t = 1_000_000;
+    gw.now = () => t;
+
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+    t += 30_000;
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+    expect(wsAuth.loadUser).toHaveBeenCalledTimes(1);
+
+    t += RealtimeGateway.USER_REFRESH_MS;
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+    expect(wsAuth.loadUser).toHaveBeenCalledTimes(2);
+    expect(sock.emit).toHaveBeenCalledTimes(3);
+    await moduleRef.close();
+  });
+
+  it('a database error while re-reading the user skips the event and keeps the socket', async () => {
+    const sock = fakeSocket(6, ['project-42']);
+    const { moduleRef, gw, wsAuth } = await setup([sock]);
+    wsAuth.loadUser.mockRejectedValueOnce(new Error('connection lost'));
+
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+    expect(sock.emit).not.toHaveBeenCalled();
+    expect(sock.disconnect).not.toHaveBeenCalled();
+    expect(sock.leave).not.toHaveBeenCalled();
+
+    // Not cached: the next broadcast reads him again and delivers.
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+    expect(sock.emit).toHaveBeenCalledTimes(1);
+    await moduleRef.close();
+  });
+
+  it('keeps the token expiry from the handshake; an expired socket is disconnected on broadcast and on join', async () => {
+    const sock = fakeSocket(null, ['project-42']);
+    const { moduleRef, gw, wsAuth } = await setup([sock]);
+    let t = 5_000_000;
+    gw.now = () => t;
+    wsAuth.authenticateSession.mockResolvedValueOnce({
+      user: { id: 6, isAdmin: false, roleModules: [] },
+      expiresAt: t + 10_000,
+    });
+    await gw.handleConnection(sock as any);
+    expect((sock.data as any).tokenExpiresAt).toBe(t + 10_000);
+    expect(sock.disconnect).not.toHaveBeenCalled();
+
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+    expect(sock.emit).toHaveBeenCalledTimes(1);
+
+    t += 10_000; // the token has expired
+    gw.handleInvalidate({ type: 'project.updated', projectId: 42 });
+    await gw.flushPending();
+    expect(sock.emit).toHaveBeenCalledTimes(1);
+    expect(sock.disconnect).toHaveBeenCalledWith(true);
+
+    const ack = await gw.handleJoin(sock as any, { projectId: 43 });
+    expect(ack).toMatchObject({ ok: false, error: 'Session expired' });
+    expect(sock.join).not.toHaveBeenCalled();
+    gw.handleDisconnect(sock as any);
+    await moduleRef.close();
+  });
+
+  it('a timer disconnects the socket when its token expires; an already expired token never connects', async () => {
+    jest.useFakeTimers();
+    try {
+      const wsAuth: any = { authenticateSession: jest.fn(), loadUser: jest.fn() };
+      const gw = new RealtimeGateway(wsAuth, {} as any);
+      const now = Date.now();
+      gw.now = () => now;
+
+      const live = fakeSocket(null);
+      wsAuth.authenticateSession.mockResolvedValueOnce({ user: { id: 6 }, expiresAt: now + 5_000 });
+      await gw.handleConnection(live as any);
+      const leftEarly = fakeSocket(null);
+      wsAuth.authenticateSession.mockResolvedValueOnce({ user: { id: 7 }, expiresAt: now + 5_000 });
+      await gw.handleConnection(leftEarly as any);
+      gw.handleDisconnect(leftEarly as any); // gone before expiry: its timer is cleared
+
+      jest.advanceTimersByTime(4_999);
+      expect(live.disconnect).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(1);
+      expect(live.disconnect).toHaveBeenCalledWith(true);
+      expect(leftEarly.disconnect).not.toHaveBeenCalled();
+
+      const stale = fakeSocket(null);
+      wsAuth.authenticateSession.mockResolvedValueOnce({ user: { id: 8 }, expiresAt: now - 1 });
+      await gw.handleConnection(stale as any);
+      expect(stale.disconnect).toHaveBeenCalledWith(true);
+      gw.onModuleDestroy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('20 refused project:join on one socket disconnect it', async () => {
+    const { moduleRef, gw } = await setup([]);
+    const sock = fakeSocket(7); // user 7 may open 43 only
+    for (let i = 1; i < RealtimeGateway.MAX_REFUSED_JOINS; i++) {
+      await expect(gw.handleJoin(sock as any, { projectId: 1000 + i })).resolves.toMatchObject({ ok: false });
+    }
+    expect(sock.disconnect).not.toHaveBeenCalled();
+    // A granted join is not counted.
+    await expect(gw.handleJoin(sock as any, { projectId: 43 })).resolves.toEqual({ ok: true, projectId: 43 });
+    expect(sock.disconnect).not.toHaveBeenCalled();
+
+    // The 20th refusal.
+    await expect(gw.handleJoin(sock as any, { projectId: 2000 })).resolves.toMatchObject({ ok: false });
     expect(sock.disconnect).toHaveBeenCalledWith(true);
     await moduleRef.close();
   });

@@ -1,7 +1,8 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import {
+  type CleanupAction,
   type CleanupCandidate,
   EMPTY_USAGE,
   type PhaseRow,
@@ -16,9 +17,16 @@ import {
  *
  * Safety:
  *   • DRY-RUN IS THE DEFAULT. Only `dryRun: false` writes, and then only
- *     with `approvedIds`: the rows Yulian reviewed in the dry-run list.
- *     A candidate that is not approved is left alone; an approved id that
- *     is not (or no longer) a candidate is reported and skipped.
+ *     with `approved: [{ id, action, mergeInto? }]`: the rows Yulian
+ *     reviewed in the dry-run list, WITH the action (and merge target)
+ *     he approved. The plan is recomputed at run time; when an approved
+ *     row now plans another action or another target (data changed since
+ *     the dry-run), the run is refused with 409
+ *     SERVICE_PHASE_CLEANUP_PLAN_CHANGED and writes nothing (security
+ *     review 25.11: an id list alone approved whatever the plan said at
+ *     run time). A candidate that is not approved is left alone; an
+ *     approved id that is not (or no longer) a candidate is reported and
+ *     skipped. The old `approvedIds` body is refused (400).
  *   • NOTHING IS DELETED. `mark_phase` sets `kind = 'phase'`;
  *     `deactivate` sets `isActive = false`; `merge` re-points every
  *     foreign key (tasks, including deleted ones, templates, template
@@ -29,39 +37,122 @@ import {
  *   • IDEMPOTENT. Marked / deactivated rows are no longer candidates.
  */
 
+/** One reviewed dry-run row: the id, the action approved for it and, for a merge, the row it merges into. */
+export interface ApprovedCleanupItem {
+  id: number;
+  action: CleanupAction;
+  /** The row that stays (`mergeInto.id` of the dry-run). Required for `merge`. */
+  mergeInto: number | null;
+}
+
 export interface ServicePhaseCleanupBody {
   dryRun: boolean;
-  approvedIds?: number[];
+  approved?: ApprovedCleanupItem[];
+}
+
+const ACTIONS: readonly CleanupAction[] = ['mark_phase', 'merge', 'deactivate'];
+
+const isPositiveInt = (n: unknown): n is number => Number.isInteger(n) && (n as number) > 0;
+
+function badApproved(message: string): BadRequestException {
+  return new BadRequestException({ code: 'SERVICE_PHASE_CLEANUP_BAD_APPROVED', message });
 }
 
 /**
  * Body of the endpoint, validated by hand like `parseP1CopiesToRefsBody`.
  *
- *   dryRun       Anything but the boolean `false` is a dry-run.
- *   approvedIds  Required for a real run: a non-empty array of positive
- *                integers. Without it a real run is a 400, so it can
- *                never act on rows nobody reviewed.
+ *   dryRun     Anything but the boolean `false` is a dry-run.
+ *   approved   Required for a real run: a non-empty array of
+ *              `{ id, action, mergeInto? }` copied from the dry-run
+ *              candidates (`mergeInto` may be the id or the dry-run's
+ *              `{ id, ... }` object; required for `merge`). Without it a
+ *              real run is a 400, so it can never act on rows nobody
+ *              reviewed. Accepted on a dry-run too: the same plan check
+ *              runs, so a dry-run tells whether the real run would pass.
+ *   approvedIds  Retired (400): ids alone cannot tell that the plan
+ *              changed between the review and the run.
  */
 export function parseServicePhaseCleanupBody(body: unknown): ServicePhaseCleanupBody {
   const raw = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   const dryRun = raw.dryRun !== false;
-  const ids = raw.approvedIds;
-  const valid =
-    Array.isArray(ids) && ids.length > 0 && ids.every((n) => Number.isInteger(n) && (n as number) > 0);
-  if (ids != null && !valid) {
+  if (raw.approvedIds !== undefined) {
     throw new BadRequestException({
-      code: 'SERVICE_PHASE_CLEANUP_BAD_APPROVED_IDS',
-      message: 'approvedIds must be a non-empty array of positive integers.',
-    });
-  }
-  if (!dryRun && !valid) {
-    throw new BadRequestException({
-      code: 'SERVICE_PHASE_CLEANUP_APPROVED_IDS_REQUIRED',
+      code: 'SERVICE_PHASE_CLEANUP_APPROVED_IDS_RETIRED',
       message:
-        'A real run needs approvedIds: the ids from the dry-run list that were reviewed and approved.',
+        'approvedIds is no longer accepted. Send approved: [{ id, action, mergeInto }] copied from the dry-run, so the run can check that the plan did not change.',
     });
   }
-  return valid ? { dryRun, approvedIds: [...new Set(ids as number[])] } : { dryRun };
+  const list = raw.approved;
+  if (list == null) {
+    if (!dryRun) {
+      throw new BadRequestException({
+        code: 'SERVICE_PHASE_CLEANUP_APPROVED_REQUIRED',
+        message:
+          'A real run needs approved: the dry-run rows that were reviewed, each { id, action, mergeInto }.',
+      });
+    }
+    return { dryRun };
+  }
+  if (!Array.isArray(list) || list.length === 0) {
+    throw badApproved('approved must be a non-empty array of { id, action, mergeInto }.');
+  }
+  const seen = new Set<number>();
+  const approved = list.map((item, i): ApprovedCleanupItem => {
+    const it = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>;
+    if (!isPositiveInt(it.id)) throw badApproved(`approved[${i}].id must be a positive integer.`);
+    if (seen.has(it.id)) throw badApproved(`approved lists #${it.id} twice.`);
+    seen.add(it.id);
+    if (!ACTIONS.includes(it.action as CleanupAction)) {
+      throw badApproved(`approved[${i}].action must be one of ${ACTIONS.join(', ')}.`);
+    }
+    const rawTarget = it.mergeInto;
+    const target =
+      rawTarget == null
+        ? null
+        : typeof rawTarget === 'object'
+          ? (rawTarget as Record<string, unknown>).id
+          : rawTarget;
+    if (target != null && !isPositiveInt(target)) {
+      throw badApproved(`approved[${i}].mergeInto must be a row id.`);
+    }
+    if (it.action === 'merge' && target == null) {
+      throw badApproved(`approved[${i}] is a merge: mergeInto (the row that stays) is required.`);
+    }
+    return { id: it.id, action: it.action as CleanupAction, mergeInto: (target as number | null) ?? null };
+  });
+  return { dryRun, approved };
+}
+
+/** An approved row whose recomputed plan is not what was approved. */
+export interface PlanMismatch {
+  id: number;
+  approved: { action: CleanupAction; mergeInto: number | null };
+  planned: { action: CleanupAction; mergeInto: number | null };
+}
+
+/**
+ * Approved rows whose recomputed candidate has another action or another
+ * target. A `mergeInto` sent with a `deactivate` / `mark_phase` must
+ * match too. Approved ids that are no candidate now are not mismatches
+ * (they are reported as `notCandidates` and skipped).
+ */
+export function planMismatches(approved: readonly ApprovedCleanupItem[], candidates: readonly CleanupCandidate[]): PlanMismatch[] {
+  const byId = new Map(candidates.map((c) => [c.id, c]));
+  const out: PlanMismatch[] = [];
+  for (const a of approved) {
+    const c = byId.get(a.id);
+    if (!c) continue;
+    const plannedTarget = c.mergeInto?.id ?? null;
+    const targetDiffers = a.action === 'merge' ? a.mergeInto !== plannedTarget : a.mergeInto != null && a.mergeInto !== plannedTarget;
+    if (c.action !== a.action || targetDiffers) {
+      out.push({
+        id: a.id,
+        approved: { action: a.action, mergeInto: a.mergeInto },
+        planned: { action: c.action, mergeInto: plannedTarget },
+      });
+    }
+  }
+  return out;
 }
 
 export interface AppliedChange {
@@ -83,7 +174,8 @@ export interface ServicePhaseCleanupResult {
   candidates: CleanupCandidate[];
   /** Every other row, untouched by any run. */
   unchanged: Array<{ id: number; name: string; code: string | null; kind: string; isActive: boolean }>;
-  approvedIds: number[] | null;
+  /** The approved rows of the body (normalized), null when none were sent. */
+  approved: ApprovedCleanupItem[] | null;
   /** Approved ids that are not a candidate now (wrong id, or already done). */
   notCandidates: number[];
   /** Candidates left alone because they were not approved (real run). */
@@ -186,8 +278,8 @@ export class Qa6ServicePhaseCleanupService {
     const { candidates, unchanged } = planServicePhaseCleanup(rows, usage, serviceTypes);
 
     const candidateIds = new Set(candidates.map((c) => c.id));
-    const approved = body.approvedIds ?? null;
-    const approvedSet = new Set(approved ?? []);
+    const approved = body.approved ?? null;
+    const approvedSet = new Set((approved ?? []).map((a) => a.id));
     const result: ServicePhaseCleanupResult = {
       dryRun: body.dryRun,
       totalRows: rows.length,
@@ -199,8 +291,8 @@ export class Qa6ServicePhaseCleanupService {
         kind: r.kind,
         isActive: r.isActive,
       })),
-      approvedIds: approved,
-      notCandidates: (approved ?? []).filter((id) => !candidateIds.has(id)),
+      approved,
+      notCandidates: (approved ?? []).map((a) => a.id).filter((id) => !candidateIds.has(id)),
       notApproved: body.dryRun ? [] : candidates.filter((c) => !approvedSet.has(c.id)).map((c) => c.id),
       applied: null,
     };
@@ -209,6 +301,17 @@ export class Qa6ServicePhaseCleanupService {
       `dryRun=${body.dryRun} actor=${body.actorId ?? 'system'} rows=${rows.length} ` +
         `candidates=${candidates.length} approved=${approved?.length ?? 0}`,
     );
+    // The plan is recomputed now: every approved row must still plan the
+    // action and target that were approved, else nothing is written.
+    const mismatches = planMismatches(approved ?? [], candidates);
+    if (mismatches.length > 0) {
+      throw new ConflictException({
+        code: 'SERVICE_PHASE_CLEANUP_PLAN_CHANGED',
+        message:
+          'The cleanup plan changed since the dry-run for some approved rows, so nothing was written. Run the dry-run again, review it and approve the new list.',
+        details: { mismatches },
+      });
+    }
     if (body.dryRun) return result;
 
     const toApply = candidates.filter((c) => approvedSet.has(c.id));

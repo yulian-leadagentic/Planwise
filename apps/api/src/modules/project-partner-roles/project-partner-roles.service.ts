@@ -8,9 +8,17 @@ import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
+import {
+  findInternalParties,
+  isExternalProjectRole,
+  loadHomeOrgContext,
+} from '../project-role-types/internal-party';
 import * as Sentry from '@sentry/node';
 
 const FAR_FUTURE = new Date('9999-12-31T00:00:00Z');
+
+/** 400 business code: an external project role offered to the home org or its people. */
+export const EXTERNAL_ROLE_INTERNAL_PARTY = 'EXTERNAL_ROLE_INTERNAL_PARTY';
 
 /**
  * Pure eligibility check for a party against a ProjectRoleType — the
@@ -221,6 +229,10 @@ export class ProjectPartnerRolesService {
       }
       throw new BadRequestException(`Role '${role.name}': ${check.reason ?? 'party not eligible.'}`);
     }
+    // QA6 security review — external roles are never AMEC, on the server
+    // too (the picker hides AMEC since BM2-4; a direct call did not).
+    await this.assertNotHomeOrgForExternalRole(role, [dto.partyId, dto.contactPartyId, dto.onBehalfOfPartyId]);
+
     // BM2 Phase 2 (2026-08-13) — representation checks.
     // Rules mirror the analysis: contactPartyId is only meaningful when
     // the participant is an org (the contact is a person); onBehalfOfPartyId
@@ -361,6 +373,12 @@ export class ProjectPartnerRolesService {
     });
     if (!existing) throw new NotFoundException('Project partner role not found');
 
+    // QA6 security review — a contact / on-behalf-of party set on an
+    // external role must not be AMEC either. The row's own party is not
+    // re-checked here (it cannot change on PATCH), so a legacy row can
+    // still be edited or ended.
+    await this.assertNotHomeOrgForExternalRole(existing.role, [dto.contactPartyId, dto.onBehalfOfPartyId]);
+
     if (existing.role.isPrimaryRequired && dto.isPrimary) {
       await this.demoteExistingPrimary(existing.projectId, existing.roleId, id);
     }
@@ -386,6 +404,33 @@ export class ProjectPartnerRolesService {
         contactParty: { select: { id: true, partnerType: true, displayName: true } },
         onBehalfOfParty: { select: { id: true, partnerType: true, displayName: true } },
       },
+    });
+  }
+
+  /**
+   * QA6 security review (2026-11-25) — an EXTERNAL project role
+   * (`isExternalProjectRole`, the web picker's definition) is never held
+   * by the home organization or one of its people (`isInternalParty`:
+   * the home org, an active worker_of edge to it, or a login on a
+   * home-org domain). 400 EXTERNAL_ROLE_INTERNAL_PARTY otherwise.
+   */
+  private async assertNotHomeOrgForExternalRole(
+    role: { code: string; name: string; requiredPartnerRoleCode: string | null; requiredProfessionIds: unknown },
+    partyIds: Array<number | null | undefined>,
+  ): Promise<void> {
+    if (!isExternalProjectRole(role)) return;
+    if (!partyIds.some((id) => id != null)) return;
+    const ctx = await loadHomeOrgContext(this.prisma);
+    const internal = await findInternalParties(this.prisma, partyIds, ctx);
+    if (internal.length === 0) return;
+    const who = internal[0];
+    throw new BadRequestException({
+      code: EXTERNAL_ROLE_INTERNAL_PARTY,
+      message:
+        who.partnerType === 'organization'
+          ? `"${role.name}" is an external role: your own organization (${who.displayName}) can't hold it.`
+          : `"${role.name}" is an external role: ${who.displayName} works for your own organization and can't hold it.`,
+      details: { partyIds: internal.map((p) => p.id), role: role.code },
     });
   }
 
@@ -519,13 +564,22 @@ export class ProjectPartnerRolesService {
    * Auto-links a BusinessPartner when the user is missing one — legacy
    * users seeded before the BP-per-user pattern had businessPartnerId=NULL
    * and would silently vanish from getTeam (which reads project_partner_roles).
+   *
+   * `tx` (QA6) — run every read and write on that transaction client,
+   * so a caller can make the role part of its own write (the leader's
+   * add-to-team on assignment, the qa6-assignees-to-team backfill) and
+   * nothing is left behind when that write fails.
    */
-  async upsertProjectMemberRelationship(args: {
-    userId: number;
-    projectId: number;
-    roleInContext?: string | null;
-  }) {
-    const user = await this.prisma.user.findUnique({
+  async upsertProjectMemberRelationship(
+    args: {
+      userId: number;
+      projectId: number;
+      roleInContext?: string | null;
+    },
+    tx?: Prisma.TransactionClient,
+  ) {
+    const db = tx ?? this.prisma;
+    const user = await db.user.findUnique({
       where: { id: args.userId },
       select: {
         id: true,
@@ -542,13 +596,13 @@ export class ProjectPartnerRolesService {
 
     let businessPartnerId = user.businessPartnerId;
     if (!businessPartnerId) {
-      const existingBp = await this.prisma.businessPartner.findFirst({
+      const existingBp = await db.businessPartner.findFirst({
         where: { email: user.email, deletedAt: null },
       });
       if (existingBp) {
         businessPartnerId = existingBp.id;
       } else {
-        const bp = await this.prisma.businessPartner.create({
+        const bp = await db.businessPartner.create({
           data: {
             partnerType: 'person',
             displayName: `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() || user.email,
@@ -563,24 +617,24 @@ export class ProjectPartnerRolesService {
         });
         businessPartnerId = bp.id;
       }
-      await this.prisma.user.update({
+      await db.user.update({
         where: { id: user.id },
         data: { businessPartnerId },
       });
     }
 
-    const role = await this.prisma.projectRoleType.findUnique({
+    const role = await db.projectRoleType.findUnique({
       where: { code: 'participant' },
     });
     if (!role) return null;
 
-    const existing = await this.prisma.projectPartnerRole.findFirst({
+    const existing = await db.projectPartnerRole.findFirst({
       where: { projectId: args.projectId, partyId: businessPartnerId, roleId: role.id },
       orderBy: { createdAt: 'desc' },
     });
 
     if (existing) {
-      return this.prisma.projectPartnerRole.update({
+      return db.projectPartnerRole.update({
         where: { id: existing.id },
         data: {
           titleInProject: args.roleInContext ?? undefined,
@@ -589,7 +643,7 @@ export class ProjectPartnerRolesService {
         },
       });
     }
-    return this.prisma.projectPartnerRole.create({
+    return db.projectPartnerRole.create({
       data: {
         projectId: args.projectId,
         partyId: businessPartnerId,

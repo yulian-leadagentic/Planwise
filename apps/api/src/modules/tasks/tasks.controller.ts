@@ -182,9 +182,12 @@ export class TasksController {
   @Get('mine')
   @RequirePermissions({ module: 'tasks', action: 'read' })
   @ApiOperation({ summary: 'List tasks assigned to current user' })
-  findMine(@CurrentUser() user: any) {
-    // /mine is intrinsically scoped to the user — no project check needed
-    return this.tasksService.findMine(user.id);
+  async findMine(@CurrentUser() user: any) {
+    // Scoped to the user's own assignments, and (QA6 security review) to
+    // projects he can still open: an assignment alone no longer grants a
+    // project, so it no longer shows its task here either. Personal tasks stay.
+    const acc = await this.access.getAccessibleProjectIds(user.id, isAdminUser(user));
+    return this.tasksService.findMine(user.id, acc);
   }
 
   @Get('allowed-transitions')
@@ -224,7 +227,9 @@ export class TasksController {
     );
     // Status change: stage-transition rules, and approve for a reviewed task.
     await this.assertStatusChange(user, id, dto);
-    return this.tasksService.update(id, dto, user?.id);
+    // QA6 — the caller goes along for the assignee policy: a task without
+    // a project that joins one takes its assignees into it (update()).
+    return this.tasksService.update(id, dto, user?.id, user);
   }
 
   @Delete(':id')
@@ -297,12 +302,20 @@ export class TasksController {
     await assertFinanceFieldWrites(user, body, ['hourlyRate'], null);
     // QA6 — an assignment never brings someone into a project: the target
     // must be an employee on the Team, or the leader / an Admin adds him
-    // to the Team (participant) first. `addedToTeam` tells the web.
+    // to the Team (participant). The role and the assignment are written
+    // in ONE transaction (security review 25.11), so a failed assignment
+    // leaves no role behind. `addedToTeam` tells the web.
     const userId = Number(body?.userId);
     if (!Number.isInteger(userId) || userId <= 0) throw new BadRequestException('userId is required.');
-    const { addedToTeam } = await this.assigneePolicy.ensureAssignable(user, projectId, userId, taskId);
-    const result = await this.tasksService.addAssignee(taskId, { ...body, userId }, user?.id);
-    return { ...result, addedToTeam };
+    const plan = await this.assigneePolicy.planAssignment(user, projectId, userId);
+    const result = await this.tasksService.addAssignee(
+      taskId,
+      { ...body, userId },
+      user?.id,
+      plan.needsTeamAdd ? { beforeWrite: (tx) => this.assigneePolicy.applyTeamAdd(plan, tx) } : {},
+    );
+    await this.assigneePolicy.logTeamAdd(user, plan, taskId);
+    return { ...result, addedToTeam: plan.needsTeamAdd };
   }
 
   @Delete(':id/assignees/:userId')

@@ -60,6 +60,8 @@ export class ExecutionPlanningController {
     const ids = new Set(acc.projectIds);
     return this.eps.getUserWorkload(userId, from, to, {
       canSeeProject: (pid) => (pid == null ? userId === user.id : acc.all || ids.has(pid)),
+      // Self or canViewEmployee (checked above): his absences may show.
+      absencesFor: [userId],
     });
   }
 
@@ -96,8 +98,16 @@ export class ExecutionPlanningController {
   @Get('workload/me')
   @OwnData()
   @ApiOperation({ summary: 'Get my workload' })
-  getMyWorkload(@CurrentUser() user: any, @Query('from') from: string, @Query('to') to: string) {
-    return this.eps.getUserWorkload(user.id, from, to);
+  async getMyWorkload(@CurrentUser() user: any, @Query('from') from: string, @Query('to') to: string) {
+    // QA6 — an assignment no longer opens a project, so a task of his on
+    // a project he cannot open is masked ("Other project", hours kept),
+    // exactly as on /workload/user/:self. His personal tasks stay.
+    const acc = await this.access.getAccessibleProjectIds(user.id, isAdminUser(user));
+    const ids = new Set(acc.projectIds);
+    return this.eps.getUserWorkload(user.id, from, to, {
+      canSeeProject: (pid) => pid == null || acc.all || ids.has(pid),
+      absencesFor: [user.id],
+    });
   }
 
   @Get('projects/:id/workload')
@@ -127,7 +137,9 @@ export class ExecutionPlanningController {
     @Query('targetDate') targetDate?: string,
   ) {
     await this.access.assertProjectAccess(user.id, projectId, isAdminUser(user));
-    return this.eps.calculateFeasibility(projectId, targetDate);
+    // QA6 — absences cut an assignee's available hours only inside the
+    // caller's round-3 scope (self, hr:read, manager chain).
+    return this.eps.calculateFeasibility(projectId, targetDate, await this.employeeScope.visibleUserIds(user));
   }
 
   // `GET /projects/:id/estimated-cost` was removed in permissions round 2
@@ -162,13 +174,15 @@ export class ExecutionPlanningController {
       },
     });
     const projectIds = projects.map((p: any) => p.id);
+    // QA6 — feasibility reads capacity; absences only inside his scope.
+    const visible = await this.employeeScope.visibleUserIds(user);
 
     // Get progress + feasibility for each project
     const projectData = await Promise.all(
       projects.map(async (p: any) => {
         const [progress, feasibility] = await Promise.all([
           this.eps.getProjectProgress(p.id),
-          this.eps.calculateFeasibility(p.id).catch(() => null),
+          this.eps.calculateFeasibility(p.id, undefined, visible).catch(() => null),
         ]);
         return {
           project: { id: p.id, name: p.name, status: p.status, leader: p.leader },

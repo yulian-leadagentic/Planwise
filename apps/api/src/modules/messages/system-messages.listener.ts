@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { MessagesService } from './messages.service';
 
 /**
@@ -13,6 +14,7 @@ export class SystemMessagesListener {
   constructor(
     private prisma: PrismaService,
     private messagesService: MessagesService,
+    private access: ProjectAccessService,
   ) {}
 
   @OnEvent('task.status.changed')
@@ -27,7 +29,7 @@ export class SystemMessagesListener {
     const { taskId, projectId, userId, oldStatus, newStatus, userName } = payload;
     const task = await this.prisma.task.findUnique({
       where: { id: taskId },
-      select: { name: true, zoneId: true },
+      select: { name: true, zoneId: true, projectId: true },
     });
     if (!task) return;
 
@@ -46,10 +48,20 @@ export class SystemMessagesListener {
       select: { userId: true },
     });
 
-    if (assignees.length > 0) {
+    // QA6 security review — an assignment no longer grants the project:
+    // an assignee who cannot open the task's project is not told (the
+    // notification carries the task name and its statuses).
+    const taskProjectId = task.projectId ?? projectId ?? null;
+    const recipients: Array<{ userId: number }> = [];
+    for (const a of assignees) {
+      if (a.userId === userId) continue;
+      if (taskProjectId != null && !(await this.access.userHasProjectAccess(a.userId, taskProjectId))) continue;
+      recipients.push(a);
+    }
+
+    if (recipients.length > 0) {
       await this.prisma.notification.createMany({
-        data: assignees
-          .filter((a) => a.userId !== userId)
+        data: recipients
           .map((a) => ({
             userId: a.userId,
             type: 'status_change',

@@ -6,12 +6,15 @@
  * Acceptance:
  *   • the dry-run (default) lists every candidate with id, name, code,
  *     kind guess, usage counts and the proposed action, and writes nothing;
- *   • a real run needs `approvedIds` and acts only on those rows;
+ *   • a real run needs `approved: [{ id, action, mergeInto? }]` and acts
+ *     only on those rows; when the recomputed plan of an approved row is
+ *     not what was approved (action or merge target), 409 and nothing is
+ *     written (security review 25.11);
  *   • nothing a task points at breaks: merge re-points, nothing is deleted;
  *   • `/phases?scope=services` (and the web pickers) leave phases out even
  *     before the cleanup runs.
  */
-import { BadRequestException, RequestMethod } from '@nestjs/common';
+import { BadRequestException, ConflictException, RequestMethod } from '@nestjs/common';
 import { METHOD_METADATA, PATH_METADATA } from '@nestjs/common/constants';
 
 import { ROLES_KEY } from '../../common/decorators/roles.decorator';
@@ -140,33 +143,68 @@ describe('PR-069 · plan', () => {
   });
 });
 
+const codeOfThrow = (fn: () => unknown) => {
+  try {
+    fn();
+  } catch (e) {
+    return { type: (e as any)?.constructor, code: (e as BadRequestException).getResponse?.() as any };
+  }
+  return null;
+};
+
 describe('PR-069 · body', () => {
   it('dry-run is the default; only the boolean false writes', () => {
     expect(parseServicePhaseCleanupBody(undefined)).toEqual({ dryRun: true });
     expect(parseServicePhaseCleanupBody({ dryRun: 'false' })).toEqual({ dryRun: true });
-    expect(parseServicePhaseCleanupBody({ dryRun: true, approvedIds: [3, 3, 4] })).toEqual({
+    expect(parseServicePhaseCleanupBody({ dryRun: true, approved: [{ id: 3, action: 'mark_phase' }] })).toEqual({
       dryRun: true,
-      approvedIds: [3, 4],
+      approved: [{ id: 3, action: 'mark_phase', mergeInto: null }],
     });
   });
 
-  it('a real run needs approvedIds', () => {
-    const err = (() => {
-      try {
-        parseServicePhaseCleanupBody({ dryRun: false });
-      } catch (e) {
-        return e as BadRequestException;
-      }
-    })();
-    expect(err).toBeInstanceOf(BadRequestException);
-    expect(err!.getResponse()).toMatchObject({ code: 'SERVICE_PHASE_CLEANUP_APPROVED_IDS_REQUIRED' });
-    expect(() => parseServicePhaseCleanupBody({ dryRun: false, approvedIds: [] })).toThrow(BadRequestException);
-    expect(() => parseServicePhaseCleanupBody({ dryRun: false, approvedIds: ['2'] })).toThrow(BadRequestException);
-    expect(() => parseServicePhaseCleanupBody({ approvedIds: 2 })).toThrow(BadRequestException);
-    expect(parseServicePhaseCleanupBody({ dryRun: false, approvedIds: [2, 11] })).toEqual({
+  it('a real run needs approved: [{ id, action, mergeInto? }] (the merge target may be the dry-run object)', () => {
+    const missing = codeOfThrow(() => parseServicePhaseCleanupBody({ dryRun: false }));
+    expect(missing?.type).toBe(BadRequestException);
+    expect(missing?.code).toMatchObject({ code: 'SERVICE_PHASE_CLEANUP_APPROVED_REQUIRED' });
+    expect(parseServicePhaseCleanupBody({
       dryRun: false,
-      approvedIds: [2, 11],
+      approved: [
+        { id: 2, action: 'mark_phase' },
+        { id: 11, action: 'merge', mergeInto: { id: 10, name: 'BIM Coordination', code: 'BIM' } },
+        { id: 15, action: 'deactivate', mergeInto: 14 },
+      ],
+    })).toEqual({
+      dryRun: false,
+      approved: [
+        { id: 2, action: 'mark_phase', mergeInto: null },
+        { id: 11, action: 'merge', mergeInto: 10 },
+        { id: 15, action: 'deactivate', mergeInto: 14 },
+      ],
     });
+  });
+
+  it('a malformed approved list is a 400', () => {
+    for (const approved of [
+      [],
+      2,
+      [{ id: '2', action: 'mark_phase' }],
+      [{ id: 2, action: 'delete' }],
+      [{ id: 11, action: 'merge' }], // a merge without its target
+      [{ id: 11, action: 'merge', mergeInto: 'x' }],
+      [{ id: 2, action: 'mark_phase' }, { id: 2, action: 'mark_phase' }],
+    ]) {
+      const err = codeOfThrow(() => parseServicePhaseCleanupBody({ dryRun: false, approved }));
+      expect(err?.type).toBe(BadRequestException);
+      expect(err?.code).toMatchObject({ code: 'SERVICE_PHASE_CLEANUP_BAD_APPROVED' });
+    }
+  });
+
+  it('the old approvedIds body is refused: ids alone cannot show that the plan changed', () => {
+    for (const body of [{ dryRun: false, approvedIds: [2, 11] }, { approvedIds: [2] }]) {
+      const err = codeOfThrow(() => parseServicePhaseCleanupBody(body));
+      expect(err?.type).toBe(BadRequestException);
+      expect(err?.code).toMatchObject({ code: 'SERVICE_PHASE_CLEANUP_APPROVED_IDS_RETIRED' });
+    }
   });
 });
 
@@ -333,7 +371,11 @@ describe('PR-069 · run', () => {
     const { prisma, tx } = makePrisma(db);
     const res = await new Qa6ServicePhaseCleanupService(prisma).run({
       dryRun: false,
-      approvedIds: [2, 11, 999],
+      approved: [
+        { id: 2, action: 'mark_phase', mergeInto: null },
+        { id: 11, action: 'merge', mergeInto: 10 },
+        { id: 999, action: 'deactivate', mergeInto: null },
+      ],
     });
 
     expect(res.notCandidates).toEqual([999]);
@@ -369,14 +411,79 @@ describe('PR-069 · run', () => {
     const db = seedDb();
     const { prisma } = makePrisma(db);
     const svc = new Qa6ServicePhaseCleanupService(prisma);
-    await svc.run({ dryRun: false, approvedIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 15] });
+    const first = await svc.run({ dryRun: true });
+    await svc.run({
+      dryRun: false,
+      approved: first.candidates.map((c) => ({ id: c.id, action: c.action, mergeInto: c.mergeInto?.id ?? null })),
+    });
     const again = await svc.run({ dryRun: true });
     expect(again.candidates).toEqual([]);
+  });
+
+  it('409 and nothing written when an approved row now plans another action (data changed since the dry-run)', async () => {
+    const db = seedDb();
+    const { prisma, writes } = makePrisma(db);
+    const svc = new Qa6ServicePhaseCleanupService(prisma);
+    const dry = await svc.run({ dryRun: true });
+    expect(dry.candidates.find((c) => c.id === 15)).toMatchObject({ action: 'deactivate', mergeInto: { id: 14 } });
+
+    // After the review, tasks start using both duplicates (#14 more): #14
+    // still stays, and #15 is now in use, so its plan becomes a merge.
+    db.tasks.push(
+      { id: 6, phaseId: 15, projectId: 100, deletedAt: null },
+      { id: 7, phaseId: 14, projectId: 100, deletedAt: null },
+      { id: 8, phaseId: 14, projectId: 101, deletedAt: null },
+    );
+    const err = await svc
+      .run({
+        dryRun: false,
+        approved: [
+          { id: 2, action: 'mark_phase', mergeInto: null },
+          { id: 15, action: 'deactivate', mergeInto: 14 },
+        ],
+      })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse()).toMatchObject({
+      code: 'SERVICE_PHASE_CLEANUP_PLAN_CHANGED',
+      details: {
+        mismatches: [
+          { id: 15, approved: { action: 'deactivate', mergeInto: 14 }, planned: { action: 'merge', mergeInto: 14 } },
+        ],
+      },
+    });
+    expect(writes).toEqual([]);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(db.phases.find((p) => p.id === 2)).toMatchObject({ kind: 'service' }); // not even the matching row
+  });
+
+  it('409 when an approved merge target is not the planned one', async () => {
+    const db = seedDb();
+    const { prisma, writes } = makePrisma(db);
+    const err = await new Qa6ServicePhaseCleanupService(prisma)
+      .run({ dryRun: false, approved: [{ id: 11, action: 'merge', mergeInto: 13 }] })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(err.getResponse().details.mismatches).toEqual([
+      { id: 11, approved: { action: 'merge', mergeInto: 13 }, planned: { action: 'merge', mergeInto: 10 } },
+    ]);
+    expect(writes).toEqual([]);
+  });
+
+  it('a dry-run with the approved list runs the same check, so it tells whether the real run would pass', async () => {
+    const { prisma } = makePrisma(seedDb());
+    const svc = new Qa6ServicePhaseCleanupService(prisma);
+    await expect(svc.run({ dryRun: true, approved: [{ id: 11, action: 'deactivate', mergeInto: 10 }] })).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+    const ok = await svc.run({ dryRun: true, approved: [{ id: 11, action: 'merge', mergeInto: 10 }] });
+    expect(ok.applied).toBeNull();
+    expect(ok.approved).toEqual([{ id: 11, action: 'merge', mergeInto: 10 }]);
   });
 });
 
 describe('PR-069 · wiring', () => {
-  it('POST admin/backfills/qa6-service-phase-cleanup, admin:write, dry-run unless dryRun:false + approvedIds', async () => {
+  it('POST admin/backfills/qa6-service-phase-cleanup, admin:write, dry-run unless dryRun:false + approved', async () => {
     const handler = BackfillsController.prototype.runQa6ServicePhaseCleanup;
     expect(Reflect.getMetadata(PATH_METADATA, handler)).toBe('qa6-service-phase-cleanup');
     expect(Reflect.getMetadata(METHOD_METADATA, handler)).toBe(RequestMethod.POST);
@@ -390,8 +497,15 @@ describe('PR-069 · wiring', () => {
     await expect(controller.runQa6ServicePhaseCleanup({ id: 7 }, { dryRun: false })).rejects.toThrow(
       BadRequestException,
     );
-    await controller.runQa6ServicePhaseCleanup({ id: 7 }, { dryRun: false, approvedIds: [2] });
-    expect(service.run).toHaveBeenLastCalledWith({ dryRun: false, approvedIds: [2], actorId: 7 });
+    await expect(controller.runQa6ServicePhaseCleanup({ id: 7 }, { dryRun: false, approvedIds: [2] } as any)).rejects.toThrow(
+      BadRequestException,
+    );
+    await controller.runQa6ServicePhaseCleanup({ id: 7 }, { dryRun: false, approved: [{ id: 2, action: 'mark_phase' }] });
+    expect(service.run).toHaveBeenLastCalledWith({
+      dryRun: false,
+      approved: [{ id: 2, action: 'mark_phase', mergeInto: null }],
+      actorId: 7,
+    });
   });
 
   it('GET /phases?scope=services leaves project phases out before the cleanup runs', async () => {

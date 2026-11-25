@@ -57,12 +57,14 @@ describe('GET /workload/user/:userId', () => {
 describe('GET /projects/:id/workload — actual hours of visible members only', () => {
   function makeService() {
     const prisma: any = {
+      project: { findFirst: jest.fn(async () => null) },
       projectMember: {
         findMany: jest.fn(async () => [
           { userId: 20, role: 'lead', user: { id: 20, firstName: 'M', lastName: 'G' } },
           { userId: 77, role: 'member', user: { id: 77, firstName: 'O', lastName: 'T' } },
         ]),
       },
+      projectPartnerRole: { findMany: jest.fn(async () => []) },
     };
     const svc = new ExecutionPlanningService(prisma, {} as any);
     jest.spyOn(svc, 'getUserWorkload').mockImplementation(async () => ({

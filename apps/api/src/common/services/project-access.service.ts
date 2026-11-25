@@ -202,6 +202,39 @@ export class ProjectAccessService {
   }
 
   /**
+   * QA6 security review — may ANOTHER user (not the caller) open the
+   * project? For deciding who gets a notification about one of its
+   * tasks: an assignment no longer grants access, so an assignee may
+   * well be outside it. Same rule as assertProjectAccess; Admin is
+   * resolved from the user's roles (the attachMergedPermissions rule).
+   * A missing or deleted project is `false`.
+   */
+  async userHasProjectAccess(userId: number, projectId: number): Promise<boolean> {
+    try {
+      await this.assertProjectMembership(userId, projectId, false, 'project');
+      return true;
+    } catch (err) {
+      if (err instanceof NotFoundException) return false;
+      if (!(err instanceof PermissionDeniedException)) throw err;
+    }
+    return this.isAdminUserId(userId);
+  }
+
+  /** Admin by role: granted roles (user_roles) win, else the legacy role. Inactive / deleted: no. */
+  private async isAdminUserId(userId: number): Promise<boolean> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, isActive: true, deletedAt: null },
+      select: {
+        role: { select: { name: true } },
+        userRoles: { select: { role: { select: { name: true } } } },
+      },
+    });
+    if (!user) return false;
+    const granted = user.userRoles ?? [];
+    return granted.length > 0 ? granted.some((ur) => ur.role?.name === 'Admin') : user.role?.name === 'Admin';
+  }
+
+  /**
    * QA6 — is the user on the project's Team: leader, creator, a
    * ProjectMember row or an active partner role (rules 2–4)? Org unit
    * (6) and manager chain (7) give access but do NOT put a person on

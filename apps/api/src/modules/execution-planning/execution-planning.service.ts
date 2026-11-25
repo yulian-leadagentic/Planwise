@@ -1,8 +1,9 @@
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ProjectAccessService } from '../../common/services/project-access.service';
+import { ProjectAccessService, activePartnerRoleWhere } from '../../common/services/project-access.service';
 import { VisibleUserIds, isUserVisible } from '../../common/services/employee-scope.service';
+import { INTERNAL_EMPLOYEE_WHERE } from '../../common/people/internal-employee';
 import { rollupTaskCompletion } from '../../common/task-completion';
 import { LIVE_PREDECESSOR_EDGE } from '../../common/task-dependency-filters';
 import {
@@ -81,12 +82,19 @@ export class ExecutionPlanningService {
    *
    * `opts.canSeeProject` — when given, a task on a project it rejects is
    * listed as "Other project" (no id / name). Internal callers omit it.
+   *
+   * `opts.absencesFor` — the caller's round-3 scope (`visibleUserIds`).
+   * The person's absences reduce his capacity only when he is in it;
+   * otherwise capacity is computed WITHOUT absences, so a shorter day
+   * never reveals HR data. Missing = nobody's (fail closed); the routes
+   * that already passed canViewEmployee (`/workload/me`,
+   * `/workload/user/:id`) pass `[userId]`.
    */
   async getUserWorkload(
     userId: number,
     from: string,
     to: string,
-    opts: { canSeeProject?: (projectId: number | null) => boolean } = {},
+    opts: { canSeeProject?: (projectId: number | null) => boolean; absencesFor?: VisibleUserIds } = {},
   ) {
     const fromKey = isValidYmd(from) ? from : keyOf(new Date(from)) ?? todayKey();
     let toKey = isValidYmd(to) ? to : keyOf(new Date(to)) ?? fromKey;
@@ -101,7 +109,10 @@ export class ExecutionPlanningService {
 
     const [cal, inputs] = await Promise.all([
       loadOrgCalendar(this.prisma),
-      loadPeopleInputs(this.prisma, [userId], fromKey, toKey, { loggedFor: [userId] }),
+      loadPeopleInputs(this.prisma, [userId], fromKey, toKey, {
+        loggedFor: [userId],
+        absencesFor: opts.absencesFor ?? [],
+      }),
     ]);
     const person = inputs.get(userId)!;
     const wl = computePersonWorkload(person, cal, { dates: datesBetween(fromKey, toKey), today: todayKey() });
@@ -133,12 +144,71 @@ export class ExecutionPlanningService {
   }
 
   /**
-   * Planned vs capacity per project member. Permissions round 3
-   * (2026-11-22): the logged (actual) hours are per-person timesheet
-   * data — they are kept only for members in `visible`
-   * (EmployeeScopeService.visibleUserIds); everyone else gets
-   * `actualHours: null` per day and `totalActual: null`. Missing
-   * `visible` = nobody (fail closed).
+   * QA6 — the project's Team, as the workload panel lists it: the
+   * leader, every ProjectMember row and every active partner-role holder
+   * (participant included) whose party is an active internal employee's
+   * own BusinessPartner. One row per user, leader first; `role` is the
+   * membership role, else the partner role name(s), else "Project Leader".
+   * Before QA6 the panel read ProjectMember rows only, so a person added
+   * to the Team through a role (the normal path since the D1 refactor,
+   * and the leader's add-to-team on assignment) was missing from it.
+   */
+  private async loadProjectTeam(projectId: number): Promise<
+    Array<{ user: { id: number; firstName: string | null; lastName: string | null; position: string | null }; role: string | null }>
+  > {
+    const userSelect = { id: true, firstName: true, lastName: true, position: true } as const;
+    const [project, members, roles] = await Promise.all([
+      this.prisma.project.findFirst({
+        where: { id: projectId, deletedAt: null },
+        select: { leader: { select: userSelect } },
+      }),
+      this.prisma.projectMember.findMany({
+        where: { projectId },
+        include: { user: { select: userSelect } },
+      }),
+      this.prisma.projectPartnerRole.findMany({
+        where: { projectId, ...activePartnerRoleWhere(new Date()), party: { user: INTERNAL_EMPLOYEE_WHERE } },
+        select: { role: { select: { name: true } }, party: { select: { user: { select: userSelect } } } },
+        orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      }),
+    ]);
+
+    const byUser = new Map<number, { user: any; memberRole: string | null; roleNames: string[]; isLeader: boolean }>();
+    const entry = (user: any) => {
+      let e = byUser.get(user.id);
+      if (!e) {
+        e = { user, memberRole: null, roleNames: [], isLeader: false };
+        byUser.set(user.id, e);
+      }
+      return e;
+    };
+    const leader = (project as any)?.leader;
+    if (leader?.id != null) entry(leader).isLeader = true;
+    for (const m of (members ?? []) as any[]) {
+      if (m.user?.id == null) continue;
+      entry(m.user).memberRole = m.role ?? null;
+    }
+    for (const r of (roles ?? []) as any[]) {
+      const u = r.party?.user;
+      if (u?.id == null) continue;
+      const e = entry(u);
+      const name = r.role?.name;
+      if (name && !e.roleNames.includes(name)) e.roleNames.push(name);
+    }
+    return [...byUser.values()].map((e) => ({
+      user: { id: e.user.id, firstName: e.user.firstName ?? null, lastName: e.user.lastName ?? null, position: e.user.position ?? null },
+      role: e.memberRole ?? (e.roleNames.length > 0 ? e.roleNames.join(' / ') : e.isLeader ? 'Project Leader' : null),
+    }));
+  }
+
+  /**
+   * Planned vs capacity per member of the project's Team
+   * (`loadProjectTeam`). Permissions round 3 (2026-11-22): the logged
+   * (actual) hours are per-person timesheet data — they are kept only
+   * for members in `visible` (EmployeeScopeService.visibleUserIds);
+   * everyone else gets `actualHours: null` per day and
+   * `totalActual: null`. QA6: absences reduce the capacity of the same
+   * members only. Missing `visible` = nobody (fail closed).
    */
   async getProjectWorkload(
     projectId: number,
@@ -147,10 +217,7 @@ export class ExecutionPlanningService {
     visible: VisibleUserIds = [],
     viewer?: { id: number; isAdmin: boolean },
   ) {
-    const members = await this.prisma.projectMember.findMany({
-      where: { projectId },
-      include: { user: { select: { id: true, firstName: true, lastName: true, position: true } } },
-    });
+    const members = await this.loadProjectTeam(projectId);
 
     // QA6 P3 — a member's tasks on projects the viewer cannot open are
     // listed as "Other project" (no id / name). Without a viewer, as before.
@@ -163,8 +230,11 @@ export class ExecutionPlanningService {
 
     const workloads = await Promise.all(
       members.map(async (m) => {
-        const workload: any = await this.getUserWorkload(m.userId, from, to, canSeeProject ? { canSeeProject } : {});
-        if (!isUserVisible(visible, m.userId)) {
+        const workload: any = await this.getUserWorkload(m.user.id, from, to, {
+          ...(canSeeProject ? { canSeeProject } : {}),
+          absencesFor: visible,
+        });
+        if (!isUserVisible(visible, m.user.id)) {
           workload.dailyData = workload.dailyData.map((d: any) => ({ ...d, actualHours: null }));
           workload.summary = { ...workload.summary, totalActual: null };
         }
@@ -240,6 +310,8 @@ export class ExecutionPlanningService {
       range.to,
       {
         loggedFor: visible,
+        // QA6 — absences (HR data) cut capacity only inside the same scope.
+        absencesFor: visible,
         dailyStandardHours: new Map(employees.map((e) => [e.id, e.dailyStandardHours == null ? null : Number(e.dailyStandardHours)])),
       },
     );
@@ -332,14 +404,20 @@ export class ExecutionPlanningService {
 
   // ─── FEASIBILITY ENGINE ─────────────────────────────────────────────────
 
-  async calculateFeasibility(projectId: number, targetDate?: string) {
+  /**
+   * `absencesFor` (QA6) — the caller's round-3 scope: an assignee's
+   * absences cut his available hours only when he is in it; for anyone
+   * else capacity ignores absences (an absence is HR data, and the
+   * per-assignee `availableHours` would reveal it). Missing = nobody's.
+   */
+  async calculateFeasibility(projectId: number, targetDate?: string, absencesFor: VisibleUserIds = []) {
     // FEAS-1 (incident 2026-10-07) — belt around the whole computation.
     // The real fix is the loop + DFS bounding below; this catch exists
     // for any OTHER sync throw that could escape (e.g. a future helper
     // regression). A CPU-bound hang is NOT caught by this — don't rely
     // on it as a shield; the bounding is the shield.
     try {
-      return await this.calculateFeasibilityInner(projectId, targetDate);
+      return await this.calculateFeasibilityInner(projectId, targetDate, absencesFor);
     } catch (err: any) {
       this.logger.error(
         `[feasibility] projectId=${projectId} threw: ${err?.message ?? err}`,
@@ -365,7 +443,7 @@ export class ExecutionPlanningService {
     }
   }
 
-  private async calculateFeasibilityInner(projectId: number, targetDate?: string) {
+  private async calculateFeasibilityInner(projectId: number, targetDate: string | undefined, absencesFor: VisibleUserIds) {
     const project = await this.prisma.project.findUniqueOrThrow({
       where: { id: projectId },
       select: { id: true, name: true, endDate: true, budget: true },
@@ -466,7 +544,7 @@ export class ExecutionPlanningService {
     const overloadedAssignees: Array<{ userId: number; name: string; requiredHours: number; availableHours: number; deficit: number }> = [];
 
     for (const [userId, load] of assigneeLoad.entries()) {
-      const workload = await this.getUserWorkload(userId, fromStr, toStr);
+      const workload = await this.getUserWorkload(userId, fromStr, toStr, { absencesFor });
       load.capacity = workload.summary.totalCapacity;
 
       if (load.required > load.capacity) {
@@ -900,6 +978,9 @@ export class ExecutionPlanningService {
     const weekDates = datesBetween(week.from, week.to);
     const weekInputs = await loadPeopleInputs(this.prisma, employees.map((e) => e.id), week.from, week.to, {
       loggedFor: [],
+      // QA6 — an absence cuts capacity only for people the caller may see
+      // (round 3); everyone else's week capacity ignores absences.
+      absencesFor: visibleUsers,
       dailyStandardHours: new Map(employees.map((e) => [e.id, e.dailyStandardHours == null ? null : Number(e.dailyStandardHours)])),
     });
     const weekLoad = new Map<number, { planned: number; capacity: number }>();

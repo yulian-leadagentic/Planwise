@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, Optional } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 
@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ProjectDeliverablesService } from '../project-deliverables/project-deliverables.service';
+import { ProjectAccessService } from '../../common/services/project-access.service';
 import { taskCompletionValue } from '../../common/task-completion';
 import { resolveStartForMovedEnd } from '../../common/task-dates';
 import { LIVE_PREDECESSOR_EDGE, LIVE_SUCCESSOR_EDGE } from '../../common/task-dependency-filters';
@@ -13,6 +14,7 @@ import { restoreDeletedZoneChain } from '../zones/zone-restore.util';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
+import { AssignmentPlan, TaskAssigneePolicyService } from './task-assignee-policy.service';
 import * as Sentry from '@sentry/node';
 
 @Injectable()
@@ -24,6 +26,14 @@ export class TasksService {
     private notifications: NotificationsService,
     // 2026-11-08 · DP-EMPTY-3 defensive hook — see `create()` below.
     private projectDeliverables: ProjectDeliverablesService,
+    // QA6 security review (2026-11-25). Optional so the unit specs that
+    // build the service by hand keep working; TasksModule provides both.
+    //   • assigneePolicy — a task moved INTO a project takes its assignees
+    //     with it, so each goes through the assignee policy (update()).
+    //   • access — notifications skip assignees who cannot open the
+    //     task's project (an assignment no longer grants access).
+    @Optional() private readonly assigneePolicy?: TaskAssigneePolicyService,
+    @Optional() private readonly access?: ProjectAccessService,
   ) {}
 
   /**
@@ -60,6 +70,9 @@ export class TasksService {
     const title = `${actorLabel} ${verb} "${fileName}" on ${taskLabel}`;
     for (const a of assignees) {
       if (a.userId === actorId) continue; // don't notify the person who did it
+      // QA6 security review — an assignment no longer grants the project:
+      // an assignee who cannot open it gets no file name / task name.
+      if (!(await this.assigneeCanOpen(a.userId, task.projectId))) continue;
       try {
         await this.notifications.create({
           userId: a.userId,
@@ -72,6 +85,22 @@ export class TasksService {
         // Best-effort — one failed notification mustn't take down the
         // attach/delete write that already succeeded.
       }
+    }
+  }
+
+  /**
+   * QA6 security review — may this assignee open the task's project?
+   * A task with no project is open to its assignees. Without the access
+   * service (hand-built unit specs only) nobody is told: fail closed.
+   */
+  private async assigneeCanOpen(userId: number, projectId: number | null): Promise<boolean> {
+    if (projectId == null) return true;
+    if (!this.access) return false;
+    try {
+      return await this.access.userHasProjectAccess(userId, projectId);
+    } catch (e) {
+      Sentry.captureException(e);
+      return false;
     }
   }
 
@@ -321,6 +350,12 @@ export class TasksService {
         // the task shows up in My Tasks (the /mine query filters by
         // assignee, not by creator). Non-personal tasks keep explicit
         // assignment via addAssignee.
+        // QA6 security review — this is the ONLY assignee a create writes
+        // (the DTO takes none), so a create never puts anyone but the
+        // creator himself on a project task; he needed access to the
+        // zone / project for it (controller). Everyone else goes through
+        // TaskAssigneePolicyService (POST /tasks/:id/assignees, or update()
+        // when a task joins a project).
         assignees: dto.isPersonal ? { create: [{ userId }] } : undefined,
       },
       include: {
@@ -441,12 +476,22 @@ export class TasksService {
     };
   }
 
-  async findMine(userId: number) {
+  /**
+   * `accessible` (QA6 security review) — the caller's
+   * `getAccessibleProjectIds`. An assignment no longer opens a project,
+   * so a task of a project he cannot open (he was taken off the Team, or
+   * an assignment from before QA6) is left out; tasks with no project
+   * (personal) always stay.
+   */
+  async findMine(userId: number, accessible: { all: boolean; projectIds: number[] }) {
     const tasks = await this.prisma.task.findMany({
       where: {
         deletedAt: null,
         isArchived: false,
         assignees: { some: { userId, deletedAt: null } },
+        ...(accessible.all
+          ? {}
+          : { OR: [{ projectId: null }, { projectId: { in: accessible.projectIds } }] }),
       },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -697,7 +742,13 @@ export class TasksService {
     };
   }
 
-  async update(id: number, dto: UpdateTaskDto, userId?: number) {
+  /**
+   * `actor` (QA6) — the caller, for the assignee policy when the update
+   * moves a task without a project into one (see `planProjectJoin`).
+   * Without it the policy sees `{ id: userId }` (leader rule only, no
+   * Admin bypass): fail closed.
+   */
+  async update(id: number, dto: UpdateTaskDto, userId?: number, actor?: { id: number } & Record<string, any>) {
     const existing = await this.findOne(id);
 
     // TODO(D6 · scheduling auto-reschedule) — the spec identifies four
@@ -773,6 +824,28 @@ export class TasksService {
       dto.zoneId != null && dto.projectId === undefined && placedProjectId !== storedProjectId
         ? { projectId: placedProjectId }
         : {};
+
+    // QA6 security review (2026-11-25) — a task with no project that
+    // joins one (a zone or a projectId on a personal task) takes its
+    // assignees into that project. A personal task takes any employee as
+    // assignee, so without this the "only the leader or an Admin adds an
+    // outsider" rule was one PATCH away. Every live assignee is planned
+    // against the new project BEFORE anything is written: 403
+    // ASSIGNEE_NOT_ON_TEAM unless he is on the Team or the actor is the
+    // leader / an Admin, who adds him as `participant` in the same
+    // transaction as the move.
+    const resultingProjectId: number | null =
+      Object.keys(joinsProject).length > 0
+        ? placedProjectId
+        : dto.projectId !== undefined
+          ? dto.projectId ?? null
+          : storedProjectId;
+    const joinActor = actor ?? { id: userId ?? 0 };
+    const joinPlans =
+      storedProjectId == null && resultingProjectId != null
+        ? await this.planProjectJoin(existing, resultingProjectId, joinActor)
+        : [];
+    const teamAdds = joinPlans.filter((p) => p.needsTeamAdd);
 
     // Pull date fields out so we can either set them, clear them, or leave
     // them untouched depending on whether the caller sent each key.
@@ -872,7 +945,7 @@ export class TasksService {
       budgetHours: dto.budgetHours !== undefined ? dto.budgetHours : existing.budgetHours,
     });
 
-    const updated = await this.prisma.task.update({
+    const writeTask = (db: Prisma.TransactionClient) => db.task.update({
       where: { id },
       data: {
         ...rest,
@@ -898,6 +971,15 @@ export class TasksService {
         },
       },
     });
+    // QA6 — the Team roles of a project join and the move: one transaction.
+    const updated =
+      teamAdds.length > 0
+        ? await this.prisma.$transaction(async (tx) => {
+            for (const plan of teamAdds) await this.assigneePolicy!.applyTeamAdd(plan, tx);
+            return writeTask(tx);
+          })
+        : await writeTask(this.prisma);
+    for (const plan of teamAdds) await this.assigneePolicy!.logTeamAdd(joinActor, plan, id);
 
     // Emit status change event
     if (dto.status && dto.status !== (existing as any).status && userId) {
@@ -965,6 +1047,31 @@ export class TasksService {
     }
 
     return updated;
+  }
+
+  /**
+   * QA6 security review — the assignee policy for a task without a
+   * project that is moving into `projectId`: one plan per live assignee,
+   * read-only (throws 403 ASSIGNEE_NOT_ON_TEAM / 400 before any write).
+   * The task's creator assigned to it himself is not planned: it is his
+   * own task, and moving it needs access to the target zone / project
+   * already (the controller checks it).
+   */
+  private async planProjectJoin(
+    existing: { createdBy?: number | null; assignees?: Array<{ userId: number }> | null },
+    projectId: number,
+    actor: { id: number } & Record<string, any>,
+  ): Promise<AssignmentPlan[]> {
+    const creatorId = existing.createdBy ?? null;
+    const userIds = [...new Set((existing.assignees ?? []).map((a) => a.userId))].filter((uid) => uid !== creatorId);
+    if (userIds.length === 0) return [];
+    if (!this.assigneePolicy) {
+      // Never silently skip the rule (TasksModule always provides it).
+      throw new Error('TaskAssigneePolicyService is required to move a task with assignees into a project');
+    }
+    const plans: AssignmentPlan[] = [];
+    for (const uid of userIds) plans.push(await this.assigneePolicy.planAssignment(actor, projectId, uid));
+    return plans;
   }
 
   /**
@@ -1069,7 +1176,18 @@ export class TasksService {
     return { message: 'Task restored', id, restoredZones };
   }
 
-  async addAssignee(taskId: number, data: { userId: number; role?: string; hourlyRate?: number }, actorId?: number) {
+  /**
+   * `opts.beforeWrite` (QA6) — runs inside the same transaction as the
+   * assignment write, right before it: the assignee policy writes the
+   * new person's `participant` Team role there, so a failed assignment
+   * never leaves a role behind (and a failed role, no assignment).
+   */
+  async addAssignee(
+    taskId: number,
+    data: { userId: number; role?: string; hourlyRate?: number },
+    actorId?: number,
+    opts: { beforeWrite?: (tx: Prisma.TransactionClient) => Promise<void> } = {},
+  ) {
     await this.findOne(taskId);
 
     // TODO(D6 · scheduling auto-reschedule) — assignee changes shift
@@ -1122,22 +1240,30 @@ export class TasksService {
     // actual logged hours, which is a real correctness invariant.
 
     // Atomic upsert — handles soft-deleted rows and unique constraints
-    const result = await this.prisma.taskAssignee.upsert({
-      where: { taskId_userId: { taskId, userId: data.userId } },
-      create: { taskId, userId: data.userId, role: data.role, hourlyRate: data.hourlyRate },
-      // Permissions round 2 — re-adding a removed assignee keeps their
-      // stored legacy `hourlyRate` unless a new one is sent (it used to
-      // be reset to null, which let a caller without finance:write wipe
-      // a money value just by removing + re-adding someone).
-      update: {
-        deletedAt: null,
-        role: data.role ?? null,
-        ...(data.hourlyRate !== undefined ? { hourlyRate: data.hourlyRate } : {}),
-      },
-      include: {
-        user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
-      },
-    });
+    const upsert = (db: Prisma.TransactionClient) =>
+      db.taskAssignee.upsert({
+        where: { taskId_userId: { taskId, userId: data.userId } },
+        create: { taskId, userId: data.userId, role: data.role, hourlyRate: data.hourlyRate },
+        // Permissions round 2 — re-adding a removed assignee keeps their
+        // stored legacy `hourlyRate` unless a new one is sent (it used to
+        // be reset to null, which let a caller without finance:write wipe
+        // a money value just by removing + re-adding someone).
+        update: {
+          deletedAt: null,
+          role: data.role ?? null,
+          ...(data.hourlyRate !== undefined ? { hourlyRate: data.hourlyRate } : {}),
+        },
+        include: {
+          user: { select: { id: true, firstName: true, lastName: true, email: true, avatarUrl: true } },
+        },
+      });
+    const beforeWrite = opts.beforeWrite;
+    const result = beforeWrite
+      ? await this.prisma.$transaction(async (tx) => {
+          await beforeWrite(tx);
+          return upsert(tx);
+        })
+      : await upsert(this.prisma);
 
     // Emit assignment event
     if (actorId) {

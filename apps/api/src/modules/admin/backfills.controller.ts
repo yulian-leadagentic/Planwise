@@ -3019,11 +3019,15 @@ export class BackfillsController {
 
   /**
    * QA6 package 1 (2026-11-25) — task assignment no longer opens a
-   * project (ProjectAccessService rule 5 removed). Before that deploy is
-   * live, every live assignee of a live project task who is NOT on that
-   * project's Team (leader, creator, ProjectMember row or active partner
-   * role) gets a `participant` role, so nobody loses a project he works
-   * in. Internal employees only; external contacts, inactive and deleted
+   * project (ProjectAccessService rule 5 removed). This endpoint ships in
+   * the SAME deploy that removes rule 5, so it runs right AFTER that
+   * deploy (dry-run, review, real run, as soon as possible — until then
+   * an assignee who is not on the Team has lost the project): every live
+   * assignee of a live project task who is NOT on that project's Team
+   * (leader, creator, ProjectMember row or active partner role) gets a
+   * `participant` role, so nobody keeps losing a project he works in.
+   * Each (project, person) pair is written in its own transaction.
+   * Internal employees only; external contacts, inactive and deleted
    * users are listed under `skipped` with the reason, never written.
    *
    * DRY-RUN IS THE DEFAULT, switch in the BODY: `{ "dryRun"?: boolean }`;
@@ -3088,7 +3092,8 @@ export class BackfillsController {
    *
    * Same body convention as p1-copies-to-refs, DRY-RUN IS THE DEFAULT:
    *
-   *   { "dryRun"?: boolean, "approvedIds"?: number[] }
+   *   { "dryRun"?: boolean,
+   *     "approved"?: [{ "id": number, "action": "mark_phase" | "merge" | "deactivate", "mergeInto"?: number }] }
    *
    *   • dry-run (no body, or anything but `dryRun: false`): returns every
    *     candidate row with id, name, code, kind guess, usage counts
@@ -3096,20 +3101,25 @@ export class BackfillsController {
    *     deliverables, projects) and the proposed action (`mark_phase`,
    *     `merge` into X, `deactivate`), plus the untouched rows. Writes
    *     nothing.
-   *   • real run: `dryRun: false` AND `approvedIds` (400 otherwise). Acts
-   *     only on candidates in `approvedIds`, in one transaction. Nothing
-   *     is deleted; a merge re-points every reference before it
-   *     deactivates the duplicate, so no task loses its service.
+   *   • real run: `dryRun: false` AND `approved` (400 otherwise): the
+   *     reviewed dry-run rows with the action and merge target approved
+   *     for each. The plan is recomputed; if any approved row now plans
+   *     another action or target, 409 SERVICE_PHASE_CLEANUP_PLAN_CHANGED
+   *     and nothing is written. Otherwise acts only on the approved
+   *     candidates, in one transaction. Nothing is deleted; a merge
+   *     re-points every reference before it deactivates the duplicate,
+   *     so no task loses its service.
+   *   • `approvedIds` (the old body) is a 400.
    */
   @Post('qa6-service-phase-cleanup')
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({
     summary:
-      'PR-069 · Backfill · mark project phases / merge duplicate services in the Service (phases) table. Body { dryRun?: boolean (default TRUE, only false writes), approvedIds?: number[] (required for a real run) }. Never deletes.',
+      'PR-069 · Backfill · mark project phases / merge duplicate services in the Service (phases) table. Body { dryRun?: boolean (default TRUE, only false writes), approved?: [{ id, action, mergeInto? }] (required for a real run; 409 when the recomputed plan differs) }. Never deletes.',
   })
   async runQa6ServicePhaseCleanup(
     @CurrentUser() user: { id?: number } | undefined,
-    @Body() body?: { dryRun?: boolean; approvedIds?: number[] },
+    @Body() body?: { dryRun?: boolean; approved?: Array<{ id: number; action: string; mergeInto?: number | null }> },
   ) {
     const parsed = parseServicePhaseCleanupBody(body);
     return this.servicePhaseCleanup.run({ ...parsed, actorId: user?.id });

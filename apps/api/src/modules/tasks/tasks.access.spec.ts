@@ -246,7 +246,7 @@ describe('TasksController — PATCH status cannot bypass approve (review fix)', 
     tasksService.getReviewContext.mockResolvedValue(ctx('in_progress', false));
     await ctrl.update(11, { status: 'completed' } as any, MEMBER);
     expect(transitions.assertTransition).toHaveBeenCalledWith(MEMBER, 'in_progress', 'completed');
-    expect(tasksService.update).toHaveBeenCalledWith(11, { status: 'completed' }, 2);
+    expect(tasksService.update).toHaveBeenCalledWith(11, { status: 'completed' }, 2, MEMBER);
   });
 
   it('other moves on a reviewed task (e.g. submit to In Review) keep the plain transition rule', async () => {

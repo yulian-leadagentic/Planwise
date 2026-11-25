@@ -139,6 +139,43 @@ describe('QA6 P1 — qa6-assignees-to-team backfill', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: 50, status: 'active' });
   });
+
+  // QA6 security review — each (project, person) pair is one transaction.
+  it('a pair whose role write fails leaves nothing behind (no BP, no link); pairs already done stay', async () => {
+    const w = world();
+    // 115: an employee with no BusinessPartner yet, assigned on 58.
+    w.db.table('user').push({
+      id: 115, firstName: 'First115', lastName: 'Last115', email: 'u115@amec.co.il',
+      businessPartnerId: null, userType: 'employee', isActive: true, deletedAt: null,
+    });
+    w.db.table('taskAssignee').push({ id: 99, taskId: 4021, userId: 115, deletedAt: null });
+    const dry = await w.svc.run({ dryRun: true });
+    expect(pairs(dry.toAdd)).toEqual(['58:105', '58:115', '59:112']);
+
+    // The 2nd role create (115's, after his BP was created and linked) fails.
+    const create = w.prisma.projectPartnerRole.create;
+    let calls = 0;
+    w.prisma.projectPartnerRole.create = async (args: any) => {
+      calls += 1;
+      if (calls === 2) throw new Error('role write failed');
+      return create(args);
+    };
+    await expect(w.svc.run({ dryRun: false, actorId: 1 })).rejects.toThrow('role write failed');
+    w.prisma.projectPartnerRole.create = create;
+
+    // 105 (before the failure) is in; 115's BP + link rolled back; 112 not reached.
+    await expect(w.access.isOnProjectTeam(105, 58)).resolves.toBe(true);
+    expect(w.db.table('user').find((u) => u.id === 115)!.businessPartnerId).toBeNull();
+    expect(w.db.table('businessPartner').some((bp) => bp.email === 'u115@amec.co.il')).toBe(false);
+    await expect(w.access.isOnProjectTeam(112, 59)).resolves.toBe(false);
+    expect(w.activityLog.logProjectMemberAdded).toHaveBeenCalledTimes(1);
+
+    // A re-run finishes the job.
+    const again = await w.svc.run({ dryRun: false, actorId: 1 });
+    expect(pairs(again.toAdd)).toEqual(['58:115', '59:112']);
+    expect(again.rolesWritten).toBe(2);
+    await expect(w.access.isOnProjectTeam(115, 58)).resolves.toBe(true);
+  });
 });
 
 describe('QA6 P1 — backfill endpoint contract', () => {

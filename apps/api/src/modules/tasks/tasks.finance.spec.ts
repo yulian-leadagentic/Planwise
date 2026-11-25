@@ -55,7 +55,11 @@ function makeController() {
     getAccessibleProjectIds: jest.fn(async () => ({ all: true, projectIds: [] })),
   };
   const transitions: any = { assertTransition: jest.fn(async () => undefined) };
-  const assigneePolicy: any = { ensureAssignable: jest.fn(async () => ({ addedToTeam: false })) };
+  const assigneePolicy: any = {
+    planAssignment: jest.fn(async (_actor: any, projectId: any, userId: number) => ({ userId, projectId, name: "x", needsTeamAdd: false })),
+    applyTeamAdd: jest.fn(async () => undefined),
+    logTeamAdd: jest.fn(async () => undefined),
+  };
   return { ctrl: new TasksController(tasksService, access, transitions, {} as any, assigneePolicy), tasksService, assigneePolicy };
 }
 

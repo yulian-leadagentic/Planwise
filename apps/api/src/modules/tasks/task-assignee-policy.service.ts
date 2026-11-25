@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectAccessService } from '../../common/services/project-access.service';
@@ -7,26 +8,43 @@ import { PermissionDeniedException } from '../../common/errors/permission-denied
 import { isInternalUserType } from '../../common/people/internal-employee';
 import { ProjectPartnerRolesService } from '../project-partner-roles/project-partner-roles.service';
 
+/** What `planAssignment` decided for one (project, person) pair. */
+export interface AssignmentPlan {
+  userId: number;
+  projectId: number | null;
+  /** Display name, for messages and the audit line. */
+  name: string;
+  /** He is not on the Team yet and the actor may add him: a `participant` role is written first. */
+  needsTeamAdd: boolean;
+}
+
 /**
  * QA6 package 1 (2026-11-25) — assigning a task is not a way into a
  * project.
  *
- * Every path that adds a TaskAssignee for someone other than the caller
- * of a personal task goes through `ensureAssignable` first. Today that
- * is POST /tasks/:id/assignees, which the task drawer, the planning
- * grid's per-row picker, its bulk-assign bar and the weekly timesheet
- * all call (task create takes no assignees, except a personal task's
- * own creator).
+ * Every path that makes someone an assignee of a project task goes
+ * through `planAssignment` before anything is written:
+ *   • POST /tasks/:id/assignees (the task drawer, the planning grid's
+ *     per-row picker and bulk-assign bar, the weekly timesheet);
+ *   • PATCH /tasks/:id that moves a task WITHOUT a project into one
+ *     (`zoneId` / `projectId`): every live assignee is planned against
+ *     the new project, except the task's creator assigned to his own
+ *     task (security review 25.11 — a personal task with any employee
+ *     on it could otherwise carry him into a project nobody added him
+ *     to). Task create writes no assignee but the creator of a personal
+ *     task himself, which is that same exception.
  *
+ * The rule:
  *   • External contacts are never assignable (400 ASSIGNEE_EXTERNAL_CONTACT).
  *   • Personal task (no project): any internal employee, as before.
  *   • Target already on the Team (leader, creator, member, active
  *     partner role): assign as before.
  *   • Otherwise only the project leader or an Admin
- *     (`assertProjectManage`) may assign him: he first gets a
- *     `participant` role on the Team (`upsertProjectMemberRelationship`,
- *     audited as a team add), then the assignment is written. Anyone
- *     else: 403 ASSIGNEE_NOT_ON_TEAM.
+ *     (`assertProjectManage`) may assign him: he gets a `participant`
+ *     role on the Team (`upsertProjectMemberRelationship`, audited as a
+ *     team add) IN THE SAME TRANSACTION as the assignment / the move, so
+ *     a failed write never leaves a role behind. Anyone else: 403
+ *     ASSIGNEE_NOT_ON_TEAM, and nothing is written.
  *
  * `participant` has no partner-role eligibility check on this path
  * (upsertProjectMemberRelationship writes the row directly), so a user
@@ -41,12 +59,12 @@ export class TaskAssigneePolicyService {
     private readonly activityLog: ActivityLogService,
   ) {}
 
-  async ensureAssignable(
+  /** Read-only: throws when `userId` may not be assigned on `projectId` by `actor`. */
+  async planAssignment(
     actor: { id: number } & Record<string, any>,
     projectId: number | null,
     userId: number,
-    taskId?: number,
-  ): Promise<{ addedToTeam: boolean }> {
+  ): Promise<AssignmentPlan> {
     const target = await this.prisma.user.findFirst({
       where: { id: userId, deletedAt: null },
       select: { id: true, firstName: true, lastName: true, isActive: true, userType: true },
@@ -64,8 +82,9 @@ export class TaskAssigneePolicyService {
       });
     }
 
-    if (projectId == null) return { addedToTeam: false };
-    if (await this.access.isOnProjectTeam(userId, projectId)) return { addedToTeam: false };
+    const plan: AssignmentPlan = { userId, projectId, name, needsTeamAdd: false };
+    if (projectId == null) return plan;
+    if (await this.access.isOnProjectTeam(userId, projectId)) return plan;
 
     if (!(await this.access.canManageProject(actor, projectId))) {
       throw new PermissionDeniedException(
@@ -73,24 +92,35 @@ export class TaskAssigneePolicyService {
         { module: 'projects', reason: 'ASSIGNEE_NOT_ON_TEAM' },
       );
     }
+    return { ...plan, needsTeamAdd: true };
+  }
 
-    const role = await this.partnerRoles.upsertProjectMemberRelationship({ userId, projectId });
+  /** Writes the plan's `participant` role (inside `tx` when given). No-op when none is needed. */
+  async applyTeamAdd(plan: AssignmentPlan, tx?: Prisma.TransactionClient): Promise<void> {
+    if (!plan.needsTeamAdd || plan.projectId == null) return;
+    const role = await this.partnerRoles.upsertProjectMemberRelationship(
+      { userId: plan.userId, projectId: plan.projectId },
+      tx,
+    );
     if (!role) {
       throw new BadRequestException({
         code: 'TEAM_ROLE_MISSING',
-        message: `Could not add ${name} to the project team: the "participant" project role is missing. Ask an administrator.`,
+        message: `Could not add ${plan.name} to the project team: the "participant" project role is missing. Ask an administrator.`,
       });
     }
+  }
 
-    const project = await this.prisma.project.findFirst({ where: { id: projectId }, select: { name: true } });
+  /** The audit line of a team add. Call AFTER the transaction committed. */
+  async logTeamAdd(actor: { id: number }, plan: AssignmentPlan, taskId?: number | null): Promise<void> {
+    if (!plan.needsTeamAdd || plan.projectId == null) return;
+    const project = await this.prisma.project.findFirst({ where: { id: plan.projectId }, select: { name: true } });
     await this.activityLog.logProjectMemberAdded({
       actorUserId: actor.id,
-      projectId,
-      entityId: userId,
-      projectName: project?.name ?? `Project #${projectId}`,
-      memberName: name,
+      projectId: plan.projectId,
+      entityId: plan.userId,
+      projectName: project?.name ?? `Project #${plan.projectId}`,
+      memberName: plan.name,
       metadata: { via: 'task-assign', taskId: taskId ?? null, role: 'participant' },
     });
-    return { addedToTeam: true };
   }
 }

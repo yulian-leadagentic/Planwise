@@ -10,7 +10,8 @@
  *
  * Supported: findFirst / findUnique(OrThrow) / findMany / count /
  * aggregate / groupBy / create / createMany / update / updateMany /
- * upsert / delete / deleteMany, and $transaction. Where: AND / OR / NOT,
+ * upsert / delete / deleteMany, and $transaction (an interactive one
+ * rolls back when its callback throws). Where: AND / OR / NOT,
  * equals, in, notIn, not, lt, lte, gt, gte, contains, startsWith,
  * endsWith, relation filters (some / every / none, is / isNot, nested
  * where on a to-one relation) and composite unique keys
@@ -95,6 +96,21 @@ export class MemoryDb {
   table(model: string): Row[] {
     if (!this.tables[model]) this.tables[model] = [];
     return this.tables[model];
+  }
+
+  /** Copy of every table (rows copied) and id counter, for `$transaction` rollback. */
+  snapshot(): { tables: Record<string, Row[]>; ids: Record<string, number> } {
+    return {
+      tables: Object.fromEntries(Object.entries(this.tables).map(([m, rows]) => [m, rows.map((r) => ({ ...r }))])),
+      ids: { ...this.ids },
+    };
+  }
+
+  /** Put a `snapshot()` back: what a failed transaction leaves in the database. */
+  restore(snap: { tables: Record<string, Row[]>; ids: Record<string, number> }): void {
+    for (const m of Object.keys(this.tables)) delete this.tables[m];
+    Object.assign(this.tables, snap.tables);
+    this.ids = { ...snap.ids };
   }
 
   private rel(model: string, key: string): RelationDef | undefined {
@@ -332,7 +348,18 @@ export function memoryPrisma(db: MemoryDb): any {
       get(_t, prop: string | symbol) {
         if (prop === 'then') return undefined; // not a thenable
         if (prop === '$transaction') {
-          return async (arg: any) => (typeof arg === 'function' ? arg(client) : Promise.all(arg));
+          // An interactive transaction rolls back when its callback throws
+          // (every table back to how it was when it started), like Prisma.
+          return async (arg: any) => {
+            if (typeof arg !== 'function') return Promise.all(arg);
+            const snap = db.snapshot();
+            try {
+              return await arg(client);
+            } catch (err) {
+              db.restore(snap);
+              throw err;
+            }
+          };
         }
         if (prop === '__db') return db;
         if (typeof prop !== 'string' || prop.startsWith('$')) return undefined;
