@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useUpdateProject } from '@/hooks/use-projects';
-import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 
 /**
@@ -19,8 +18,10 @@ import { cn } from '@/lib/utils';
  * mirror the `<select>` in `project-form-page.tsx#L596` — kept in
  * sync so the two paths never diverge.
  *
- * Permission: `isAdmin || can('projects','write')`. Read-only users
- * still see the pill, just not the chevron.
+ * Permission: `canEdit`, from the header's `projectManageActions`
+ * (QA6 round 2: leader or Admin, plus projects:write; the PATCH route
+ * runs assertProjectManage). Read-only users still see the pill, just
+ * not the chevron.
  */
 
 // Deliberately duplicated from `project-form-page.tsx` — a single
@@ -61,12 +62,14 @@ function labelFor(value: string): string {
 export function ProjectStatusEditor({
   projectId,
   status,
+  canEdit,
 }: {
   projectId: number;
   status: string;
+  /** Leader or Admin with projects:write (see projectManageActions). */
+  canEdit: boolean;
 }) {
-  const { isAdmin, can } = usePermissions();
-  const canWrite = isAdmin || can('projects', 'write');
+  const canWrite = canEdit;
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);

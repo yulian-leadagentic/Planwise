@@ -11,8 +11,10 @@
  * Prisma, so these prove the wiring and the rule together.
  */
 import { NotFoundException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 
 import { ProjectsController } from './projects.controller';
+import { ROLES_KEY } from '../../common/decorators/roles.decorator';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { PermissionDeniedException } from '../../common/errors/permission-denied';
 
@@ -26,15 +28,27 @@ const ADMIN = { id: 1, isAdmin: true, roleModules: [] as any[] };
 const ASSIGNEE = { id: 60, isAdmin: false, roleModules: WRITE }; // assigned to a task of project 42
 const ROLE_HOLDER = { id: 61, isAdmin: false, roleModules: WRITE }; // holds a partner role on 42
 
+// QA6 round 2 (26.11) · sees project 43 through its org unit only (rule 6):
+// not leader, creator, member or role holder. Holds projects:write AND
+// projects:delete, so only the leader-or-Admin rule can refuse him.
+const ORG_VIEWER = { id: 70, isAdmin: false, roleModules: WRITE };
+const ORG_PROJECT = 43;
+const ORG_UNIT = 9;
+
 /**
  * Project 42: leader 7, user 3 has a member row, user 60 is assigned to
  * one of its tasks, user 61 holds a partner role on it.
+ * Project 43: leader 7, org unit 9; user 70's home unit is 9.
  */
 function fakePrisma() {
   return {
     project: {
       findFirst: jest.fn(async ({ where }: any) =>
-        where.id === 42 ? { id: 42, leaderId: 7, createdBy: 7, orgUnitId: null } : null,
+        where.id === 42
+          ? { id: 42, leaderId: 7, createdBy: 7, orgUnitId: null }
+          : where.id === ORG_PROJECT
+            ? { id: ORG_PROJECT, leaderId: 7, createdBy: 7, orgUnitId: ORG_UNIT }
+            : null,
       ),
       findMany: jest.fn(async () => []),
     },
@@ -57,7 +71,10 @@ function fakePrisma() {
       findFirst: jest.fn(async () => ({ projectId: 42, createdBy: 7, assignees: [] })),
       findMany: jest.fn(async () => []),
     },
-    user: { findUnique: jest.fn(async () => ({ orgUnitId: null })), findMany: jest.fn(async () => []) },
+    user: {
+      findUnique: jest.fn(async ({ where }: any) => ({ orgUnitId: where?.id === ORG_VIEWER.id ? ORG_UNIT : null })),
+      findMany: jest.fn(async () => []),
+    },
     orgUnit: { findMany: jest.fn(async () => []) },
   };
 }
@@ -65,7 +82,7 @@ function fakePrisma() {
 function makeController() {
   const access = new ProjectAccessService(fakePrisma() as any);
   const projectsService: any = {
-    findOne: jest.fn(async () => ({ id: 42 })),
+    findOne: jest.fn(async (id: number) => ({ id })),
     getMembers: jest.fn(async () => []),
     getActivityLogs: jest.fn(async () => ({ data: [] })),
     addMember: jest.fn(async () => ({ id: 9 })),
@@ -185,6 +202,36 @@ describe('Projects controller — managing the project is leader-or-Admin (round
     const err = await call(ctrl).catch((e: any) => e);
     expect(reasonOf(err)).toBe('NOT_PROJECT_LEADER');
     expect(projectsService[method]).not.toHaveBeenCalled();
+  });
+
+  it('QA6 round 2 · an org-unit viewer opens the project, but canManage is false and he is not on the Team', async () => {
+    const { ctrl, projectsService } = makeController();
+    await expect(ctrl.findOne(ORG_VIEWER, ORG_PROJECT)).resolves.toEqual({ id: ORG_PROJECT, canManage: false, isOnTeam: false, teamRequestedAt: null });
+    expect(projectsService.findOne).toHaveBeenCalledWith(ORG_PROJECT, ORG_VIEWER);
+  });
+
+  it.each([
+    ['POST /:id/close', (c: ProjectsController) => c.close(ORG_VIEWER, ORG_PROJECT), 'close'],
+    ['POST /:id/reopen', (c: ProjectsController) => c.reopen(ORG_VIEWER, ORG_PROJECT), 'reopen'],
+    ['DELETE /:id', (c: ProjectsController) => c.remove(ORG_VIEWER, ORG_PROJECT), 'remove'],
+    ['PATCH /:id (status)', (c: ProjectsController) => c.update(ORG_VIEWER, ORG_PROJECT, { status: 'on_hold' } as any), 'update'],
+    ['PATCH /:id (categories)', (c: ProjectsController) => c.update(ORG_VIEWER, ORG_PROJECT, { projectTypeIds: [2] } as any), 'update'],
+    ['PATCH /:id/leader', (c: ProjectsController) => c.setLeader(ORG_VIEWER, ORG_PROJECT, ORG_VIEWER.id), 'setLeader'],
+  ])('QA6 round 2 · %s refuses a project-access-only user with 403 NOT_PROJECT_LEADER', async (_route, call, method) => {
+    const { ctrl, projectsService } = makeController();
+    const err = await call(ctrl).catch((e: any) => e);
+    expect(err).toBeInstanceOf(PermissionDeniedException);
+    expect(err.getStatus()).toBe(403);
+    expect(reasonOf(err)).toBe('NOT_PROJECT_LEADER');
+    expect(projectsService[method]).not.toHaveBeenCalled();
+  });
+
+  it('QA6 round 2 · delete needs projects:delete on top of leader-or-Admin; close / reopen need projects:write', () => {
+    const reflector = new Reflector();
+    expect(reflector.get(ROLES_KEY, ProjectsController.prototype.remove)).toEqual([{ module: 'projects', action: 'delete' }]);
+    expect(reflector.get(ROLES_KEY, ProjectsController.prototype.close)).toEqual([{ module: 'projects', action: 'write' }]);
+    expect(reflector.get(ROLES_KEY, ProjectsController.prototype.reopen)).toEqual([{ module: 'projects', action: 'write' }]);
+    expect(reflector.get(ROLES_KEY, ProjectsController.prototype.update)).toEqual([{ module: 'projects', action: 'write' }]);
   });
 
   it('the leader edits, closes and deletes his project', async () => {

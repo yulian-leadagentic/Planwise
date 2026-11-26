@@ -12,6 +12,9 @@ import { Modal } from '@/components/shared/modal';
  * People UX M1 — the confirmation now uses the shared Modal shell so
  * it gets focus trap, Escape close, focus return, and dark-mode parity
  * out of the box.
+ *
+ * QA6 round 2 (26.11): the header renders it only for the leader or an
+ * Admin (`projectManageActions`); the routes run assertProjectManage.
  */
 export function ProjectCloseControl({ project, projectId }: { project: any; projectId: number }) {
   const closeMutation = useCloseProject();
@@ -81,7 +84,7 @@ export function ProjectCloseControl({ project, projectId }: { project: any; proj
           }
         >
           <div className="text-[13px] text-slate-700 dark:text-slate-200 space-y-2">
-            <p>Closing keeps all data intact — tasks, time entries, files, history all stay.</p>
+            <p>Closing keeps all data intact: tasks, time entries, files and history all stay.</p>
             <p className="text-slate-500 dark:text-slate-400">
               You can re-open it later from this same button. Filter the project list with
               <span className="font-semibold text-slate-700 dark:text-slate-200"> Status → Closed</span> to find it.

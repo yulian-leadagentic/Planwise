@@ -36,6 +36,7 @@ import { getInitials } from './project-detail/utils';
 import { formatProjectTimeline } from './project-end-date';
 import type { Tab } from './project-detail/types';
 import { ProjectCloseControl } from './project-detail/project-close-control';
+import { projectManageActions } from './project-detail/project-manage-actions';
 import { ProjectPrevNext } from './project-detail/project-prev-next';
 import { ProjectInfoTab } from './project-detail/project-info-tab';
 import { ProjectUnavailable } from './project-detail/project-unavailable';
@@ -74,7 +75,7 @@ export function ProjectDetailPage() {
   // already returns 403 on the labor-cost endpoint without it; hiding
   // the tab matches the policy in the UI. No admin short-circuit —
   // see NO_ADMIN_BYPASS in RolesGuard.
-  const { can } = usePermissions();
+  const { can, isAdmin } = usePermissions();
   const showFinance = can('finance', 'read');
 
   // §12 (2026-11-14) · The active tab lives in the URL as
@@ -125,6 +126,9 @@ export function ProjectDetailPage() {
   // Round 4: a 403 shows the No-access card; a 404 stays "Project not found".
   if (!project || isPermissionDenied(projectError)) return <ProjectUnavailable error={projectError} />;
 
+  // QA6 round 2 (26.11): edit, status, categories, close / reopen and
+  // delete are leader or Admin only (`canManage`); others get no control.
+  const manage = projectManageActions(project as { canManage?: unknown }, { isAdmin, can });
   const leader = members?.find((m) => m.role?.toLowerCase() === 'leader' || m.role?.toLowerCase() === 'project leader');
   const memberCount = members?.length ?? 0;
   // PR-061: an open-ended end (9999-12-31 / none) reads "ללא תאריך סיום",
@@ -179,13 +183,15 @@ export function ProjectDetailPage() {
                   trigger button, so repeating it here just crowded the
                   header. The switcher is the single project title now. */}
               <ProjectPrevNext currentId={projectId} />
-              <button onClick={() => navigate(`/projects/${projectId}/edit`)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100" aria-label="Edit project">
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
+              {manage.edit && (
+                <button onClick={() => navigate(`/projects/${projectId}/edit`)} className="w-[30px] h-[30px] rounded-[7px] hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100" aria-label="Edit project">
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+              )}
               {/* Inline status editor (PR-002). Replaces the previous
                   read-only pill. Backend accepts `status` on PATCH via
                   UpdateProjectDto — see projects.controller#update. */}
-              <ProjectStatusEditor projectId={projectId} status={project.status} />
+              <ProjectStatusEditor projectId={projectId} status={project.status} canEdit={manage.changeStatus} />
               {/* Inline category (project-type) editor (PR-003).
                   QA3 Wave-1 Commit 3C-b: multi-select chips. PATCH
                   contract sends `projectTypeIds` — the backend derives
@@ -205,6 +211,7 @@ export function ProjectDetailPage() {
                     }>;
                   }).categoryLinks ?? []
                 }
+                canEdit={manage.changeCategories}
               />
               {/* HDR-3 (QA4 · 2026-09-29): PRJxxxxx no longer shown on
                   the header title row — the project switcher's OPEN
@@ -222,21 +229,23 @@ export function ProjectDetailPage() {
               {/* Close / Reopen — distinct from Delete. Close marks the
                   project as "done" (keeps all data, just hides from
                   default list); Delete soft-removes it. T3.6+7. */}
-              <ProjectCloseControl project={project} projectId={projectId} />
-              <button
-                onClick={async () => {
-                  if (await confirm(`Delete project "${project.name}"? This cannot be undone.`)) {
-                    client.delete(`/projects/${projectId}`).then(() => {
-                      queryClient.invalidateQueries({ queryKey: ['projects'] });
-                      notify.success('Project deleted', { code: 'PROJECT-DELETE-200' });
-                      navigate('/projects');
-                    }).catch((err: any) => notify.apiError(err, 'Failed to delete project'));
-                  }
-                }}
-                className="bg-white dark:bg-slate-900 border border-red-200 hover:border-red-400 text-red-600 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-red-50"
-              >
-                Delete
-              </button>
+              {manage.closeOrReopen && <ProjectCloseControl project={project} projectId={projectId} />}
+              {manage.delete && (
+                <button
+                  onClick={async () => {
+                    if (await confirm(`Delete project "${project.name}"? This cannot be undone.`)) {
+                      client.delete(`/projects/${projectId}`).then(() => {
+                        queryClient.invalidateQueries({ queryKey: ['projects'] });
+                        notify.success('Project deleted', { code: 'PROJECT-DELETE-200' });
+                        navigate('/projects');
+                      }).catch((err: any) => notify.apiError(err, 'Failed to delete project'));
+                    }
+                  }}
+                  className="bg-white dark:bg-slate-900 border border-red-200 hover:border-red-400 text-red-600 text-[13px] font-semibold px-3.5 py-2 rounded-lg hover:bg-red-50"
+                >
+                  Delete
+                </button>
+              )}
               {/* Live presence — shows other users currently on this project. */}
               <PresenceIndicator projectId={projectId} currentUserId={currentUserId} />
             </div>
@@ -248,7 +257,7 @@ export function ProjectDetailPage() {
           {project.closedAt && (
             <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-[12px] text-amber-800 flex items-center justify-between">
               <span>
-                <strong>This project is CLOSED.</strong> Closed on {new Date(project.closedAt).toLocaleDateString()} — all data preserved, hidden from the default project list.
+                <strong>This project is CLOSED.</strong> Closed on {new Date(project.closedAt).toLocaleDateString()}. All data is preserved; the project is hidden from the default project list.
               </span>
             </div>
           )}

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Star, Tag } from 'lucide-react';
 import { useProjectTypes, useUpdateProject } from '@/hooks/use-projects';
-import { usePermissions } from '@/hooks/use-permissions';
 import { cn } from '@/lib/utils';
 import type { ProjectType } from '@/types';
 
@@ -24,6 +23,7 @@ export function ProjectCategoryEditor({
   projectId,
   projectType,
   categoryLinks = [],
+  canEdit,
 }: {
   projectId: number;
   projectType: { id: number; name: string; color: string | null } | null;
@@ -31,9 +31,13 @@ export function ProjectCategoryEditor({
     projectTypeId: number;
     projectType: { id: number; name: string; color: string | null };
   }>;
+  /**
+   * QA6 round 2: leader or Admin with projects:write (see
+   * projectManageActions); the PATCH route runs assertProjectManage.
+   */
+  canEdit: boolean;
 }) {
-  const { isAdmin, can } = usePermissions();
-  const canWrite = isAdmin || can('projects', 'write');
+  const canWrite = canEdit;
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -144,7 +148,7 @@ export function ProjectCategoryEditor({
           className="absolute left-0 top-full z-30 mt-1 min-w-[260px] max-h-[320px] overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1.5 shadow-lg"
         >
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            Categories — first checked = primary
+            Categories (first checked is primary)
           </div>
           {(projectTypes ?? []).length === 0 && (
             <div className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">
@@ -201,7 +205,7 @@ export function ProjectCategoryEditor({
                 {isPrimary && (
                   <span
                     className="inline-flex items-center gap-0.5 rounded bg-blue-600 text-white px-1 py-[1px] text-[9px] font-bold tracking-wide uppercase"
-                    title="Primary category — used for rollups"
+                    title="Primary category, used for rollups"
                   >
                     <Star className="h-2.5 w-2.5 fill-white" />
                     Primary
@@ -234,7 +238,7 @@ function Chip({
           ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800'
           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700',
       )}
-      title={isPrimary ? `${name} — primary` : name}
+      title={isPrimary ? `${name} (primary)` : name}
     >
       {hex && (
         <span
