@@ -345,7 +345,7 @@ export function ProjectListPage() {
       const opts = Array.from(names)
         .sort((a, b) => a.localeCompare(b))
         .map((n) => ({ value: n, label: n }));
-      if (anyEmpty) opts.unshift({ value: '__none__', label: '— None' });
+      if (anyEmpty) opts.unshift({ value: '__none__', label: 'None' });
       out.set(rt.id, opts);
     }
     return out;
@@ -769,7 +769,7 @@ export function ProjectListPage() {
             value={groupBy ?? ''}
             onChange={(e) => setGroupBy(e.target.value || null)}
             className="h-9 rounded-lg border border-slate-200 dark:border-slate-700 px-3 text-sm bg-white dark:bg-slate-900"
-            title="Bucket projects by a field — value column header turns into the group label"
+            title="Bucket projects by a field. The value column header turns into the group label"
           >
             <option value="">No grouping</option>
             <option value="leader">Team Leader</option>
@@ -815,7 +815,7 @@ export function ProjectListPage() {
               <div className="max-h-72 overflow-y-auto py-1">
                 {roleTypes.length === 0 ? (
                   <p className="px-3 py-3 text-[12px] text-slate-400 dark:text-slate-500 italic">
-                    No Project Role Types defined — add them in Admin → Project Role Types.
+                    No Project Role Types defined. Add them in Admin → Project Role Types.
                   </p>
                 ) : (
                   roleTypes.map((rt) => {
@@ -1603,7 +1603,7 @@ function CategoryCell({
   const summary = (
     <div className="flex flex-wrap items-center gap-1">
       {displayed.length === 0 ? (
-        <span className="text-slate-400 dark:text-slate-500 text-[12px]">—</span>
+        <span className="text-slate-400 dark:text-slate-500 text-[12px]">None</span>
       ) : (
         displayed.map((d) => (
           <span
@@ -1614,7 +1614,7 @@ function CategoryCell({
                 ? 'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200 font-semibold'
                 : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300',
             )}
-            title={d.isPrimary ? `${d.name} — primary` : d.name}
+            title={d.isPrimary ? `${d.name} (primary)` : d.name}
           >
             {d.color && (
               <span
@@ -1659,7 +1659,7 @@ function CategoryCell({
           className="absolute left-0 top-full z-30 mt-1 min-w-[240px] max-h-[300px] overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1.5 shadow-lg"
         >
           <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            Categories — first checked = primary
+            Categories: first checked is primary
           </div>
           {options.length === 0 && (
             <div className="px-3 py-2 text-[12px] text-slate-500 dark:text-slate-400">
@@ -1718,7 +1718,7 @@ function CategoryCell({
                 {isPrimary && (
                   <span
                     className="inline-flex items-center gap-0.5 rounded bg-blue-600 text-white px-1 py-[1px] text-[9px] font-bold tracking-wide uppercase"
-                    title="Primary category — used for rollups"
+                    title="Primary category, used for rollups"
                   >
                     <Star className="h-2.5 w-2.5 fill-white" />
                     Primary
@@ -1874,10 +1874,10 @@ function RoleHolderCell({
   const summary = (
     <div className={cn(
       'flex flex-col gap-0.5 text-[12px]',
-      assignments.length === 0 && 'text-slate-300 dark:text-slate-600',
+      assignments.length === 0 && 'text-slate-400 dark:text-slate-500',
     )}>
       {assignments.length === 0 ? (
-        <span>—</span>
+        <span>None</span>
       ) : (
         assignments.map((a: any) => (
           <span
@@ -1886,7 +1886,7 @@ function RoleHolderCell({
               'truncate',
               a.isPrimary ? 'font-semibold text-slate-800 dark:text-slate-100' : 'text-slate-600 dark:text-slate-300',
             )}
-            title={a.titleInProject ? `${a.party.displayName} — ${a.titleInProject}` : a.party.displayName}
+            title={a.titleInProject ? `${a.party.displayName} (${a.titleInProject})` : a.party.displayName}
           >
             {a.party.displayName}
           </span>

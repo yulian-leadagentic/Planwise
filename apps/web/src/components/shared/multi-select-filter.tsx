@@ -170,7 +170,7 @@ export function MultiSelectFilter<T extends string | number>({
           }
         }}
         title={title ?? placeholder}
-        aria-label={`${title ?? placeholder} filter — ${selected.size === 0 ? 'All' : `${selected.size} selected`}`}
+        aria-label={`${title ?? placeholder} filter, ${selected.size === 0 ? 'All' : `${selected.size} selected`}`}
         aria-haspopup="listbox"
         aria-expanded={open}
         className={cn(

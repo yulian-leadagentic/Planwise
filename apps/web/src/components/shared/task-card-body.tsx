@@ -154,7 +154,7 @@ export function TaskCardBody({ task, isOverdue, isAtRisk, dueReason, actionSlot,
             )}
             tabIndex={dueHighlighted && dueReason ? 0 : undefined}
             title={dueHighlighted ? (dueReason || 'Due soon') : undefined}
-            aria-label={dueHighlighted ? (dueReason ? `Due ${formatShortDate(task.endDate)} — ${dueReason}` : `Due ${formatShortDate(task.endDate)}`) : undefined}
+            aria-label={dueHighlighted ? (dueReason ? `Due ${formatShortDate(task.endDate)}, ${dueReason}` : `Due ${formatShortDate(task.endDate)}`) : undefined}
           >
             <Calendar className="h-3 w-3" />
             {formatShortDate(task.endDate)}
@@ -182,7 +182,7 @@ function FieldRow({ label, value, placeholder, placeholderItalic }: { label: str
         {value || (
           placeholder
             ? <span className={cn(placeholderItalic ? 'text-slate-400 dark:text-slate-500 italic' : 'text-slate-300 dark:text-slate-600')}>{placeholder}</span>
-            : <span className="text-slate-300 dark:text-slate-600">—</span>
+            : <span className="text-slate-400 dark:text-slate-500">None</span>
         )}
       </dd>
     </div>

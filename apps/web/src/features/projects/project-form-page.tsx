@@ -616,13 +616,13 @@ export function ProjectFormPage() {
                       <input
                         type="text"
                         readOnly
-                        value={isEdit ? (watch('number') || '—') : (numberConfig?.preview ?? 'Auto-generated')}
+                        value={isEdit ? (watch('number') || 'None') : (numberConfig?.preview ?? 'Auto-generated')}
                         className={`${inputClass} bg-slate-50 dark:bg-slate-800/50 cursor-not-allowed text-slate-500 dark:text-slate-400`}
                         title="Assigned automatically by the system"
                       />
                       <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                         {isEdit
-                          ? 'System-managed — the project number can’t be changed.'
+                          ? 'System-managed: the project number can’t be changed.'
                           : (
                             <>
                               Assigned automatically on save
@@ -640,7 +640,7 @@ export function ProjectFormPage() {
                       />
                       {numberMode && (
                         <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-                          Required — must match the configured project number range
+                          Required: must match the configured project number range
                           {numberConfig?.externalPattern ? ' pattern.' : '.'}
                         </p>
                       )}
@@ -658,7 +658,7 @@ export function ProjectFormPage() {
                   <label className={labelClass}>
                     Project Category <span className="text-red-500">*</span>
                     <span className="ml-1.5 text-[11px] font-normal text-slate-400 dark:text-slate-500">
-                      (first is primary — used for rollups)
+                      (first is primary, used for rollups)
                     </span>
                   </label>
                   <div
@@ -695,7 +695,7 @@ export function ProjectFormPage() {
                             {isPrimary ? (
                               <span
                                 className="inline-flex items-center gap-0.5 rounded bg-blue-600 text-white px-1 py-[1px] text-[9px] font-bold tracking-wide uppercase"
-                                title="Primary category — used for rollups"
+                                title="Primary category, used for rollups"
                               >
                                 <Star className="h-2.5 w-2.5 fill-white" />
                                 Primary
@@ -804,7 +804,7 @@ export function ProjectFormPage() {
                     className={inputClass}
                   >
                     <option value="">
-                      {orgUnitsAll.length === 0 ? 'No units available' : '— No unit —'}
+                      {orgUnitsAll.length === 0 ? 'No units available' : 'No unit'}
                     </option>
                     {(() => {
                       // Filter to assignable, then flatten depth-first
@@ -836,7 +836,7 @@ export function ProjectFormPage() {
                     })()}
                   </select>
                   <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
-                    Optional — hosts the project inside the org tree. Admins can
+                    Optional: hosts the project inside the org tree. Admins can
                     toggle which units accept projects in{' '}
                     <a
                       href="/admin/organization"
@@ -860,7 +860,7 @@ export function ProjectFormPage() {
                   >
                     <option value="">
                       {customers.length === 0 && !isEdit
-                        ? 'No customer organizations — create one first ↓'
+                        ? 'No customer organizations: create one first ↓'
                         : 'Select customer organization'}
                     </option>
                     {customers.map((c: any) => (
@@ -894,7 +894,7 @@ export function ProjectFormPage() {
                     ) : isAdmin ? (
                       'Saving will end the previous customer-of-project relationship and start a new one (history is preserved).'
                     ) : (
-                      'Customer is locked after project creation — only an admin can reassign it.'
+                      'Customer is locked after project creation. Only an admin can reassign it.'
                     )}
                   </p>
                 </div>
@@ -1043,7 +1043,7 @@ export function ProjectFormPage() {
                           <span
                             key={rt.id}
                             className="inline-flex items-center gap-1 rounded-full border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-0.5 text-[11.5px] font-semibold text-emerald-800 dark:text-emerald-300"
-                            title={`${rt.name} — assigned`}
+                            title={`${rt.name}: assigned`}
                           >
                             <svg
                               className="h-2.5 w-2.5"
@@ -1063,7 +1063,7 @@ export function ProjectFormPage() {
                           <span
                             key={rt.id}
                             className="inline-flex items-center gap-1 rounded-full border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-0.5 text-[11.5px] font-semibold text-amber-800 dark:text-amber-300"
-                            title={`${rt.name} — not yet assigned (you can add it now or later from the Team tab)`}
+                            title={`${rt.name}: not yet assigned (you can add it now or later from the Team tab)`}
                           >
                             <span className="rounded-full bg-amber-500/70 px-1 py-[1px] text-[9px] font-bold text-white tracking-wide uppercase">
                               Required
@@ -1075,7 +1075,7 @@ export function ProjectFormPage() {
                       })}
                     </div>
                     <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
-                      These roles are configured as required. Missing ones don't block Save — assign them here or from the project's Team tab afterwards.
+                      These roles are configured as required. Missing ones don't block Save. Assign them here or from the project's Team tab afterwards.
                     </p>
                   </div>
                 )}
@@ -1212,7 +1212,7 @@ function QuickLinkBlock({
       <div className="mt-1.5 flex items-center justify-between text-[11px]">
         <span className="text-slate-500 dark:text-slate-400">
           {isCloud
-            ? <>Detected as <span className="font-semibold">{provider}</span> — that'll be the saved name unless you set one below.</>
+            ? <>Detected as <span className="font-semibold">{provider}</span>. That'll be the saved name unless you set one below.</>
             : url.trim()
               ? 'Will be saved as a "Link" file you can open from the Files tab.'
               : <>&nbsp;</>}
@@ -1369,7 +1369,7 @@ function TeamPicker({
           (rounded-full, blue-tinted) so both surfaces read as siblings. */}
       {assignments.length === 0 && !adding && (
         <p className="text-[12px] text-slate-500 dark:text-slate-400">
-          No team roles assigned yet — add one below, or leave blank and
+          No team roles assigned yet. Add one below, or leave blank and
           assign roles later from the project's Team tab.
         </p>
       )}
@@ -1583,7 +1583,7 @@ function TeamPartyPicker({
             : `Select ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}…`
         }
         triggerClassName="w-full"
-        title={`${role.name} — pick a ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}`}
+        title={`${role.name}: pick a ${role.allowedPartnerKind === 'organization' ? 'Organization' : 'person'}`}
       />
       {eligible.length === 0 && (
         <p className="text-[11px] text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded">
@@ -1600,7 +1600,7 @@ function TeamPartyPicker({
             aria-expanded={showIneligibleReasons}
             className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-100 underline decoration-dotted underline-offset-2"
           >
-            {ineligible.length} not eligible — {showIneligibleReasons ? 'hide' : 'show why'}
+            {ineligible.length} not eligible, {showIneligibleReasons ? 'hide' : 'show why'}
           </button>
           {showIneligibleReasons && (
             <ul className="mt-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 px-2 py-1.5 text-[11px] text-slate-500 dark:text-slate-400 space-y-0.5 max-h-40 overflow-y-auto">
@@ -1610,7 +1610,7 @@ function TeamPartyPicker({
                   {Array.isArray(p.reasons) && p.reasons.length > 0 && (
                     <>
                       {' '}
-                      <span className="text-slate-400 dark:text-slate-500">— {p.reasons.join(' · ')}</span>
+                      <span className="text-slate-400 dark:text-slate-500">({p.reasons.join(' · ')})</span>
                     </>
                   )}
                 </li>
