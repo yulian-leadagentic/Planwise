@@ -11,6 +11,8 @@ const typeIcons: Record<string, any> = {
   mention: { icon: MessageSquare, color: 'text-blue-600 bg-blue-100' },
   reply: { icon: MessageSquare, color: 'text-indigo-600 bg-indigo-100' },
   assignment: { icon: UserPlus, color: 'text-green-600 bg-green-100' },
+  // QA6 decision 2 — someone asks the project manager to add him to the Team.
+  team_join_request: { icon: UserPlus, color: 'text-violet-600 bg-violet-100' },
   status_change: { icon: AlertCircle, color: 'text-amber-600 bg-amber-100' },
   message: { icon: MessageSquare, color: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800' },
   system: { icon: AlertCircle, color: 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800' },

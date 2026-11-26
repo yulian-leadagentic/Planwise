@@ -15,6 +15,7 @@ import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 import { ProjectsService } from './projects.service';
+import { ProjectTeamRequestsService } from './project-team-requests.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
@@ -47,6 +48,8 @@ export class ProjectsController {
     // avoid IDOR (an authenticated user with projects:read could
     // otherwise enumerate any project's role holders by id).
     private readonly access: ProjectAccessService,
+    // QA6 decision 2 (26.11) — "ask the project manager to add me".
+    private readonly teamRequests: ProjectTeamRequestsService,
   ) {}
 
   @Post()
@@ -98,7 +101,31 @@ export class ProjectsController {
     // Admin), so the web offers leader-only actions such as assigning a
     // task to someone who is not on the Team yet.
     const canManage = await this.access.canManageProject(user, id);
-    return { ...project, canManage };
+    // QA6 decision 2 (26.11) — whether the caller is on the Team (leader,
+    // creator, member, active partner role). Org unit / manager chain
+    // give access but not a Team place: such a viewer cannot assign
+    // himself, and the web offers "ask the project manager" instead.
+    const isOnTeam = await this.access.isOnProjectTeam(user.id, id);
+    return { ...project, canManage, isOnTeam };
+  }
+
+  /**
+   * QA6 decision 2 (26.11) — a viewer who is not on the Team asks the
+   * project manager to add him. Notifies the leader (no leader: the
+   * creator) in-app with a link to the Team tab and writes the project
+   * Activity Log. A repeat within 24 hours notifies nobody and returns
+   * `{ alreadyRequested: true }`.
+   *
+   * 403 NOT_PROJECT_MEMBER without project access; 403
+   * TEAM_REQUEST_NOT_EMPLOYEE for a non-employee; 409 ALREADY_ON_TEAM
+   * when he is on the Team; 409 NO_PROJECT_MANAGER when nobody can be
+   * asked; 404 for a missing project.
+   */
+  @Post(':id/team-requests')
+  @RequirePermissions({ module: 'projects', action: 'read' })
+  @ApiOperation({ summary: 'Ask the project manager to add the caller to the project team' })
+  async requestToJoinTeam(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
+    return this.teamRequests.requestToJoin(user, id);
   }
 
   // Budget + cost endpoints are gated behind the Finance module

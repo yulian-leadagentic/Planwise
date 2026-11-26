@@ -25,6 +25,10 @@ export interface CreateNotificationInput {
   title: string;
   body?: string;
   data?: any;
+  /** QA6 (2026-11-26) · optional, written to the existing columns: what the bell opens and who caused it. */
+  entityType?: string;
+  entityId?: number;
+  actorId?: number;
 }
 
 @Injectable()
@@ -49,6 +53,9 @@ export class NotificationsService {
         title: input.title,
         body: input.body,
         data: input.data,
+        ...(input.entityType != null ? { entityType: input.entityType } : {}),
+        ...(input.entityId != null ? { entityId: input.entityId } : {}),
+        ...(input.actorId != null ? { actorId: input.actorId } : {}),
       },
     });
 

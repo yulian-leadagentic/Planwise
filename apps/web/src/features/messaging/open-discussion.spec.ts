@@ -52,4 +52,14 @@ describe('Bell notification click', () => {
     });
     expect(notificationClickAction({})).toEqual({ kind: 'navigate', to: '/inbox' });
   });
+
+  it('QA6 — a notification with an in-app link (a "join the team" request) opens that link', () => {
+    expect(
+      notificationClickAction({ entityType: 'project', entityId: 58, canOpenEntity: true, link: '/projects/58?projectTab=team' }),
+    ).toEqual({ kind: 'navigate', to: '/projects/58?projectTab=team' });
+    // A mention he can open only as a thread still goes to the drawer.
+    expect(
+      notificationClickAction({ entityType: 'project', entityId: 10, messageId: 1, canOpenEntity: false, link: '/projects/10' }),
+    ).toEqual({ kind: 'drawer', target: { entityType: 'project', entityId: 10 } });
+  });
 });

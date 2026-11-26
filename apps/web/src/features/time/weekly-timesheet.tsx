@@ -19,6 +19,8 @@ import { useClockStatus, useClockIn, useClockOut, useWeeklyGrid, useDeleteTimeEn
 import { useOverlapDialog } from './overlap-confirm';
 import { invalidateAfterTimeEntry } from './invalidate-after-time-entry';
 import { createQuickTaskForMe } from './quick-task';
+import { useAssigneeScope } from '@/features/tasks/assignee-picker/use-assignee-scope';
+import { TeamJoinRequest } from '@/features/tasks/assignee-picker/team-join-request-button';
 import { TimeoffForm } from './timeoff-form';
 import { hrApi, type AbsenceRecord } from '@/features/hr/api/hr.api';
 import { format, addDays, startOfWeek } from '@/lib/date-utils';
@@ -97,6 +99,9 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
   // current user — otherwise /tasks/mine wouldn't return it and the
   // dropdown couldn't pre-select it after creation.
   const currentUserId = useAuthStore((s) => s.user?.id);
+  // QA6 decision 2 — may he assign himself to a new task of this project
+  // (on the Team, or leader / Admin)? Read only once Quick Task is opened.
+  const quickTaskScope = useAssigneeScope(projectId ? Number(projectId) : null, showQuickTask);
 
   // Fetch projects the current user can report time on — leader OR
   // active member. Client feedback 2026-08-02: time-reporting should
@@ -243,6 +248,9 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
             });
           }
           queryClient.invalidateQueries({ queryKey: ['tasks'] });
+          // QA6 decision 2 — re-read his Team place, so Quick Task offers
+          // "ask the project manager" next time when that was the refusal.
+          queryClient.invalidateQueries({ queryKey: ['projects', Number(projectId)] });
         }
         return;
       }
@@ -364,7 +372,18 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
                 )}
               </div>
             </div>
-            {showQuickTask ? (
+            {showQuickTask && quickTaskScope.selfAssign === 'request' ? (
+              // QA6 decision 2 — a quick task is assigned to its creator;
+              // a viewer who is not on the project's Team cannot assign
+              // himself, so he asks the project manager instead.
+              <div className="rounded-lg border border-slate-200 dark:border-slate-700">
+                <TeamJoinRequest projectId={Number(projectId)} />
+                <div className="flex justify-end border-t border-slate-100 dark:border-slate-800 px-3 py-1.5">
+                  <button type="button" onClick={() => setShowQuickTask(false)}
+                    className="text-[12px] text-slate-400 dark:text-slate-500">Cancel</button>
+                </div>
+              </div>
+            ) : showQuickTask ? (
               <div className="flex gap-2">
                 <input type="text" value={quickTaskName} onChange={(e) => setQuickTaskName(e.target.value)}
                   placeholder="New task name..." autoFocus

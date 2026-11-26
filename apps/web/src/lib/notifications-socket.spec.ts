@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   NOTIFICATIONS_SOCKET_PATH,
   NOTIFICATIONS_SOCKET_NAMESPACE,
+  inAppLink,
   notificationsSocketUrl,
   toBellNotification,
 } from './notifications-socket';
@@ -30,5 +31,22 @@ describe('notification bell socket', () => {
       toBellNotification({ id: 7, type: 'mention', title: 'You were mentioned', body: 'hi', readAt: null, entityType: 'project', entityId: 3, messageId: 40, canOpenEntity: false, createdAt: '2026-11-23T10:00:00Z' }),
     ).toEqual({ id: '7', type: 'mention', title: 'You were mentioned', body: 'hi', entityType: 'project', entityId: 3, messageId: 40, canOpenEntity: false, isRead: false, createdAt: '2026-11-23T10:00:00Z' });
     expect(toBellNotification({ id: 8, readAt: '2026-11-23T11:00:00Z' }).isRead).toBe(true);
+  });
+});
+
+// QA6 decision 2 (2026-11-26) — a "join the team" request carries the
+// project's Team tab in `data.link`; only a path of this app is kept.
+describe('notification in-app link', () => {
+  it('keeps an in-app path from data.link', () => {
+    expect(toBellNotification({ id: 9, type: 'team_join_request', data: { link: '/projects/58?projectTab=team' } }).link).toBe(
+      '/projects/58?projectTab=team',
+    );
+    expect(toBellNotification({ id: 10, data: null }).link).toBeUndefined();
+  });
+
+  it('drops anything that could leave the app', () => {
+    for (const bad of ['https://evil.example/x', '//evil.example/x', '/\\evil.example','javascript:alert(1)', 42, null]) {
+      expect(inAppLink(bad)).toBeUndefined();
+    }
   });
 });

@@ -24,8 +24,18 @@ export interface BellNotification {
   messageId?: number;
   /** From GET /notifications: false = no access to the entity itself (only to a thread through a mention). */
   canOpenEntity?: boolean | null;
+  /** QA6 (2026-11-26) · an in-app path the server put in `data.link` (e.g. a project's Team tab). */
+  link?: string;
   isRead: boolean;
   createdAt: string;
+}
+
+/** `data.link` only when it is a path of this app ("/projects/58?…"), never another origin. */
+export function inAppLink(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || value.includes('\\')) {
+    return undefined;
+  }
+  return value;
 }
 
 /** An API notification row (`readAt`, numeric id) in the bell's shape. */
@@ -39,6 +49,7 @@ export function toBellNotification(row: any): BellNotification {
     entityId: row?.entityId ?? undefined,
     messageId: row?.messageId ?? undefined,
     canOpenEntity: row?.canOpenEntity ?? undefined,
+    link: inAppLink(row?.data?.link),
     isRead: row?.isRead === true || row?.readAt != null,
     createdAt: row?.createdAt,
   };

@@ -12,6 +12,11 @@
    `notify.apiError` and logs nothing. The assignment rule itself is not
    changed here.
 
+   QA6 decision 2 (26.11): the timesheet does not even offer the quick
+   task to a viewer who is not on the Team (and cannot manage the
+   project); it shows "בקש ממנהל הפרויקט להוסיף אותך" instead. The
+   refusal handling above stays for a screen that is out of date.
+
    Pure over a minimal HTTP client so it is unit-tested on its own. */
 
 export interface QuickTaskHttp {

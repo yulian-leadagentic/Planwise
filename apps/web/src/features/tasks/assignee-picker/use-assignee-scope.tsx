@@ -8,6 +8,7 @@ import { notify } from '@/lib/notify';
 import { queryKeys } from '@/lib/query-keys';
 import { cn } from '@/lib/utils';
 import type { DirectoryUser } from './assignee-options';
+import { selfAssignMode } from './team-join-request';
 
 /**
  * QA6 package 1 — the "who may I assign" scope of a picker.
@@ -25,6 +26,12 @@ export function useAssigneeScope(projectId: number | null | undefined, enabled: 
     staleTime: 60 * 1000,
   });
   const canManage = !!(project as { canManage?: boolean } | undefined)?.canManage;
+  // QA6 decision 2 — may the viewer assign HIMSELF, or does he ask the
+  // project manager to add him to the Team instead.
+  const selfAssign = selfAssignMode({
+    projectId,
+    project: project as { isOnTeam?: boolean; canManage?: boolean } | undefined,
+  });
   const { data: allEmployees = [], isFetching: loadingEmployees } = useQuery({
     queryKey: queryKeys.users.allActive(),
     queryFn: () => usersApi.listAllActive(),
@@ -33,6 +40,7 @@ export function useAssigneeScope(projectId: number | null | undefined, enabled: 
   });
   return {
     canManage,
+    selfAssign,
     showAllEmployees: canManage && showAllEmployees,
     setShowAllEmployees,
     allEmployees: allEmployees as DirectoryUser[],

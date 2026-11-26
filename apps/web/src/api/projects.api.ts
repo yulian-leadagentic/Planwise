@@ -143,6 +143,17 @@ export const projectsApi = {
     client.get<ApiResponse<AssigneeCandidate[]>>(`/projects/${projectId}/assignee-candidates`)
       .then((r) => r.data.data ?? (r.data as unknown as AssigneeCandidate[])),
 
+  /**
+   * QA6 decision 2 — a viewer who is not on the Team asks the project
+   * manager to add him. `{ alreadyRequested: true }` = he already asked
+   * in the last 24 hours (nobody is notified again). 409 ALREADY_ON_TEAM
+   * when he is on the Team.
+   */
+  requestToJoinTeam: (projectId: number) =>
+    client
+      .post<ApiResponse<{ alreadyRequested: boolean; requestedAt: string }>>(`/projects/${projectId}/team-requests`)
+      .then((r) => r.data),
+
   // Project types — read-only lookup for the New Project form. Served
   // under /lookups so a tester with `projects:write` (but no
   // `admin:read`) can still populate the required Category picker.

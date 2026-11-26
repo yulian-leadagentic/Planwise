@@ -46,9 +46,13 @@ export function notificationClickAction(n: {
   entityId?: number;
   messageId?: number;
   canOpenEntity?: boolean | null;
+  /** QA6 (2026-11-26) · in-app path from the notification's `data.link` (already checked by `inAppLink`). */
+  link?: string;
 }): OpenAction {
   const target = discussionTarget(n.entityType, n.entityId);
   if (n.canOpenEntity === false && n.messageId != null && target) return { kind: 'drawer', target };
+  // E.g. a "join the team" request opens the project's Team tab.
+  if (n.link) return { kind: 'navigate', to: n.link };
   if (n.entityType === 'project' && n.entityId) return { kind: 'navigate', to: `/projects/${n.entityId}` };
   if (n.entityType === 'task' && n.entityId) return { kind: 'navigate', to: '/projects' };
   return { kind: 'navigate', to: '/inbox' };

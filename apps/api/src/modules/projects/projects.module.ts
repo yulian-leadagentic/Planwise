@@ -5,6 +5,8 @@ import { ProjectPartnerRolesModule } from '../project-partner-roles/project-part
 import { UsersModule } from '../users/users.module';
 import { NumberRangesModule } from '../number-ranges/number-ranges.module';
 import { AuthorizationModule } from '../../common/authorization.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { ProjectTeamRequestsService } from './project-team-requests.service';
 
 @Module({
   // UsersModule is imported for UserSenioritiesService — the project
@@ -16,9 +18,11 @@ import { AuthorizationModule } from '../../common/authorization.module';
   // BM2 ops-surfaces Phase B (2026-08-13): swapped the retired
   // BusinessPartnerRelationshipsModule for ProjectPartnerRolesModule —
   // the customer/member helpers moved onto ProjectPartnerRolesService.
-  imports: [ProjectPartnerRolesModule, UsersModule, NumberRangesModule, AuthorizationModule],
+  // NotificationsModule (QA6 decision 2) — a "join the team" request
+  // notifies the project manager (ProjectTeamRequestsService).
+  imports: [ProjectPartnerRolesModule, UsersModule, NumberRangesModule, AuthorizationModule, NotificationsModule],
   controllers: [ProjectsController],
-  providers: [ProjectsService],
+  providers: [ProjectsService, ProjectTeamRequestsService],
   exports: [ProjectsService],
 })
 export class ProjectsModule {}

@@ -97,7 +97,7 @@ describe('GET /projects/:id/tasks/export (B-10)', () => {
       exportTasksExcel: jest.fn(async () => ({ buffer: Buffer.from('x'), filename: 'f.xlsx' })),
     };
     const access: any = { assertProjectAccess: jest.fn(async () => undefined) };
-    return { ctrl: new ProjectsController(projectsService, access), projectsService, access };
+    return { ctrl: new ProjectsController(projectsService, access, {} as any), projectsService, access };
   }
   const res = () => ({ set: jest.fn(), send: jest.fn() }) as any;
 
@@ -133,7 +133,7 @@ describe('POST / PATCH /projects (B-13 / B-15)', () => {
     };
     // Round 4: PATCH and the leader route are leader-or-Admin; PM is the leader here.
     const access: any = { assertProjectManage: jest.fn(async () => undefined) };
-    return { ctrl: new ProjectsController(projectsService, access), projectsService };
+    return { ctrl: new ProjectsController(projectsService, access, {} as any), projectsService };
   }
 
   it('PATCH with a changed budget and no finance:write → 403, nothing written', async () => {

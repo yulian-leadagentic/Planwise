@@ -79,6 +79,7 @@ import {
   AllEmployeesToggle,
   JoinsTeamNote,
 } from '@/features/tasks/assignee-picker/use-assignee-scope';
+import { TeamJoinRequest } from '@/features/tasks/assignee-picker/team-join-request-button';
 
 // QA5 UI-12: the FeasibilityBadge component (Progress bar + On Track /
 // At Risk / Impossible chip) was deleted from this file in Wave 1 — it
@@ -2265,8 +2266,10 @@ function AssigneePicker({
 
           {/* Add button — shown when someone on the Team is left to assign,
               or for a leader / Admin, who can also search all employees
-              (QA6). External contacts are not listed at all. */}
-          {(available.length > 0 || scope.canManage) && (
+              (QA6). External contacts are not listed at all. QA6
+              decision 2: also for a viewer who is not on the Team, so he
+              can reach "ask the project manager to add you". */}
+          {(available.length > 0 || scope.canManage || scope.selfAssign === 'request') && (
             <PopoverTrigger asChild>
               <button
                 type="button"
@@ -2337,6 +2340,11 @@ function AssigneePicker({
             onChange={scope.setShowAllEmployees}
             loading={scope.loadingEmployees}
           />
+        )}
+        {/* QA6 decision 2 — not on the Team, not a manager: he cannot
+            assign himself (single row or multi-row); he asks instead. */}
+        {scope.selfAssign === 'request' && (
+          <TeamJoinRequest projectId={projectId} className="border-t border-slate-100 dark:border-slate-800" />
         )}
       </PopoverContent>
     </Popover>

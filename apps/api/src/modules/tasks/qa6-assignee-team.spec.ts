@@ -402,3 +402,74 @@ describe('QA6 security review — an assignment alone shows nothing of the proje
     await expect(w.access.userHasProjectAccess(105, 999)).resolves.toBe(false);
   });
 });
+
+/**
+ * QA6 decision 2 (26.11) — no self-assign for a viewer who is not on the
+ * Team. 109 sees project 58 only through his org unit (rule 6: home unit
+ * 30 = the project's unit); 110 only through his manager chain (rule 7:
+ * he manages unit 21, home of Team member 101). Neither is on the Team,
+ * neither passes assertProjectManage, so assigning HIMSELF is the same
+ * 403 ASSIGNEE_NOT_ON_TEAM as assigning any outsider. Every self-assign
+ * surface of the web (task drawer, planning picker and its multi-row
+ * assign, the timesheet quick task) posts POST /tasks/:id/assignees, so
+ * this is the one gate.
+ */
+describe('QA6 decision 2 — a viewer who is not on the Team cannot assign himself', () => {
+  const ORG_VIEWER = { id: 109, roleId: 6, isAdmin: false, roleModules: MODULES };
+  const CHAIN_MANAGER = { id: 110, roleId: 7, isAdmin: false, roleModules: MODULES };
+  let w: ReturnType<typeof world>;
+  beforeEach(() => {
+    w = world();
+    const person = (id: number, orgUnitId: number) => ({
+      id, firstName: `First${id}`, lastName: `Last${id}`, email: `u${id}@amec.co.il`, roleId: 6, orgUnitId,
+      businessPartnerId: 1000 + id, userType: 'employee', isActive: true, deletedAt: null,
+    });
+    w.db.table('user').push(person(109, 30), person(110, 20));
+    w.db.table('businessPartner').push(
+      { id: 1109, partnerType: 'person', displayName: 'BP 1109', deletedAt: null },
+      { id: 1110, partnerType: 'person', displayName: 'BP 1110', deletedAt: null },
+    );
+    w.db.table('orgUnit').find((u) => u.id === 21)!.managerUserId = 110;
+  });
+
+  it('both see the project, neither is on the Team', async () => {
+    for (const u of [109, 110]) {
+      await expect(w.access.assertProjectAccess(u, 58, false)).resolves.toBeUndefined();
+      await expect(w.access.isOnProjectTeam(u, 58)).resolves.toBe(false);
+    }
+  });
+
+  it.each([
+    ['rule 6 (org unit)', ORG_VIEWER],
+    ['rule 7 (manager chain)', CHAIN_MANAGER],
+  ])('%s: self-assign is 403 ASSIGNEE_NOT_ON_TEAM; no assignment, no Team role', async (_rule, me) => {
+    const err = await w.ctrl.addAssignee(4021, { userId: me.id }, me).catch((e) => e);
+    expect(err).toBeInstanceOf(PermissionDeniedException);
+    expect(reasonOf(err)).toBe('ASSIGNEE_NOT_ON_TEAM');
+    expect(w.assignees(4021)).toEqual([101]);
+    expect(w.participantRolesOf(1000 + me.id)).toHaveLength(0);
+    await expect(w.access.isOnProjectTeam(me.id, 58)).resolves.toBe(false);
+    expect(w.activityLog.logProjectMemberAdded).not.toHaveBeenCalled();
+  });
+
+  it('the timesheet quick task: he may create the task, but assigning himself to it is refused the same way', async () => {
+    const created: any = await w.ctrl.create(ORG_VIEWER, { zoneId: 580, code: 'QT-1', name: 'Quick' } as any);
+    const err = await w.ctrl.addAssignee(created.id, { userId: 109 }, ORG_VIEWER).catch((e) => e);
+    expect(reasonOf(err)).toBe('ASSIGNEE_NOT_ON_TEAM');
+    expect(w.assignees(created.id)).toEqual([]);
+  });
+
+  it('assigning someone who IS on the Team stays allowed (package 1 unchanged)', async () => {
+    const out: any = await w.ctrl.addAssignee(4021, { userId: 102 }, ORG_VIEWER);
+    expect(out.addedToTeam).toBe(false);
+    expect(w.assignees(4021)).toEqual([101, 102]);
+  });
+
+  it('once the leader adds him (assigning him), he can assign himself to another task', async () => {
+    await w.ctrl.addAssignee(4021, { userId: 109 }, LEADER);
+    await expect(w.access.isOnProjectTeam(109, 58)).resolves.toBe(true);
+    const out: any = await w.ctrl.addAssignee(4022, { userId: 109 }, ORG_VIEWER);
+    expect(out.addedToTeam).toBe(false);
+    expect(w.assignees(4022)).toEqual([109]);
+  });
+});

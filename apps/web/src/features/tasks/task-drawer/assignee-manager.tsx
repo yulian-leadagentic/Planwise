@@ -8,6 +8,7 @@ import { projectsApi, type AssigneeCandidate } from '@/api/projects.api';
 import { queryKeys } from '@/lib/query-keys';
 import { buildAssigneeOptions, employeeOptions, matchesSearch, type AssigneeOption } from '../assignee-picker/assignee-options';
 import { useAssigneeScope, afterAssigned, AllEmployeesToggle, JoinsTeamNote } from '../assignee-picker/use-assignee-scope';
+import { TeamJoinRequest } from '../assignee-picker/team-join-request-button';
 
 /**
  * Assignee picker inside the task drawer.
@@ -26,6 +27,10 @@ import { useAssigneeScope, afterAssigned, AllEmployeesToggle, JoinsTeamNote } fr
  * external contacts never appear. A leader / Admin can widen it to every
  * employee; a non-Team pick is marked "יתווסף לצוות הפרויקט" and the
  * server adds him to the Team as a participant before assigning.
+ *
+ * QA6 decision 2: a viewer who is not on the Team and cannot manage the
+ * project cannot assign himself; the picker ends with "בקש ממנהל הפרויקט
+ * להוסיף אותך" instead (POST /projects/:id/team-requests).
  */
 export function AssigneeManager({
   taskId,
@@ -176,6 +181,11 @@ export function AssigneeManager({
               onChange={scope.setShowAllEmployees}
               loading={scope.loadingEmployees}
             />
+          )}
+          {/* QA6 decision 2 — not on the Team and not a manager: he is not
+              in the list and cannot assign himself; he asks instead. */}
+          {projectId && scope.selfAssign === 'request' && (
+            <TeamJoinRequest projectId={projectId} className="border-t border-slate-100 dark:border-slate-800" />
           )}
         </div>
       )}
