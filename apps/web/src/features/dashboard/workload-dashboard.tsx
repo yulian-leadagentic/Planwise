@@ -39,6 +39,7 @@ import {
 } from './workload-assign';
 import { EMPTY_ASSIGN, normalizeTeamWorkload, normalizeTray, type WorkloadTaskEntry, type WorkloadTray as Tray } from './workload-contract';
 import { useWorkloadAssign } from './use-workload-assign';
+import { dragVia, useStuckDragRecovery } from './workload-drag-recovery';
 import {
   dayTasksTitle,
   formatWorkRange,
@@ -232,8 +233,25 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
     if (target && !check?.needsApproval) setExpanded((prev) => new Set(prev).add(target.userId));
   };
 
-  const onDragStart = (e: DragStartEvent) => setActive((e.active.data.current as DragData | undefined) ?? null);
+  // Round 2 (26.11): a drag that starts and ends inside one frame never
+  // gets dnd-kit's onDragEnd. If a release / Escape is not followed by an
+  // end within 300 ms, drop the drag and remount the DndContext.
+  const [dndKey, setDndKey] = useState(0);
+  const dragWatchdog = useStuckDragRecovery(() => {
+    setActive(null);
+    setDndKey((k) => k + 1);
+  });
+
+  const onDragStart = (e: DragStartEvent) => {
+    dragWatchdog.started(dragVia(e.activatorEvent), e.activatorEvent?.timeStamp);
+    setActive((e.active.data.current as DragData | undefined) ?? null);
+  };
+  const onDragCancel = () => {
+    dragWatchdog.ended();
+    setActive(null);
+  };
   const onDragEnd = (e: DragEndEvent) => {
+    dragWatchdog.ended();
     const a = (e.active.data.current as DragData | undefined) ?? active;
     setActive(null);
     const target = (e.over?.data.current as { target?: DropTarget } | undefined)?.target;
@@ -494,11 +512,12 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
 
   return (
     <DndContext
+      key={dndKey}
       sensors={sensors}
       collisionDetection={workloadCollision}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
-      onDragCancel={() => setActive(null)}
+      onDragCancel={onDragCancel}
       accessibility={{ announcements }}
     >
     <div className="space-y-4">
