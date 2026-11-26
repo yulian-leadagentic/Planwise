@@ -8,10 +8,10 @@ import { TableSkeleton } from '@/components/shared/loading-skeleton';
 import { DataTable } from '@/components/shared/data-table';
 import { EmptyState } from '@/components/shared/empty-state';
 import client from '@/api/client';
-import { notify } from '@/lib/notify';
+import { apiErrorCode, notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { QualificationPicker, useQualifications } from '@/features/admin/qualification-picker';
-import { isPickableService } from './service-options';
+import { isPickableService, qualificationSaveError } from './service-options';
 
 interface EditState {
   id: number;
@@ -105,7 +105,16 @@ export function PhasesPage() {
       notify.success('Service updated');
       setEditing(null);
     },
-    onError: (err: any) => notify.apiError(err, 'Failed to update'),
+    onError: (err: any) => {
+      const text = qualificationSaveError(apiErrorCode(err));
+      if (text) {
+        notify.warning(text.title, { description: text.description, code: apiErrorCode(err) ?? undefined, duration: 8000 });
+        // A removed qualification: reload the catalog so the picker shows what exists.
+        queryClient.invalidateQueries({ queryKey: ['professions'] });
+        return;
+      }
+      notify.apiError(err, 'Failed to update');
+    },
   });
 
   const deleteMutation = useMutation({

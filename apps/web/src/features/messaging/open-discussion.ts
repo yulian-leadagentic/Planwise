@@ -44,10 +44,11 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * QA6 P4 (PR-063): a task-move notification (`reassign_request` to the
- * approver, `reassign_result` to the requester, the notice to the person
- * the task left) opens Operations › Workload on the week of the move.
- * Contract assumption: the week comes from `data.toDay` (else
- * `data.fromDay`), any date of that week; the API's `weekOf` takes it.
+ * approver, `reassign_result` to the requester, `reassign_removed` to the
+ * person the task left; all `entityType: 'task_reassignment'`) opens
+ * Operations › Workload on the week of the move: `data.toDay`, else
+ * `data.fromDay` / `data.weekOf` (any date of that week; the API's
+ * `weekOf` takes it).
  */
 export function workloadNotificationLink(n: { type?: string; entityType?: string; data?: unknown }): string | null {
   const isMove = (typeof n.type === 'string' && n.type.startsWith('reassign')) || n.entityType === 'task_reassignment';

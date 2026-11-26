@@ -78,9 +78,13 @@ export type ReassignmentRequest = {
 };
 
 export type WorkloadTray = {
+  /** The range the tray was computed for (same as the board's). */
+  range: { from: string; to: string; today: string | null } | null;
   unassigned: { total: number; items: WorkloadTaskEntry[] };
   overdue: { total: number; items: TrayOverdueItem[] };
   approvals: ReassignmentRequest[];
+  /** Team data of the listed tasks' projects, same shape as the board's `assign.projects`. */
+  assign: { projects: WorkloadAssign['projects'] };
 };
 
 export type ReassignView = { from: string; to: string };
@@ -103,15 +107,17 @@ export type ReassignTaskPatch = {
 
 export type ReassignWarning = { code: string; taskId: number | null; message: string };
 
+export type ReassignmentRef = {
+  id: number;
+  status: string;
+  crossDepartment: boolean;
+  approver: WorkloadUserRef | null;
+  undoUntil: string | null;
+};
+
 export type ReassignResponse = {
   result: 'applied' | 'pending';
-  reassignment: {
-    id: number;
-    status: string;
-    crossDepartment: boolean;
-    approver: WorkloadUserRef | null;
-    undoUntil: string | null;
-  };
+  reassignment: ReassignmentRef;
   task: ReassignTaskPatch | null;
   changed: { assignee: boolean; dates: boolean };
   addedToTeam: boolean;
@@ -120,11 +126,20 @@ export type ReassignResponse = {
   people: TeamWorkloadPerson[];
 };
 
-/** approve / reject / undo. */
+/**
+ * approve `{ result, reassignment, task, people, changed, addedToTeam, loggedStays, warnings }`,
+ * reject `{ result, reassignment }`, undo `{ result, reassignment, task, people }`.
+ * Fields a route leaves out come back empty.
+ */
 export type ReassignDecisionResponse = {
   result: 'approved' | 'rejected' | 'undone' | 'cancelled' | string;
+  reassignment: ReassignmentRef | null;
   task: ReassignTaskPatch | null;
   people: TeamWorkloadPerson[];
+  changed: { assignee: boolean; dates: boolean };
+  addedToTeam: boolean;
+  loggedStays: ReassignResponse['loggedStays'];
+  warnings: ReassignWarning[];
 };
 
 // ─── Adapters ───────────────────────────────────────────────────────────
@@ -195,12 +210,20 @@ export function normalizeTaskEntry(raw: any): WorkloadTaskEntry | null {
 
 export const EMPTY_ASSIGN: WorkloadAssign = { canAssign: false, projects: {}, services: {}, approvalsWaitingForMe: 0 };
 
-function normalizeAssign(raw: any): WorkloadAssign {
-  if (!raw || typeof raw !== 'object') return EMPTY_ASSIGN;
+/** `assign.projects` of the board or the tray. */
+function normalizeProjects(raw: unknown): WorkloadAssign['projects'] {
   const projects: WorkloadAssign['projects'] = {};
-  for (const [k, v] of Object.entries(raw.projects ?? {})) {
+  if (!raw || typeof raw !== 'object') return projects;
+  for (const [k, v] of Object.entries(raw)) {
+    if (id(k) == null) continue;
     projects[k] = { canManage: (v as any)?.canManage === true, teamUserIds: ids((v as any)?.teamUserIds) };
   }
+  return projects;
+}
+
+function normalizeAssign(raw: any): WorkloadAssign {
+  if (!raw || typeof raw !== 'object') return EMPTY_ASSIGN;
+  const projects = normalizeProjects(raw.projects);
   const services: WorkloadAssign['services'] = {};
   for (const [k, v] of Object.entries(raw.services ?? {})) {
     services[k] = { requiredQualificationIds: ids((v as any)?.requiredQualificationIds) };
@@ -284,12 +307,16 @@ export function normalizeTray(raw: any): WorkloadTray {
     if (t && assigneeId != null) overdue.push({ ...t, assigneeId, assigneeName: str(r.assigneeName) });
   }
   const unassigned = entries(raw?.unassigned?.items);
+  const from = str(raw?.range?.from);
+  const to = str(raw?.range?.to);
   return {
+    range: from && to ? { from, to, today: str(raw?.range?.today) } : null,
     unassigned: { total: Math.max(unassigned.length, num(raw?.unassigned?.total) ?? 0), items: unassigned },
     overdue: { total: Math.max(overdue.length, num(raw?.overdue?.total) ?? 0), items: overdue },
     approvals: (Array.isArray(raw?.approvals) ? raw.approvals : [])
       .map(normalizeReassignmentRequest)
       .filter((r: ReassignmentRequest | null): r is ReassignmentRequest => r != null),
+    assign: { projects: normalizeProjects(raw?.assign?.projects) },
   };
 }
 
@@ -316,44 +343,61 @@ function normalizeTaskPatch(raw: any): ReassignTaskPatch | null {
   };
 }
 
+function normalizeReassignmentRef(r: any, fallbackStatus: string): ReassignmentRef {
+  return {
+    id: id(r?.id) ?? 0,
+    status: str(r?.status) ?? fallbackStatus,
+    crossDepartment: r?.crossDepartment === true,
+    approver: userRef(r?.approver),
+    undoUntil: str(r?.undoUntil),
+  };
+}
+
+function normalizeLoggedStays(ls: any): ReassignResponse['loggedStays'] {
+  const lsId = id(ls?.userId);
+  return lsId == null ? null : { userId: lsId, name: str(ls.name) ?? '', hours: num(ls.hours) };
+}
+
+function normalizeWarnings(list: unknown): ReassignWarning[] {
+  return (Array.isArray(list) ? list : [])
+    .map((w: any) => ({ code: str(w?.code) ?? 'WARNING', taskId: id(w?.taskId), message: str(w?.message) ?? '' }))
+    .filter((w: ReassignWarning) => w.message !== '');
+}
+
 /** `POST /tasks/:id/reassign` 200. */
 export function normalizeReassignResponse(raw: any): ReassignResponse {
-  const r = raw?.reassignment ?? {};
-  const ls = raw?.loggedStays;
-  const lsId = id(ls?.userId);
+  const pending = raw?.result === 'pending';
   return {
-    result: raw?.result === 'pending' ? 'pending' : 'applied',
-    reassignment: {
-      id: id(r.id) ?? 0,
-      status: str(r.status) ?? (raw?.result === 'pending' ? 'pending' : 'applied'),
-      crossDepartment: r.crossDepartment === true,
-      approver: userRef(r.approver),
-      undoUntil: str(r.undoUntil),
-    },
+    result: pending ? 'pending' : 'applied',
+    reassignment: normalizeReassignmentRef(raw?.reassignment, pending ? 'pending' : 'applied'),
     task: normalizeTaskPatch(raw?.task),
     changed: { assignee: raw?.changed?.assignee === true, dates: raw?.changed?.dates === true },
     addedToTeam: raw?.addedToTeam === true,
-    loggedStays: lsId == null ? null : { userId: lsId, name: str(ls.name) ?? '', hours: num(ls.hours) },
-    warnings: (Array.isArray(raw?.warnings) ? raw.warnings : [])
-      .map((w: any) => ({ code: str(w?.code) ?? 'WARNING', taskId: id(w?.taskId), message: str(w?.message) ?? '' }))
-      .filter((w: ReassignWarning) => w.message !== ''),
+    loggedStays: normalizeLoggedStays(raw?.loggedStays),
+    warnings: normalizeWarnings(raw?.warnings),
     people: rawPeople(raw?.people),
   };
 }
 
-/** approve / reject / undo 200. */
+/** approve / reject / undo 200 (see ReassignDecisionResponse for which route sends what). */
 export function normalizeDecisionResponse(raw: any): ReassignDecisionResponse {
+  const result = str(raw?.result) ?? 'done';
   return {
-    result: str(raw?.result) ?? 'done',
+    result,
+    reassignment: raw?.reassignment && typeof raw.reassignment === 'object' ? normalizeReassignmentRef(raw.reassignment, result) : null,
     task: normalizeTaskPatch(raw?.task),
     people: rawPeople(raw?.people),
+    changed: { assignee: raw?.changed?.assignee === true, dates: raw?.changed?.dates === true },
+    addedToTeam: raw?.addedToTeam === true,
+    loggedStays: normalizeLoggedStays(raw?.loggedStays),
+    warnings: normalizeWarnings(raw?.warnings),
   };
 }
 
 /**
- * Contract assumption (personal tasks): the `tasks` entry has no
- * personal flag in §10.4. A personal task is one the server marks
- * `isPersonal`, or one without a project. Never draggable (R8).
+ * Personal tasks: the `tasks` entry has no personal flag (the server
+ * already sends `canDrag: false` for them). A task without a project, or
+ * one marked `isPersonal` should the server ever send it, never moves (R8).
  */
 export function isPersonalTask(task: Pick<WorkloadTaskEntry, 'projectId'> & { isPersonal?: boolean }): boolean {
   return task.isPersonal === true || task.projectId == null;

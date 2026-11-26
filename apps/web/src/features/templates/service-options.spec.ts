@@ -3,6 +3,7 @@ import {
   isPickableService,
   isProjectPhaseName,
   PROJECT_PHASE_NAMES,
+  qualificationSaveError,
   serviceOptions,
   withSavedServiceOption,
 } from './service-options';
@@ -66,5 +67,18 @@ describe('PR-069 · Service picker options', () => {
     expect(withSavedServiceOption(services, 7, null)).toEqual([...services, { id: 7, name: 'Service #7' }]);
     expect(withSavedServiceOption(services, null, 'x')).toEqual(services);
     expect(withSavedServiceOption(undefined, '', null)).toEqual([]);
+  });
+});
+
+// QA6 P4 (PR-063): the Required qualifications save errors.
+describe('qualificationSaveError', () => {
+  it('words the two 400 codes; anything else uses the generic error', () => {
+    expect(qualificationSaveError('PROFESSION_NOT_FOUND')?.title).toBe('A qualification no longer exists');
+    expect(qualificationSaveError('PROFESSION_IDS_INVALID')?.title).toBe('The qualification list is not valid');
+    expect(qualificationSaveError('BAD_REQUEST')).toBeNull();
+    expect(qualificationSaveError(null)).toBeNull();
+    for (const code of ['PROFESSION_NOT_FOUND', 'PROFESSION_IDS_INVALID']) {
+      expect(Object.values(qualificationSaveError(code)!).join(' ')).not.toMatch(/[–—]/);
+    }
   });
 });

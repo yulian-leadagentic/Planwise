@@ -75,9 +75,14 @@ describe('Bell notification click', () => {
       kind: 'navigate',
       to: '/operations?tab=workload&weekOf=2026-12-01',
     });
-    expect(notificationClickAction({ type: 'reassign_moved', entityType: 'task', entityId: 4021, data: { fromDay: '2026-11-23' } })).toEqual({
+    // The notice to the person the task left (D10).
+    expect(notificationClickAction({ type: 'reassign_removed', entityType: 'task_reassignment', entityId: 881, data: { weekOf: '2026-11-22' } })).toEqual({
       kind: 'navigate',
-      to: '/operations?tab=workload&weekOf=2026-11-23',
+      to: '/operations?tab=workload&weekOf=2026-11-22',
+    });
+    expect(notificationClickAction({ type: 'reassign_removed', entityType: 'task_reassignment', entityId: 881, data: { toDay: '2026-11-24', weekOf: '2026-11-22' } })).toEqual({
+      kind: 'navigate',
+      to: '/operations?tab=workload&weekOf=2026-11-24',
     });
     expect(notificationClickAction({ type: 'reassign_result', data: { toDay: 'soon' } })).toEqual({ kind: 'navigate', to: '/operations?tab=workload' });
     expect(notificationClickAction({ type: 'system', entityType: 'task_reassignment', entityId: 1 })).toEqual({ kind: 'navigate', to: '/operations?tab=workload' });

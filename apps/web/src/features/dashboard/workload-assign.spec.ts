@@ -10,15 +10,18 @@ import {
   applyPeopleRows,
   applyTaskPatch,
   applyTrayMove,
+  approveToastText,
   canDragChip,
   departmentKey,
   dropCheck,
   dropReasonText,
+  mergeAssignProjects,
   nextWorkingDays,
   overloadCausing,
   previewPct,
   providesService,
   reassignBody,
+  reassignErrorKey,
   reassignErrorText,
   reassignToastText,
   trayLandingDays,
@@ -28,6 +31,7 @@ import {
 import {
   EMPTY_ASSIGN,
   isPersonalTask,
+  normalizeDecisionResponse,
   normalizeReassignResponse,
   normalizeTaskEntry,
   normalizeTeamWorkload,
@@ -117,31 +121,55 @@ function withChip(p: TeamWorkloadPerson, dayIndex: number, taskId: number, hours
   return { ...p, days, totals: { ...p.totals, planned: p.totals.planned + hours } };
 }
 
-describe('canDragChip', () => {
+describe('canDragChip (server rule: pending == null && projectId != null && (canDrag || people[lane].canDragFrom))', () => {
   it('the project-manage flag or the manager-chain flag of the chip\'s person', () => {
-    expect(canDragChip(task({ canDrag: true }), person(12), ASSIGN)).toBe(true);
-    expect(canDragChip(task({ canDrag: false }), person(12, { canDragFrom: true }), ASSIGN)).toBe(true);
-    expect(canDragChip(task({ canDrag: false }), person(12, { canDragFrom: false }), ASSIGN)).toBe(false);
+    expect(canDragChip(task({ canDrag: true }), person(12))).toBe(true);
+    expect(canDragChip(task({ canDrag: false }), person(12, { canDragFrom: true }))).toBe(true);
+    expect(canDragChip(task({ canDrag: false }), person(12, { canDragFrom: false }))).toBe(false);
   });
 
   it('masked, pending and personal chips never move', () => {
-    expect(canDragChip(null, person(12, { canDragFrom: true }), ASSIGN)).toBe(false);
-    expect(canDragChip(undefined, person(12), ASSIGN)).toBe(false);
+    expect(canDragChip(null, person(12, { canDragFrom: true }))).toBe(false);
+    expect(canDragChip(undefined, person(12))).toBe(false);
     const pending = { id: 881, fromUserId: 12, toUserId: 34, toName: 'Yair', approver: null, requestedBy: null, createdAt: null };
-    expect(canDragChip(task({ pending }), person(12, { canDragFrom: true }), ASSIGN)).toBe(false);
-    expect(canDragChip(task({ projectId: null }), person(12, { canDragFrom: true }), ASSIGN)).toBe(false);
-    expect(canDragChip(task({ isPersonal: true }), person(12, { canDragFrom: true }), ASSIGN)).toBe(false);
+    expect(canDragChip(task({ pending }), person(12, { canDragFrom: true }))).toBe(false);
+    expect(canDragChip(task({ projectId: null }), person(12, { canDragFrom: true }))).toBe(false);
+    expect(canDragChip(task({ isPersonal: true }), person(12, { canDragFrom: true }))).toBe(false);
   });
 
-  it('an unassigned tray chip has no person: leader / Admin only', () => {
-    expect(canDragChip(task({ canDrag: true }), null, ASSIGN)).toBe(true);
-    expect(canDragChip(task({ canDrag: false }), null, ASSIGN)).toBe(false);
+  it('an unassigned tray chip has no person: leader / Admin only, even when no board chip is draggable', () => {
+    expect(canDragChip(task({ canDrag: true }), null)).toBe(true);
+    expect(canDragChip(task({ canDrag: false }), null)).toBe(false);
   });
 
-  it('read-only for a caller without any drag right (or an older payload)', () => {
-    expect(canDragChip(task({ canDrag: true }), person(12, { canDragFrom: true }), { canAssign: false })).toBe(false);
-    expect(canDragChip(task({ canDrag: true }), person(12), null)).toBe(false);
-    expect(canDragChip(task({ canDrag: true }), person(12), EMPTY_ASSIGN)).toBe(false);
+  it('no drag right on either side: read-only', () => {
+    expect(canDragChip(task({ canDrag: false }), person(12, { canDragFrom: false }))).toBe(false);
+    expect(canDragChip(task({ canDrag: false }), null)).toBe(false);
+  });
+});
+
+describe('mergeAssignProjects', () => {
+  it('a tray task\'s project missing from the board comes from the tray', () => {
+    const board = { '59': { canManage: false, teamUserIds: [12, 34] } };
+    const tray = { '61': { canManage: true, teamUserIds: [56] } };
+    expect(mergeAssignProjects(board, tray)).toEqual({ '59': board['59'], '61': tray['61'] });
+    expect(mergeAssignProjects(board, undefined)).toBe(board);
+    expect(mergeAssignProjects(board, {})).toBe(board);
+  });
+
+  it('a project in both: Team lists joined, either canManage counts', () => {
+    expect(mergeAssignProjects({ '59': { canManage: false, teamUserIds: [12, 34] } }, { '59': { canManage: true, teamUserIds: [34, 56] } })).toEqual({
+      '59': { canManage: true, teamUserIds: [12, 34, 56] },
+    });
+  });
+
+  it('the drop check sees a tray-only project', () => {
+    const outsider = person(56, { departmentId: 1 });
+    const t = task({ id: 900, projectId: 61, assigneeIds: [], canDrag: false });
+    const src = { fromUserId: null, fromDay: null };
+    expect(dropCheck(outsider, t, { source: src, toDay: '2026-11-24', assign: { ...ASSIGN, projects: {} }, fromPerson: null }).reason).toBe('team');
+    const merged = mergeAssignProjects({}, { '61': { canManage: false, teamUserIds: [56] } });
+    expect(dropCheck(outsider, t, { source: src, toDay: '2026-11-24', assign: { ...ASSIGN, projects: merged }, fromPerson: null })).toMatchObject({ ok: true, addsToTeam: false });
   });
 });
 
@@ -179,8 +207,22 @@ describe('dropCheck', () => {
     expect(dropCheck(daniel, task(), { source: lane, toDay: null, assign: ASSIGN, fromPerson: daniel }).ok).toBe(true);
   });
 
-  it('a holiday / rest column refuses the drop', () => {
+  it('a column that is not an org working day refuses the drop (server 400 REASSIGN_INVALID_DAY), even in the own row', () => {
     expect(dropCheck(yair, task(), { source: lane, toDay: '2026-11-24', assign: ASSIGN, fromPerson: daniel, day: { isWorkingDay: false } })).toMatchObject({ ok: false, reason: 'not-working-day' });
+    expect(dropCheck(daniel, task(), { source: lane, toDay: '2026-11-24', assign: ASSIGN, fromPerson: daniel, day: { isWorkingDay: false } })).toMatchObject({ ok: false, reason: 'not-working-day' });
+    expect(dropCheck(yair, task({ assigneeIds: [] }), { source: { fromUserId: null, fromDay: null }, toDay: '2026-11-24', assign: ASSIGN, fromPerson: null, day: { isWorkingDay: false } }).reason).toBe('not-working-day');
+    expect(dropCheck(yair, task(), { source: lane, toDay: '2026-11-24', assign: ASSIGN, fromPerson: daniel, day: { isWorkingDay: true } }).ok).toBe(true);
+  });
+
+  it('B already an assignee: the server only removes A, so no service / Team check and no team add', () => {
+    const shared = task({ assigneeIds: [12, 77] });
+    const outsiderNoQual = person(77, { qualificationIds: [], departmentId: 1 });
+    expect(dropCheck(outsiderNoQual, shared, { source: lane, toDay: '2026-11-24', assign: ASSIGN, fromPerson: daniel })).toEqual({
+      ok: true, reason: null, crossDept: false, needsApproval: false, addsToTeam: false,
+    });
+    // ...but D1 still applies to the merge.
+    const otherDept = person(77, { qualificationIds: [], departmentId: 2 });
+    expect(dropCheck(otherDept, shared, { source: lane, toDay: '2026-11-24', assign: ASSIGN, fromPerson: daniel })).toMatchObject({ ok: true, crossDept: true, needsApproval: true, addsToTeam: false });
   });
 
   it('service not provided: refused', () => {
@@ -212,9 +254,18 @@ describe('dropCheck', () => {
     expect(dropCheck(b, task(), { source: lane, toDay: '2026-11-24', assign: ASSIGN, fromPerson: a }).crossDept).toBe(false);
   });
 
-  it('a tray assign is never cross-department (D4)', () => {
+  it('an unassigned tray chip is never cross-department (D4)', () => {
     const managed: WorkloadAssign = { ...ASSIGN, projects: { '59': { canManage: true, teamUserIds: [56] } } };
     expect(dropCheck(infra, task({ assigneeIds: [] }), { source: { fromUserId: null, fromDay: null }, toDay: '2026-11-24', assign: managed, fromPerson: null })).toMatchObject({ ok: true, crossDept: false, needsApproval: false });
+  });
+
+  it('an overdue tray item belongs to A (fromDay null): a cross-department target waits for approval', () => {
+    const managed: WorkloadAssign = { ...ASSIGN, projects: { '59': { canManage: false, teamUserIds: [12, 34, 56] } } };
+    const overdue = { fromUserId: 12, fromDay: null };
+    expect(dropCheck(infra, task({ overdue: true }), { source: overdue, toDay: '2026-11-24', assign: managed, fromPerson: daniel })).toMatchObject({ ok: true, crossDept: true, needsApproval: true });
+    // Same department: applied directly; back on A on any working day: a date move.
+    expect(dropCheck(yair, task({ overdue: true }), { source: overdue, toDay: '2026-11-24', assign: managed, fromPerson: daniel })).toMatchObject({ ok: true, crossDept: false });
+    expect(dropCheck(daniel, task({ overdue: true }), { source: overdue, toDay: '2026-11-23', assign: managed, fromPerson: daniel })).toMatchObject({ ok: true, crossDept: false });
   });
 
   it('reason words', () => {
@@ -388,6 +439,8 @@ describe('server rows and task patch', () => {
 
 describe('applyTrayMove', () => {
   const tray: WorkloadTray = {
+    range: { from: DAYS[0], to: DAYS[4], today: DAYS[4] },
+    assign: { projects: {} },
     unassigned: { total: 3, items: [task({ id: 900, assigneeIds: [] })] },
     overdue: { total: 1, items: [{ ...task({ id: 901, overdue: true }), assigneeId: 12, assigneeName: 'Daniel Huri' }] },
     approvals: [],
@@ -453,21 +506,49 @@ describe('toast text', () => {
     expect(reassignToastText({ ...pending, reassignment: { ...pending.reassignment, approver: null } }, ctx).description).toContain('until an Admin approves');
   });
 
-  it('error codes map to clear words; others use the server message', () => {
-    for (const code of ['ASSIGNEE_NOT_ON_TEAM', 'SERVICE_NOT_PROVIDED', 'REASSIGN_STALE', 'REASSIGN_PENDING', 'REASSIGN_NOT_ALLOWED', 'UNDO_STALE']) {
-      expect(reassignErrorText(code)).not.toBeNull();
-    }
+  const KEYS = [
+    'ASSIGNEE_NOT_ON_TEAM', 'REASSIGN_NOT_ALLOWED', 'SERVICE_NOT_PROVIDED', 'REASSIGN_INVALID_DAY', 'REASSIGN_STALE',
+    'REASSIGN_PENDING', 'REASSIGN_NOT_PENDING', 'UNDO_EXPIRED', 'UNDO_STALE', 'REASSIGN_LIST_INVALID',
+  ];
+
+  it('every error key has clear words; others use the generic error', () => {
+    for (const key of KEYS) expect(reassignErrorText(key)).not.toBeNull();
     expect(reassignErrorText('BAD_REQUEST')).toBeNull();
     expect(reassignErrorText(null)).toBeNull();
+    expect(reassignErrorText('UNDO_EXPIRED')!.description).toBe('The 15 minutes to undo this move have passed.');
+    expect(reassignErrorText('REASSIGN_STALE')!.description).toContain('tray were refreshed');
+    expect(reassignErrorText('REASSIGN_NOT_PENDING')!.title).toBe('Already decided');
+  });
+
+  it('a 403 is worded by details.reason (PERMISSION_DENIED convention); an expired undo by its reason', () => {
+    expect(reassignErrorKey('PERMISSION_DENIED', { module: 'tasks', reason: 'REASSIGN_NOT_ALLOWED' })).toBe('REASSIGN_NOT_ALLOWED');
+    expect(reassignErrorKey('PERMISSION_DENIED', { module: 'projects', reason: 'ASSIGNEE_NOT_ON_TEAM' })).toBe('ASSIGNEE_NOT_ON_TEAM');
+    // A permission 403 without a reason keeps the generic "No permission" card.
+    expect(reassignErrorKey('PERMISSION_DENIED', null)).toBe('PERMISSION_DENIED');
+    expect(reassignErrorText(reassignErrorKey('PERMISSION_DENIED', {}))).toBeNull();
+    expect(reassignErrorKey('UNDO_STALE', { reason: 'UNDO_EXPIRED' })).toBe('UNDO_EXPIRED');
+    expect(reassignErrorKey('UNDO_STALE', null)).toBe('UNDO_STALE');
+    expect(reassignErrorKey('REASSIGN_STALE', { reason: 'ANY' })).toBe('REASSIGN_STALE');
+    expect(reassignErrorKey(null, null)).toBeNull();
+  });
+
+  it('the approver\'s toast: logged hours and warnings from the approve response', () => {
+    const r = { task: { code: 'CRD-040', name: 'x' }, from: { name: 'Daniel Huri' }, to: { name: 'Gal Haviv' } };
+    expect(approveToastText({ loggedStays: null, warnings: [], addedToTeam: false }, r)).toEqual({ title: 'Approved: CRD-040 moves to Gal Haviv', description: '' });
+    const full = approveToastText(
+      { loggedStays: { userId: 12, name: 'Daniel Huri', hours: 2 }, warnings: [{ code: 'SUCCESSOR_OVERLAP', taskId: 1, message: 'CRD-041 starts on or before the new end date' }], addedToTeam: true },
+      r,
+    );
+    expect(full.description).toBe('Gal Haviv was added to the project team. ⏱ 2h already logged stay with Daniel Huri. CRD-041 starts on or before the new end date.');
   });
 
   it('no long dashes in any text the user sees', () => {
     const texts = [
-      ...['ASSIGNEE_NOT_ON_TEAM', 'SERVICE_NOT_PROVIDED', 'REASSIGN_STALE', 'REASSIGN_PENDING', 'REASSIGN_NOT_ALLOWED', 'UNDO_STALE'].flatMap((c) => Object.values(reassignErrorText(c)!)),
+      ...KEYS.flatMap((c) => Object.values(reassignErrorText(c)!)),
       ...(['same-cell', 'not-working-day', 'service', 'team'] as const).map((r) => dropReasonText(r, task())),
       ...Object.values(reassignToastText({ ...base, result: 'pending' }, ctx)),
     ];
-    for (const t of texts) expect(t).not.toMatch(/[—–]/);
+    for (const t of texts) expect(t).not.toMatch(/[–—]/);
   });
 });
 
@@ -507,7 +588,46 @@ describe('contract adapters', () => {
     expect(tray.overdue.total).toBe(5);
     expect(tray.approvals).toHaveLength(1);
     expect(tray.approvals[0]).toMatchObject({ id: 881, task: { code: 'CRD-040', hours: 3 }, to: { name: 'Gal Haviv' }, toDay: '2026-11-24' });
-    expect(normalizeTray(undefined)).toEqual({ unassigned: { total: 0, items: [] }, overdue: { total: 0, items: [] }, approvals: [] });
+    expect(normalizeTray(undefined)).toEqual({ range: null, unassigned: { total: 0, items: [] }, overdue: { total: 0, items: [] }, approvals: [], assign: { projects: {} } });
+  });
+
+  it('tray: range and assign.projects (same shape as the board\'s)', () => {
+    const tray = normalizeTray({
+      range: { from: '2026-11-22', to: '2026-11-26', today: '2026-11-26' },
+      unassigned: { total: 0, items: [] },
+      overdue: { total: 0, items: [] },
+      approvals: [],
+      assign: { projects: { '61': { canManage: true, teamUserIds: [56, '78'] }, bad: { canManage: true } } },
+    });
+    expect(tray.range).toEqual({ from: '2026-11-22', to: '2026-11-26', today: '2026-11-26' });
+    expect(tray.assign.projects).toEqual({ '61': { canManage: true, teamUserIds: [56, 78] } });
+  });
+
+  it('loggedHoursByUser may be null', () => {
+    const t = normalizeTaskEntry({ id: 1, name: 'x', projectId: 59, loggedUserIds: [12], loggedHoursByUser: null })!;
+    expect(t.loggedHoursByUser).toBeNull();
+    expect(t.loggedUserIds).toEqual([12]);
+    expect(normalizeTaskEntry({ id: 1, name: 'x', projectId: 59 })!.loggedHoursByUser).toBeNull();
+  });
+
+  it('decision responses: approve (full outcome), reject (result + reassignment), undo (no outcome fields)', () => {
+    const approve = normalizeDecisionResponse({
+      result: 'approved',
+      reassignment: { id: 881, status: 'approved', crossDepartment: true, approver: { id: 5, name: 'Amit' }, undoUntil: '2026-11-26T10:30:00Z' },
+      task: { id: 4021, assigneeIds: [56], estimatedStartDate: '2026-11-24', endDate: '2026-11-24', dueDateOverridden: true },
+      people: [{ id: 12, days: [] }, { id: 56, days: [] }],
+      changed: { assignee: true, dates: true },
+      addedToTeam: true,
+      loggedStays: { userId: 12, name: 'Daniel Huri', hours: 1.5 },
+      warnings: [{ code: 'PREDECESSOR_OVERLAP', taskId: 4019, message: 'CRD-039 ends after the new start' }],
+    });
+    expect(approve).toMatchObject({ result: 'approved', reassignment: { id: 881, status: 'approved' }, task: { assigneeIds: [56] }, addedToTeam: true, loggedStays: { hours: 1.5 } });
+    expect(approve.people).toHaveLength(2);
+    expect(approve.warnings).toHaveLength(1);
+    const reject = normalizeDecisionResponse({ result: 'rejected', reassignment: { id: 881, status: 'rejected' } });
+    expect(reject).toMatchObject({ result: 'rejected', reassignment: { id: 881 }, task: null, people: [], loggedStays: null, warnings: [] });
+    const undo = normalizeDecisionResponse({ result: 'cancelled', reassignment: { id: 881, status: 'cancelled' }, task: null, people: [] });
+    expect(undo).toMatchObject({ result: 'cancelled', addedToTeam: false, changed: { assignee: false, dates: false } });
   });
 
   it('reassign response: defaults and loggedStays', () => {

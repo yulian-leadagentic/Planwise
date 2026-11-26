@@ -93,3 +93,25 @@ export function withSavedServiceOption<T extends { id: number; name: string }>(
   list.push({ id, name: savedName?.trim() || `Service #${id}` });
   return list;
 }
+
+/**
+ * QA6 P4 (PR-063): clear words for the 400s of `PATCH /phases/:id
+ * { requiredProfessionIds }` (Templates › Services, Required
+ * qualifications). Null = the generic error.
+ */
+export function qualificationSaveError(code: string | null): { title: string; description: string } | null {
+  switch (code) {
+    case 'PROFESSION_NOT_FOUND':
+      return {
+        title: 'A qualification no longer exists',
+        description: 'One of the selected qualifications was removed from the catalog. Reload the page and choose again.',
+      };
+    case 'PROFESSION_IDS_INVALID':
+      return {
+        title: 'The qualification list is not valid',
+        description: 'Choose qualifications from the list, or none for "anyone".',
+      };
+    default:
+      return null;
+  }
+}

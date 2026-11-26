@@ -1,12 +1,14 @@
 import { useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import client from '@/api/client';
-import { apiErrorCode, notify } from '@/lib/notify';
+import { apiErrorCode, apiErrorDetails, notify } from '@/lib/notify';
 import { useAuthStore } from '@/stores/auth.store';
 import {
   applyOptimisticMove,
   applyPeopleRows,
   applyTaskPatch,
   applyTrayMove,
+  approveToastText,
+  reassignErrorKey,
   reassignErrorText,
   reassignToastText,
   type DragOrigin,
@@ -30,7 +32,10 @@ import type { TeamWorkload } from './workload-range';
  *  - `POST /tasks/:id/reassign`: optimistic board + tray, rollback on
  *    error, then the server's rows for the two people, a toast with Undo,
  *    and `['workload']` refetched (team + tray).
- *  - `POST /workload/reassignments/:id/undo | approve | reject`.
+ *  - `POST /workload/reassignments/:id/undo | approve | reject` (all 200).
+ * Errors are worded by `reassignErrorKey` (a 403 is PERMISSION_DENIED
+ * with `details.reason`); every write refetches `['workload']`, so a
+ * stale / already-decided answer also refreshes the board and the tray.
  */
 
 export type MoveVars = {
@@ -50,9 +55,9 @@ const UNDO_TOAST_MS = 12_000;
 const unwrap = (r: { data: any }) => r.data?.data ?? r.data;
 
 function showError(err: unknown, fallback: string) {
-  const code = apiErrorCode(err);
-  const text = reassignErrorText(code);
-  if (text) notify.warning(text.title, { description: text.description, code: code ?? undefined, duration: 8000 });
+  const key = reassignErrorKey(apiErrorCode(err), apiErrorDetails(err));
+  const text = reassignErrorText(key);
+  if (text) notify.warning(text.title, { description: text.description, code: key ?? undefined, duration: 8000 });
   else notify.apiError(err, fallback);
 }
 
@@ -132,15 +137,20 @@ export function useWorkloadAssign({ view, teamKey }: { view: ReassignView | null
   });
 
   const decide = useMutation({
+    // Approve takes an optional `{ view }` so its `people` rows match the
+    // board week; reject takes an optional `{ note }`.
     mutationFn: ({ r, decision }: { r: ReassignmentRequest; decision: 'approve' | 'reject' }) =>
       client
-        .post(`/workload/reassignments/${r.id}/${decision}`, decision === 'reject' ? {} : undefined)
+        .post(`/workload/reassignments/${r.id}/${decision}`, decision === 'approve' ? (view ? { view } : {}) : {})
         .then((res) => normalizeDecisionResponse(unwrap(res))),
     onSuccess: (res, { r, decision }) => {
-      if (decision === 'approve') applyServer(teamKey, res, r.task.id, null);
-      const label = r.task.code ?? r.task.name;
-      if (decision === 'approve') notify.success(`Approved: ${label} moves to ${r.to?.name ?? 'the new person'}`);
-      else notify.success(`Rejected: ${label} stays with ${r.from?.name ?? 'the current person'}`);
+      if (decision === 'approve') {
+        applyServer(teamKey, res, r.task.id, null);
+        const { title, description } = approveToastText(res, r);
+        notify.success(title, { description: description || undefined });
+      } else {
+        notify.success(`Rejected: ${r.task.code ?? r.task.name} stays with ${r.from?.name ?? 'the current person'}`);
+      }
     },
     onError: (err, { decision }) => {
       if (decision === 'approve' && apiErrorCode(err) === 'REASSIGN_STALE') {

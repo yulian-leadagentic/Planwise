@@ -39,21 +39,44 @@ export type DragSource = {
 };
 
 /**
- * May the caller pick this chip up? Masked (no entry), pending, and
- * personal chips never move (R8). Otherwise the project-manage flag on
- * the task (Admin / leader) or the manager-chain flag on the person the
- * chip belongs to. An unassigned tray chip has no person: leader / Admin
- * only.
+ * May the caller pick this chip up? The server's rule:
+ * `pending == null && projectId != null && (tasks[id].canDrag || people[lane].canDragFrom)`.
+ * Masked chips (no entry) never move. `canDrag` is the project-manage
+ * part (Admin / leader, already false for pending and personal tasks);
+ * `canDragFrom` is the manager chain of the person the chip belongs to.
+ * An unassigned tray chip has no person: leader / Admin only.
+ * (`assign.canAssign` is not a gate: it covers board chips only, and a
+ * tray task can be draggable while no board chip is.)
  */
 export function canDragChip(
   task: WorkloadTaskEntry | null | undefined,
   person: Pick<TeamWorkloadPerson, 'canDragFrom'> | null | undefined,
-  assign: Pick<WorkloadAssign, 'canAssign'> | null | undefined,
 ): boolean {
-  if (!task || !assign?.canAssign) return false;
+  if (!task) return false;
   if (task.pending) return false;
   if (isPersonalTask(task)) return false;
   return task.canDrag || person?.canDragFrom === true;
+}
+
+/**
+ * The project Teams the drop check reads: the board's `assign.projects`
+ * plus the tray's (a tray task's project may be missing from the board's
+ * index). Same shape; on overlap the Team lists are joined and either
+ * `canManage` counts.
+ */
+export function mergeAssignProjects(
+  board: WorkloadAssign['projects'],
+  tray: WorkloadAssign['projects'] | null | undefined,
+): WorkloadAssign['projects'] {
+  if (!tray || Object.keys(tray).length === 0) return board;
+  const out: WorkloadAssign['projects'] = { ...tray };
+  for (const [pid, p] of Object.entries(board)) {
+    const t = out[pid];
+    out[pid] = t
+      ? { canManage: p.canManage || t.canManage, teamUserIds: [...new Set([...p.teamUserIds, ...t.teamUserIds])] }
+      : p;
+  }
+  return out;
 }
 
 // ─── Drop rules ─────────────────────────────────────────────────────────
@@ -86,7 +109,11 @@ export type DropReason = 'same-cell' | 'not-working-day' | 'service' | 'team';
 export type DropCheck = {
   ok: boolean;
   reason: DropReason | null;
-  /** Cross-department move (D1). Never for a tray assign (D4). */
+  /**
+   * Cross-department move (D1): a move from A (a lane chip, or an overdue
+   * tray item, which belongs to A) to someone in another department. Never
+   * for an unassigned tray chip or a drop on the tray (D4).
+   */
   crossDept: boolean;
   /** Cross-department and the caller is not Admin / in the target's chain (D3). */
   needsApproval: boolean;
@@ -108,13 +135,16 @@ export type DropContext = {
 const BLOCK = (reason: DropReason): DropCheck => ({ ok: false, reason, crossDept: false, needsApproval: false, addsToTeam: false });
 
 /**
- * Can `task` be dropped on `person` (on `ctx.toDay`)? A date move inside
- * the same row only needs a working day. A move to someone else also
- * needs the service and the project Team (locked spec › Permissions).
+ * Can `task` be dropped on `person` (on `ctx.toDay`)? The drop column
+ * must be an org working day (server 400 REASSIGN_INVALID_DAY). A date
+ * move inside the same row needs nothing else. A move to someone else
+ * also needs the service and the project Team (locked spec ›
+ * Permissions), unless he is already an assignee of the task: then the
+ * server only removes A and checks nothing for him.
  */
 export function dropCheck(
   person: Pick<TeamWorkloadPerson, 'id' | 'departmentId' | 'qualificationIds' | 'canDragFrom'>,
-  task: Pick<WorkloadTaskEntry, 'projectId' | 'service' | 'canDrag'>,
+  task: Pick<WorkloadTaskEntry, 'projectId' | 'service' | 'canDrag' | 'assigneeIds'>,
   ctx: DropContext,
 ): DropCheck {
   const samePerson = ctx.source.fromUserId != null && ctx.source.fromUserId === person.id;
@@ -124,15 +154,20 @@ export function dropCheck(
   }
   if (samePerson) return { ok: true, reason: null, crossDept: false, needsApproval: false, addsToTeam: false };
 
-  if (!providesService(person, task, ctx.assign.services)) return BLOCK('service');
+  const alreadyAssigned = task.assigneeIds.includes(person.id);
+  let onTeam = true;
+  if (!alreadyAssigned) {
+    if (!providesService(person, task, ctx.assign.services)) return BLOCK('service');
+    const project = task.projectId == null ? undefined : ctx.assign.projects[String(task.projectId)];
+    onTeam = project?.teamUserIds.includes(person.id) ?? false;
+    // A project missing from both blocks: the task's own manage flag decides.
+    const canManage = project?.canManage ?? task.canDrag;
+    if (!onTeam && !canManage) return BLOCK('team');
+  }
 
-  const project = task.projectId == null ? undefined : ctx.assign.projects[String(task.projectId)];
-  const onTeam = project?.teamUserIds.includes(person.id) ?? false;
-  // A project missing from the block: the task's own manage flag decides.
-  const canManage = project?.canManage ?? task.canDrag;
-  if (!onTeam && !canManage) return BLOCK('team');
-
-  const crossDept = ctx.fromPerson != null && departmentKey(ctx.fromPerson) !== departmentKey(person);
+  // D1 applies to every move from A to B (the merge case included); D4:
+  // an unassigned tray chip (no A) never waits.
+  const crossDept = ctx.source.fromUserId != null && ctx.fromPerson != null && departmentKey(ctx.fromPerson) !== departmentKey(person);
   return {
     ok: true,
     reason: null,
@@ -498,8 +533,15 @@ export function reassignToastText(res: Pick<ReassignResponse, 'result' | 'reassi
   if (res.result === 'applied' && res.addedToTeam && ctx.toName) {
     notes.push(`${ctx.toName} was added to the project team.`);
   }
+  notes.push(...outcomeNotes(res, ctx.fromName));
+  return { title, description: notes.join(' ') };
+}
+
+/** ⏱ logged hours that stay with A, and the dependency warnings. */
+function outcomeNotes(res: Pick<ReassignResponse, 'loggedStays' | 'warnings'>, fromName: string | null): string[] {
+  const notes: string[] = [];
   if (res.loggedStays) {
-    const who = res.loggedStays.name || ctx.fromName || 'the previous person';
+    const who = res.loggedStays.name || fromName || 'the previous person';
     notes.push(
       res.loggedStays.hours != null
         ? `⏱ ${round2(res.loggedStays.hours)}h already logged stay with ${who}.`
@@ -507,24 +549,58 @@ export function reassignToastText(res: Pick<ReassignResponse, 'result' | 'reassi
     );
   }
   for (const w of res.warnings) notes.push(w.message.endsWith('.') ? w.message : `${w.message}.`);
-  return { title, description: notes.join(' ') };
+  return notes;
 }
 
-/** Clear words for the reassign / undo error codes; null = use the server's message. */
-export function reassignErrorText(code: string | null): { title: string; description: string } | null {
-  switch (code) {
+/** The approver's toast after Approve (the response carries the same outcome fields as a move). */
+export function approveToastText(
+  res: Pick<ReassignResponse, 'loggedStays' | 'warnings' | 'addedToTeam'>,
+  r: { task: { code: string | null; name: string }; from: { name: string } | null; to: { name: string } | null },
+): { title: string; description: string } {
+  const label = r.task.code ?? r.task.name;
+  const notes: string[] = [];
+  if (res.addedToTeam && r.to) notes.push(`${r.to.name} was added to the project team.`);
+  notes.push(...outcomeNotes(res, r.from?.name ?? null));
+  return { title: `Approved: ${label} moves to ${r.to?.name ?? 'the new person'}`, description: notes.join(' ') };
+}
+
+/**
+ * The key an error is worded by. A permission 403 keeps the API's
+ * convention, `code: PERMISSION_DENIED` with `details.reason`
+ * (REASSIGN_NOT_ALLOWED, ASSIGNEE_NOT_ON_TEAM); an expired undo is
+ * `UNDO_STALE` with `details.reason: UNDO_EXPIRED`. Everything else is the
+ * envelope's `error.code`.
+ */
+export function reassignErrorKey(code: string | null, details: unknown): string | null {
+  const reason = details && typeof details === 'object' ? (details as Record<string, unknown>).reason : undefined;
+  if (code === 'PERMISSION_DENIED') return typeof reason === 'string' && reason ? reason : code;
+  if (code === 'UNDO_STALE' && reason === 'UNDO_EXPIRED') return 'UNDO_EXPIRED';
+  return code;
+}
+
+/** Clear words for a reassign / approve / reject / undo error key (see reassignErrorKey); null = the generic error. */
+export function reassignErrorText(key: string | null): { title: string; description: string } | null {
+  switch (key) {
     case 'ASSIGNEE_NOT_ON_TEAM':
       return { title: 'Not on the project team', description: 'Only the project leader or an Admin can give the task to someone outside the project team.' };
+    case 'REASSIGN_NOT_ALLOWED':
+      return { title: 'You cannot move this task', description: 'Only an Admin, the project leader or the person\'s manager can move it, and only the person who moved it (or an Admin) can undo it.' };
     case 'SERVICE_NOT_PROVIDED':
       return { title: 'Does not provide this service', description: 'This person has none of the qualifications the task\'s service requires.' };
+    case 'REASSIGN_INVALID_DAY':
+      return { title: 'Not a working day', description: 'Drop the task on a working day.' };
     case 'REASSIGN_STALE':
-      return { title: 'The task changed in the meantime', description: 'The board was refreshed. Try the move again.' };
+      return { title: 'The task changed in the meantime', description: 'Someone else moved or assigned it. The board and the tray were refreshed. Try again if it is still needed.' };
     case 'REASSIGN_PENDING':
       return { title: 'Already waiting for approval', description: 'This task has a move waiting for approval. Decide or cancel that one first.' };
-    case 'REASSIGN_NOT_ALLOWED':
-      return { title: 'You cannot move this task', description: 'Only an Admin, the project leader or the person\'s manager can move it.' };
+    case 'REASSIGN_NOT_PENDING':
+      return { title: 'Already decided', description: 'This request was already approved, rejected or cancelled. The list was refreshed.' };
+    case 'UNDO_EXPIRED':
+      return { title: 'Too late to undo', description: 'The 15 minutes to undo this move have passed.' };
     case 'UNDO_STALE':
-      return { title: 'Cannot undo', description: 'The task changed after the move, or more than 15 minutes passed.' };
+      return { title: 'Cannot undo', description: 'The task changed after the move, so it can no longer be undone. The board was refreshed.' };
+    case 'REASSIGN_LIST_INVALID':
+      return { title: 'Could not load the move requests', description: 'The request list was asked for with a filter the server does not accept.' };
     default:
       return null;
   }

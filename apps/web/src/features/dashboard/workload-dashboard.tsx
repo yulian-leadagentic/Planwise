@@ -28,6 +28,7 @@ import {
   dayLabel,
   dropCheck,
   dropReasonText,
+  mergeAssignProjects,
   overloadCausing,
   previewPct,
   reassignBody,
@@ -175,8 +176,16 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
 
   const canDragFor = useCallback(
     (task: WorkloadTaskEntry | null, fromUserId: number | null) =>
-      canDragChip(task, fromUserId == null ? null : peopleById.get(fromUserId) ?? null, assign),
-    [peopleById, assign],
+      canDragChip(task, fromUserId == null ? null : peopleById.get(fromUserId) ?? null),
+    [peopleById],
+  );
+
+  // A tray task's project may be missing from the board's index: the drop
+  // check reads both `assign.projects` blocks.
+  const trayProjects = trayQuery.data?.assign.projects;
+  const dropAssign = useMemo(
+    () => ({ projects: mergeAssignProjects(assign.projects, trayProjects), services: assign.services }),
+    [assign.projects, assign.services, trayProjects],
   );
 
   const checkFor = useCallback(
@@ -184,11 +193,11 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
       dropCheck(p, a.task, {
         source: a.source,
         toDay,
-        assign,
+        assign: dropAssign,
         fromPerson: a.source.fromUserId != null ? peopleById.get(a.source.fromUserId) ?? null : null,
         day: toDay ? dayByDate.get(toDay) ?? null : null,
       }),
-    [assign, peopleById, dayByDate],
+    [dropAssign, peopleById, dayByDate],
   );
 
   /** Hours the dragged chip would add to `date` (a tray chip lands by the D6 rule). */
