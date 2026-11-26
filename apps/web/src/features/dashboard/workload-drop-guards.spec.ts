@@ -7,13 +7,15 @@
  * Guard 1: a pointer drop acts only on the cell under the released
  * pointer; when dnd-kit's `over` is another target, nothing is written
  * and the user is told the board moved.
+ * Guard 2: droppables are re-measured during a drag, and auto-scroll
+ * only runs at the vertical edges of the scroller.
  */
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DndContext } from '@dnd-kit/core';
+import { DndContext, MeasuringStrategy } from '@dnd-kit/core';
 import { describe, expect, it, vi } from 'vitest';
 import type { DropCheck } from './workload-assign';
-import { DropTd, type DropTarget } from './parts/workload-dnd';
+import { DropTd, WORKLOAD_AUTO_SCROLL, WORKLOAD_MEASURING, type DropTarget } from './parts/workload-dnd';
 import { WorkloadTray } from './parts/workload-tray';
 import {
   BOARD_MOVED_TEXT,
@@ -206,6 +208,27 @@ describe('workload drop guard 1 · handleDrop writes only on the target under th
     const fx = effects();
     const over = cell(ILAY, TUE);
     expect(handleDrop({ source: lane, over, pointer: over, checkCell: () => ok() }, fx)).toBe('submit');
+  });
+});
+
+describe('workload drop guard 2 · measuring and auto-scroll of the DndContext', () => {
+  it('droppables are re-measured during a drag (numeric frequency), never while idle', () => {
+    expect(WORKLOAD_MEASURING.droppable?.strategy).toBe(MeasuringStrategy.WhileDragging);
+    expect(typeof WORKLOAD_MEASURING.droppable?.frequency).toBe('number');
+    expect(WORKLOAD_MEASURING.droppable?.frequency).toBeLessThanOrEqual(150);
+  });
+
+  it('auto-scroll: off on the x axis, only the outer 10% on the y axis, at half speed', () => {
+    expect(WORKLOAD_AUTO_SCROLL.enabled).not.toBe(false);
+    expect(WORKLOAD_AUTO_SCROLL.threshold).toEqual({ x: 0, y: 0.1 });
+    expect(WORKLOAD_AUTO_SCROLL.acceleration).toBe(5);
+  });
+
+  it('on an 850 px scroller the band is 85 px: a chip 150 px below the top edge no longer scrolls the page', () => {
+    const band = 850 * (WORKLOAD_AUTO_SCROLL.threshold?.y ?? 0.2);
+    expect(band).toBe(85);
+    expect(150).toBeGreaterThan(band);
+    expect(150).toBeLessThan(850 * 0.2); // inside dnd-kit's default 20% band
   });
 });
 

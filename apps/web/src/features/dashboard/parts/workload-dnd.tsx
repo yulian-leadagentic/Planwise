@@ -1,14 +1,17 @@
 import type { ReactNode, TdHTMLAttributes } from 'react';
 import {
   KeyboardCode,
+  MeasuringStrategy,
   closestCenter,
   closestCorners,
   pointerWithin,
   useDraggable,
   useDroppable,
+  type AutoScrollOptions,
   type CollisionDetection,
   type DroppableContainer,
   type KeyboardCoordinateGetter,
+  type MeasuringConfiguration,
 } from '@dnd-kit/core';
 import { cn } from '@/lib/utils';
 import type { DragSource } from '../workload-assign';
@@ -28,6 +31,48 @@ export type DropTarget = { kind: 'cell'; userId: number; day: string } | { kind:
 export type DragData = { source: DragSource; task: WorkloadTaskEntry };
 
 export const dragId = (s: DragSource) => `chip:${s.origin}:${s.taskId}:${s.fromUserId ?? 'none'}:${s.fromDay ?? 'none'}`;
+
+/**
+ * Round 3 (26.11) · re-measure the droppables while dragging.
+ *
+ * dnd-kit 6.3's default (strategy WhileDragging, frequency "optimized")
+ * measures every droppable once when a drag starts, and again only when
+ * the set of droppables changes. Scroll is covered without re-measuring:
+ * a droppable's rect subtracts the scroll of its scrollable ancestors
+ * each time it is read. A layout shift that is not a scroll (something
+ * above the board growing or shrinking) is not covered, so `over` could
+ * stay on the cell that USED to be under the pointer. `Always` alone does
+ * not fix that: it only adds measuring before a drag (every droppable, on
+ * every change, while idle). A numeric frequency does: every droppable is
+ * re-measured at most every 100 ms while the pointer moves, and only
+ * during a drag. A shift under a still pointer is caught by the drop
+ * check (guard 1).
+ */
+export const WORKLOAD_MEASURING: MeasuringConfiguration = {
+  droppable: { strategy: MeasuringStrategy.WhileDragging, frequency: 100 },
+};
+
+/**
+ * Round 3 (26.11) · auto-scroll only at the scroller's edges.
+ *
+ * The default scrolls a container once the pointer is within 20% of its
+ * edge, at up to 10 px every 5 ms. Here the vertical scroller is the
+ * app's <main> (about 850 px tall on a laptop), so the top and bottom
+ * 170 px of the visible board were scroll bands, and the table's own
+ * horizontal scroller (overflow-x-auto) had 20% bands over its first and
+ * last columns. A chip picked up inside the top band scrolls the page as
+ * soon as the pointer moves up at all, at about 1 px per ms halfway into
+ * the band, which fits the 380 px in 400 ms measured on staging.
+ *   - x: 0 turns horizontal auto-scroll off: day columns never slide under
+ *     the pointer (shift + wheel still scrolls the table).
+ *   - y: 0.1 keeps vertical auto-scroll for long boards, within 10% of the
+ *     top / bottom edge only (about 85 px).
+ *   - acceleration 5 halves the speed (at most 1000 px/s at the very edge).
+ */
+export const WORKLOAD_AUTO_SCROLL: AutoScrollOptions = {
+  threshold: { x: 0, y: 0.1 },
+  acceleration: 5,
+};
 
 /** Pointer: the droppable under the pointer, or none. Keyboard: the closest one. */
 export const workloadCollision: CollisionDetection = (args) =>

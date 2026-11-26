@@ -21,7 +21,16 @@ import { useDrawerRoute } from '@/components/nav/use-drawer-route';
 import { OpsErrorBanner, opsErrorMessage } from './parts/ops-shared';
 import { WorkloadDayHeaders } from './parts/workload-day-headers';
 import { TaskChip, chipTitle } from './parts/workload-chip';
-import { DraggableChip, DropTd, workloadCollision, workloadKeyboardCoordinates, type DragData, type DropTarget } from './parts/workload-dnd';
+import {
+  DraggableChip,
+  DropTd,
+  WORKLOAD_AUTO_SCROLL,
+  WORKLOAD_MEASURING,
+  workloadCollision,
+  workloadKeyboardCoordinates,
+  type DragData,
+  type DropTarget,
+} from './parts/workload-dnd';
 import { CellPreview, WorkloadPersonCell, type RowReason } from './parts/workload-drag-feedback';
 import { WorkloadTray } from './parts/workload-tray';
 import {
@@ -534,6 +543,8 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
       key={dndKey}
       sensors={sensors}
       collisionDetection={workloadCollision}
+      measuring={WORKLOAD_MEASURING}
+      autoScroll={WORKLOAD_AUTO_SCROLL}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragCancel={onDragCancel}
