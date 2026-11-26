@@ -27,7 +27,10 @@
  * The one with the shortest name stays (then the most used, then the
  * oldest); the others are merged into it when something points at them
  * (every FK re-pointed, then the row deactivated) or just deactivated
- * when nothing does.
+ * when nothing does. "Something" includes soft-deleted rows (review 2):
+ * a duplicate only a deleted task points at is still merged, so that
+ * task shows the row that stays if it is ever restored. The usage shows
+ * the deleted references apart (`deleted*` counts).
  *
  * Nothing is ever deleted.
  */
@@ -60,6 +63,12 @@ export interface PhaseUsage {
   projectDeliverables: number;
   /** Distinct projects with a live task or project deliverable on it. */
   projects: number;
+  /** Soft-deleted tasks (`Task.phaseId`, `deletedAt` set). A merge re-points them too. */
+  deletedTasks: number;
+  /** Soft-deleted templates (`Template.phaseId`, `deletedAt` set). */
+  deletedTemplates: number;
+  /** Soft-deleted project deliverables (`ProjectDeliverable.serviceId`, `deletedAt` set). */
+  deletedProjectDeliverables: number;
 }
 
 export const EMPTY_USAGE: PhaseUsage = {
@@ -69,10 +78,19 @@ export const EMPTY_USAGE: PhaseUsage = {
   templateTasks: 0,
   projectDeliverables: 0,
   projects: 0,
+  deletedTasks: 0,
+  deletedTemplates: 0,
+  deletedProjectDeliverables: 0,
 };
 
+/** Live references only: what "the most used" (the keeper's tie-break) counts. */
 export function usageTotal(u: PhaseUsage): number {
   return u.tasks + u.templates + u.taskCatalogItems + u.templateTasks + u.projectDeliverables;
+}
+
+/** Every reference, live or soft-deleted: any one of them makes a duplicate a merge (review 2). */
+export function referenceTotal(u: PhaseUsage): number {
+  return usageTotal(u) + (u.deletedTasks ?? 0) + (u.deletedTemplates ?? 0) + (u.deletedProjectDeliverables ?? 0);
 }
 
 export type CleanupAction = 'mark_phase' | 'merge' | 'deactivate';
@@ -115,6 +133,8 @@ export interface ServiceTypeUsage {
   projectCategories: number;
   /** Distinct projects with a live task or a project category on it. */
   projects: number;
+  /** Soft-deleted tasks (`Task.serviceTypeId`, `deletedAt` set). A merge re-points them too. */
+  deletedTasks: number;
 }
 
 export const EMPTY_SERVICE_TYPE_USAGE: ServiceTypeUsage = {
@@ -124,10 +144,17 @@ export const EMPTY_SERVICE_TYPE_USAGE: ServiceTypeUsage = {
   zoneLinks: 0,
   projectCategories: 0,
   projects: 0,
+  deletedTasks: 0,
 };
 
+/** Live references only: what "the most used" (the keeper's tie-break) counts. */
 export function serviceTypeUsageTotal(u: ServiceTypeUsage): number {
   return u.tasks + u.taskCatalogItems + u.templateTasks + u.zoneLinks + u.projectCategories;
+}
+
+/** Every reference, live or soft-deleted: any one of them makes a duplicate a merge (review 2). */
+export function serviceTypeReferenceTotal(u: ServiceTypeUsage): number {
+  return serviceTypeUsageTotal(u) + (u.deletedTasks ?? 0);
 }
 
 export type ServiceTypeCleanupAction = 'merge' | 'deactivate';
@@ -302,7 +329,7 @@ export function planServicePhaseCleanup(
 
   const candidates = new Map<number, CleanupCandidate>();
   for (const { row: r, keeper, reason } of findDuplicates(live, (id) => usageTotal(usage(id)), 'service')) {
-    const used = usageTotal(usage(r.id)) > 0;
+    const used = referenceTotal(usage(r.id)) > 0;
     candidates.set(r.id, {
       table: 'phases',
       id: r.id,
@@ -361,7 +388,7 @@ export function planServiceTypeDuplicates(
       kindGuess: 'duplicate_service',
       reason,
       usage: usage(r.id),
-      action: serviceTypeUsageTotal(usage(r.id)) > 0 ? 'merge' : 'deactivate',
+      action: serviceTypeReferenceTotal(usage(r.id)) > 0 ? 'merge' : 'deactivate',
       mergeInto: { id: keeper.id, name: keeper.name, code: keeper.code ?? null },
       linksAlreadyOnKeeper: null,
     }))

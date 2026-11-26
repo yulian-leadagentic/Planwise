@@ -42,8 +42,11 @@ import {
   type PhaseUsage,
   planServicePhaseCleanup,
   planServiceTypeDuplicates,
+  referenceTotal,
   repeatedLastWord,
+  serviceTypeReferenceTotal,
   type ServiceTypeUsage,
+  usageTotal,
 } from './qa6-service-phase-cleanup.plan';
 import {
   Qa6ServicePhaseCleanupService,
@@ -142,6 +145,25 @@ describe('PR-069 · plan', () => {
       mergeInto: { id: 14 },
       reason: 'Same service as #14 "Clash  detection": the same name once case, spaces and punctuation are ignored.',
     });
+  });
+
+  it('review 2: a duplicate only soft-deleted rows point at is merged, not just deactivated; the keeper is still chosen on live use', () => {
+    for (const deleted of [{ deletedTasks: 1 }, { deletedTemplates: 2 }, { deletedProjectDeliverables: 1 }]) {
+      const { candidates } = planServicePhaseCleanup(stagingLikeRows(), new Map([...u, [15, usage(deleted)]]));
+      expect(candidates.find((c) => c.id === 15)).toMatchObject({ action: 'merge', mergeInto: { id: 14 }, usage: { tasks: 0, ...deleted } });
+    }
+    expect(referenceTotal(usage({ tasks: 1, deletedTasks: 2, deletedTemplates: 3, deletedProjectDeliverables: 4 }))).toBe(10);
+    expect(usageTotal(usage({ tasks: 1, deletedTasks: 2, deletedTemplates: 3, deletedProjectDeliverables: 4 }))).toBe(1);
+    // service_types: the same.
+    const st = planServiceTypeDuplicates(
+      [
+        { id: 15, name: 'Structural', code: null },
+        { id: 16, name: 'Structural Structural', code: null },
+      ],
+      new Map([[16, stUsage({ deletedTasks: 1 })]]),
+    );
+    expect(st.candidates[0]).toMatchObject({ id: 16, action: 'merge', mergeInto: { id: 15 }, usage: { tasks: 0, deletedTasks: 1 } });
+    expect(serviceTypeReferenceTotal(stUsage({ zoneLinks: 1, deletedTasks: 2 }))).toBe(3);
   });
 
   it('real services stay out of the list', () => {
@@ -553,6 +575,9 @@ describe('PR-069 · run', () => {
         templateTasks: 2, // template task + zone task
         projectDeliverables: 1,
         projects: 2,
+        deletedTasks: 1, // shown apart (review 2)
+        deletedTemplates: 0,
+        deletedProjectDeliverables: 0,
       },
     });
     expect(res.candidates.find((c) => c.table === 'phases' && c.id === 2)!.usage).toMatchObject({
@@ -574,6 +599,7 @@ describe('PR-069 · run', () => {
         zoneLinks: 2,
         projectCategories: 2,
         projects: 2, // 100 (task, category) and 102 (category)
+        deletedTasks: 1, // shown apart (review 2)
       },
       action: 'merge',
       mergeInto: { id: 13, name: 'BIM Coordination', code: 'BC' },
@@ -737,6 +763,67 @@ describe('PR-069 · run', () => {
     // The phases table is not touched by a service_types approval.
     expect(tx.phase.update).not.toHaveBeenCalled();
     expect(db.tasks.find((t) => t.id === 3)!.phaseId).toBe(11);
+  });
+
+  it('review 2: a duplicate only soft-deleted rows point at is a merge (both tables); the run re-points those rows', async () => {
+    const db = seedDb();
+    const gone = new Date('2026-10-01T00:00:00Z');
+    db.tasks.push({ id: 6, phaseId: 15, serviceTypeId: 16, projectId: 101, deletedAt: gone });
+    db.templates.push({ id: 43, code: 'OLD', phaseId: 15, deletedAt: gone });
+    db.projectDeliverables.push({ id: 2, projectId: 101, serviceId: 15, deletedAt: gone });
+    const { prisma } = makePrisma(db);
+    const svc = new Qa6ServicePhaseCleanupService(prisma);
+
+    const dry = await svc.run({ dryRun: true });
+    expect(dry.candidates.find((c) => c.table === 'phases' && c.id === 15)).toMatchObject({
+      action: 'merge',
+      mergeInto: { id: 14 },
+      // Nothing live points at it; the deleted references are shown apart.
+      usage: usage({ deletedTasks: 1, deletedTemplates: 1, deletedProjectDeliverables: 1 }),
+    });
+    expect(dry.candidates.find((c) => c.table === 'service_types' && c.id === 16)).toMatchObject({
+      action: 'merge',
+      mergeInto: { id: 15 },
+      usage: stUsage({ deletedTasks: 1 }),
+      linksAlreadyOnKeeper: { zoneLinks: 0, projectCategories: 0 },
+    });
+
+    const res = await svc.run({
+      dryRun: false,
+      approved: [
+        { table: 'phases', id: 15, action: 'merge', mergeInto: 14 },
+        { table: 'service_types', id: 16, action: 'merge', mergeInto: 15 },
+      ],
+    });
+    expect(res.applied).toEqual([
+      {
+        table: 'phases',
+        id: 15,
+        action: 'merge',
+        mergeInto: 14,
+        repointed: { tasks: 1, templates: 1, templateTasks: 0, templateZoneTasks: 0, projectDeliverables: 1 },
+      },
+      {
+        table: 'service_types',
+        id: 16,
+        action: 'merge',
+        mergeInto: 15,
+        repointed: {
+          tasks: 1,
+          templateTasks: 0,
+          templateZoneTasks: 0,
+          zoneLinks: 0,
+          zoneLinksAlreadyOnKeeper: 0,
+          projectCategories: 0,
+          projectCategoriesAlreadyOnKeeper: 0,
+        },
+      },
+    ]);
+    expect(db.tasks.find((t) => t.id === 6)).toMatchObject({ phaseId: 14, serviceTypeId: 15, deletedAt: gone });
+    expect(db.templates.find((t) => t.id === 43)!.phaseId).toBe(14);
+    expect(db.projectDeliverables.find((p) => p.id === 2)!.serviceId).toBe(14);
+    expect(db.phases.find((p) => p.id === 15)!.isActive).toBe(false);
+    expect(db.serviceTypes.find((st) => st.id === 16)!.isActive).toBe(false);
   });
 
   it('an approved entry without table is a phases row: it never acts on the service_types row with that id', async () => {

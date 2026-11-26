@@ -56,7 +56,11 @@ import {
  *                      instead of moved (it holds nothing else), and the
  *                      dry-run shows how many (`linksAlreadyOnKeeper`).
  *     A task that pointed at a merged row shows the same service through
- *     the row that stays.
+ *     the row that stays. Merge vs deactivate counts soft-deleted
+ *     references too (review 2): a duplicate only deleted rows point at
+ *     is merged, so a restored row never points at an inactive one. The
+ *     dry-run usage lists those apart (`deletedTasks`, `deletedTemplates`,
+ *     `deletedProjectDeliverables`; `deletedTasks` for service types).
  *   • ONE TRANSACTION for the whole approved set, both tables.
  *   • IDEMPOTENT. Marked / deactivated rows are no longer candidates.
  */
@@ -290,7 +294,19 @@ export class Qa6ServicePhaseCleanupService {
     for (const id of ids) out.set(id, { ...EMPTY_USAGE });
     if (ids.length === 0) return out;
 
-    const [tasks, templates, catalogItems, templateTasks, zoneTasks, deliverables, taskProjects, pdProjects] =
+    const [
+      tasks,
+      templates,
+      catalogItems,
+      templateTasks,
+      zoneTasks,
+      deliverables,
+      taskProjects,
+      pdProjects,
+      deletedTasks,
+      deletedTemplates,
+      deletedDeliverables,
+    ] =
       await Promise.all([
         this.prisma.task.groupBy({
           by: ['phaseId'],
@@ -332,9 +348,30 @@ export class Qa6ServicePhaseCleanupService {
           select: { serviceId: true, projectId: true },
           distinct: ['serviceId', 'projectId'],
         }),
+        // Review 2 — soft-deleted references: a merge re-points them as
+        // well, so any one of them makes a duplicate a merge, not a bare
+        // deactivate. (groupBy is not narrowed by the soft-delete middleware.)
+        this.prisma.task.groupBy({
+          by: ['phaseId'],
+          where: { phaseId: { in: ids }, deletedAt: { not: null } },
+          _count: { _all: true },
+        }),
+        this.prisma.template.groupBy({
+          by: ['phaseId'],
+          where: { phaseId: { in: ids }, deletedAt: { not: null } },
+          _count: { _all: true },
+        }),
+        this.prisma.projectDeliverable.groupBy({
+          by: ['serviceId'],
+          where: { serviceId: { in: ids }, deletedAt: { not: null } },
+          _count: { _all: true },
+        }),
       ]);
 
     addCounts(out, tasks as GroupCount[], 'phaseId', 'tasks');
+    addCounts(out, deletedTasks as GroupCount[], 'phaseId', 'deletedTasks');
+    addCounts(out, deletedTemplates as GroupCount[], 'phaseId', 'deletedTemplates');
+    addCounts(out, deletedDeliverables as GroupCount[], 'serviceId', 'deletedProjectDeliverables');
     addCounts(out, templates as GroupCount[], 'phaseId', 'templates');
     addCounts(out, catalogItems as GroupCount[], 'phaseId', 'taskCatalogItems');
     addCounts(out, templateTasks as GroupCount[], 'phaseId', 'templateTasks');
@@ -354,7 +391,7 @@ export class Qa6ServicePhaseCleanupService {
     for (const id of ids) out.set(id, { ...EMPTY_SERVICE_TYPE_USAGE });
     if (ids.length === 0) return out;
 
-    const [tasks, catalogItems, templateTasks, zoneTasks, zoneLinks, categories, taskProjects, categoryProjects] =
+    const [tasks, catalogItems, templateTasks, zoneTasks, zoneLinks, categories, taskProjects, categoryProjects, deletedTasks] =
       await Promise.all([
         this.prisma.task.groupBy({
           by: ['serviceTypeId'],
@@ -395,9 +432,16 @@ export class Qa6ServicePhaseCleanupService {
           where: { serviceTypeId: { in: ids } },
           select: { serviceTypeId: true, projectId: true },
         }),
+        // Review 2 — soft-deleted tasks, re-pointed by a merge too.
+        this.prisma.task.groupBy({
+          by: ['serviceTypeId'],
+          where: { serviceTypeId: { in: ids }, deletedAt: { not: null } },
+          _count: { _all: true },
+        }),
       ]);
 
     addCounts(out, tasks as GroupCount[], 'serviceTypeId', 'tasks');
+    addCounts(out, deletedTasks as GroupCount[], 'serviceTypeId', 'deletedTasks');
     addCounts(out, catalogItems as GroupCount[], 'serviceTypeId', 'taskCatalogItems');
     addCounts(out, templateTasks as GroupCount[], 'serviceTypeId', 'templateTasks');
     addCounts(out, zoneTasks as GroupCount[], 'serviceTypeId', 'templateTasks');
