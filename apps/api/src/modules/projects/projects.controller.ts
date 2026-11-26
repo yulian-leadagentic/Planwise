@@ -106,7 +106,10 @@ export class ProjectsController {
     // give access but not a Team place: such a viewer cannot assign
     // himself, and the web offers "ask the project manager" instead.
     const isOnTeam = await this.access.isOnProjectTeam(user.id, id);
-    return { ...project, canManage, isOnTeam };
+    // Coordinator 26.11 · the caller's own "join the team" request of the
+    // last 24 hours (ISO) or null, so the web opens in the "sent" state.
+    const requestedAt = await this.teamRequests.recentRequestAt(user.id, id);
+    return { ...project, canManage, isOnTeam, teamRequestedAt: requestedAt ? requestedAt.toISOString() : null };
   }
 
   /**
@@ -116,8 +119,9 @@ export class ProjectsController {
    * Activity Log. A repeat within 24 hours notifies nobody and returns
    * `{ alreadyRequested: true }`.
    *
-   * 403 NOT_PROJECT_MEMBER without project access; 403
-   * TEAM_REQUEST_NOT_EMPLOYEE for a non-employee; 409 ALREADY_ON_TEAM
+   * 403 NOT_PROJECT_MEMBER without project access; 409
+   * CAN_MANAGE_PROJECT for the leader or an Admin (they add themselves);
+   * 403 TEAM_REQUEST_NOT_EMPLOYEE for a non-employee; 409 ALREADY_ON_TEAM
    * when he is on the Team; 409 NO_PROJECT_MANAGER when nobody can be
    * asked; 404 for a missing project.
    */

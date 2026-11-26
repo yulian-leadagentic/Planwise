@@ -377,7 +377,7 @@ function TimeEntryFormPopup({ date, startTime, endTime, entry, onClose, onSaved 
               // a viewer who is not on the project's Team cannot assign
               // himself, so he asks the project manager instead.
               <div className="rounded-lg border border-slate-200 dark:border-slate-700">
-                <TeamJoinRequest projectId={Number(projectId)} />
+                <TeamJoinRequest projectId={Number(projectId)} requestedAt={quickTaskScope.teamRequestedAt} />
                 <div className="flex justify-end border-t border-slate-100 dark:border-slate-800 px-3 py-1.5">
                   <button type="button" onClick={() => setShowQuickTask(false)}
                     className="text-[12px] text-slate-400 dark:text-slate-500">Cancel</button>

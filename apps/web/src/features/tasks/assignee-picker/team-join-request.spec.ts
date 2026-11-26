@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   readTeamJoinRequestResult,
+  readTeamRequestedAt,
   selfAssignMode,
   TEAM_REQUEST_TEXT,
   teamRequestFailure,
@@ -58,11 +59,27 @@ describe('teamRequestState', () => {
     expect(teamRequestState({ pending: false, sentAt: '2026-11-26T08:00:00.000Z' })).toBe('sent');
     expect(teamRequestState({ pending: true, sentAt: '2026-11-26T08:00:00.000Z' })).toBe('sent');
   });
+
+  it('after a reload: teamRequestedAt from GET /projects/:id opens the button as sent', () => {
+    expect(teamRequestState({ pending: false, sentAt: undefined, serverRequestedAt: '2026-11-25T09:00:00.000Z' })).toBe('sent');
+    expect(teamRequestState({ pending: false, sentAt: undefined, serverRequestedAt: null })).toBe('idle');
+  });
+});
+
+describe('readTeamRequestedAt', () => {
+  it('his own request of the last 24 hours, else null (also for a server without the field)', () => {
+    expect(readTeamRequestedAt({ teamRequestedAt: '2026-11-25T09:00:00.000Z' })).toBe('2026-11-25T09:00:00.000Z');
+    expect(readTeamRequestedAt({ teamRequestedAt: null })).toBeNull();
+    expect(readTeamRequestedAt({})).toBeNull();
+    expect(readTeamRequestedAt(undefined)).toBeNull();
+    expect(readTeamRequestedAt({ teamRequestedAt: 42 })).toBeNull();
+  });
 });
 
 describe('teamRequestFailure', () => {
-  it('409 ALREADY_ON_TEAM = the screen is out of date; anything else is an error', () => {
-    expect(teamRequestFailure('ALREADY_ON_TEAM')).toBe('already-on-team');
+  it('409 ALREADY_ON_TEAM / CAN_MANAGE_PROJECT = the screen is out of date; anything else is an error', () => {
+    expect(teamRequestFailure('ALREADY_ON_TEAM')).toBe('stale');
+    expect(teamRequestFailure('CAN_MANAGE_PROJECT')).toBe('stale');
     expect(teamRequestFailure('PERMISSION_DENIED')).toBe('error');
     expect(teamRequestFailure(null)).toBe('error');
   });

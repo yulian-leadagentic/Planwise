@@ -2,7 +2,7 @@ import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/
 import { Check, UserPlus } from 'lucide-react';
 
 import { projectsApi } from '@/api/projects.api';
-import { apiErrorCode, notify } from '@/lib/notify';
+import { apiErrorCode, getErrorMessage, notify } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import {
   readTeamJoinRequestResult,
@@ -20,7 +20,11 @@ const requestKey = (projectId: number) => ['team-join-request', projectId] as co
  * under ['team-join-request', projectId], so once one row (or the drawer)
  * sent it, every button of that project shows "sent" and is disabled.
  */
-export function useTeamJoinRequest(projectId: number): { state: TeamRequestState; request: () => void } {
+export function useTeamJoinRequest(
+  projectId: number,
+  /** `teamRequestedAt` of GET /projects/:id: a request of the last 24 hours opens as "sent". */
+  serverRequestedAt?: string | null,
+): { state: TeamRequestState; request: () => void } {
   const queryClient = useQueryClient();
   const key = requestKey(projectId);
   // Written by the mutation below, never fetched.
@@ -41,31 +45,43 @@ export function useTeamJoinRequest(projectId: number): { state: TeamRequestState
       queryClient.setQueryData(key, res.requestedAt ?? new Date().toISOString());
     },
     onError: (err) => {
-      if (teamRequestFailure(apiErrorCode(err)) === 'already-on-team') {
-        // He was added meanwhile: refresh what the pickers read.
+      if (teamRequestFailure(apiErrorCode(err)) === 'stale') {
+        // He was added meanwhile, or can add himself: refresh what the
+        // pickers read and say why (the server's plain message).
         queryClient.invalidateQueries({ queryKey: ['projects', projectId] });
         queryClient.invalidateQueries({ queryKey: ['assignee-candidates', projectId] });
-        notify.info(TEAM_REQUEST_TEXT.alreadyOnTeam);
+        notify.info(getErrorMessage(err, TEAM_REQUEST_TEXT.stale));
       } else {
         notify.apiError(err, 'Could not send the request to the project manager');
       }
     },
   });
+  const state = teamRequestState({ pending, sentAt, serverRequestedAt });
   return {
-    state: teamRequestState({ pending, sentAt }),
+    state,
     request: () => {
-      if (!pending && !sentAt) mutation.mutate();
+      if (state === 'idle') mutation.mutate();
     },
   };
 }
 
 /**
  * In place of assigning himself: one line on why, then the button. After
- * the request (or when one was sent in the last 24 hours) the button
- * reads "הבקשה נשלחה למנהל הפרויקט" and is disabled.
+ * the request (or when one was sent in the last 24 hours, also across a
+ * reload through `requestedAt`) the button reads "הבקשה נשלחה למנהל
+ * הפרויקט" and is disabled.
  */
-export function TeamJoinRequest({ projectId, className }: { projectId: number; className?: string }) {
-  const { state, request } = useTeamJoinRequest(projectId);
+export function TeamJoinRequest({
+  projectId,
+  requestedAt,
+  className,
+}: {
+  projectId: number;
+  /** `teamRequestedAt` of GET /projects/:id (see `useAssigneeScope`). */
+  requestedAt?: string | null;
+  className?: string;
+}) {
+  const { state, request } = useTeamJoinRequest(projectId, requestedAt);
   const sent = state === 'sent';
   return (
     <div dir="rtl" className={cn('px-3 py-2 text-right', className)}>

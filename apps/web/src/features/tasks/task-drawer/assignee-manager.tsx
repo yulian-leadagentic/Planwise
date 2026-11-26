@@ -185,7 +185,11 @@ export function AssigneeManager({
           {/* QA6 decision 2 — not on the Team and not a manager: he is not
               in the list and cannot assign himself; he asks instead. */}
           {projectId && scope.selfAssign === 'request' && (
-            <TeamJoinRequest projectId={projectId} className="border-t border-slate-100 dark:border-slate-800" />
+            <TeamJoinRequest
+              projectId={projectId}
+              requestedAt={scope.teamRequestedAt}
+              className="border-t border-slate-100 dark:border-slate-800"
+            />
           )}
         </div>
       )}

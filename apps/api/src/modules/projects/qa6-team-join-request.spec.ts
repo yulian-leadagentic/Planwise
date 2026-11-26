@@ -95,6 +95,25 @@ describe('QA6 decision 2 — GET /projects/:id tells the web whether the viewer 
     await expect(w.ctrl.findOne(CHAIN_MANAGER, 58)).resolves.toMatchObject({ canManage: false, isOnTeam: false });
     await expect(w.ctrl.findOne(ADMIN, 58)).resolves.toMatchObject({ canManage: true, isOnTeam: false });
   });
+
+  it('teamRequestedAt: the caller\'s own request of the last 24 hours, else null', async () => {
+    const w = world();
+    await expect(w.ctrl.findOne(ORG_VIEWER, 58)).resolves.toMatchObject({ teamRequestedAt: null });
+
+    await w.ctrl.requestToJoinTeam(ORG_VIEWER, 58);
+    const at = w.requests()[0].createdAt.toISOString();
+    await expect(w.ctrl.findOne(ORG_VIEWER, 58)).resolves.toMatchObject({ isOnTeam: false, teamRequestedAt: at });
+    // Someone else's request is not his.
+    await expect(w.ctrl.findOne(CHAIN_MANAGER, 58)).resolves.toMatchObject({ teamRequestedAt: null });
+
+    // 23 hours later it still counts; after 24 hours it is gone.
+    w.requests()[0].createdAt = new Date(Date.now() - 23 * HOUR);
+    await expect(w.ctrl.findOne(ORG_VIEWER, 58)).resolves.toMatchObject({
+      teamRequestedAt: w.requests()[0].createdAt.toISOString(),
+    });
+    w.requests()[0].createdAt = new Date(Date.now() - 25 * HOUR);
+    await expect(w.ctrl.findOne(ORG_VIEWER, 58)).resolves.toMatchObject({ teamRequestedAt: null });
+  });
 });
 
 describe('QA6 decision 2 — POST /projects/:id/team-requests', () => {
@@ -167,12 +186,25 @@ describe('QA6 decision 2 — POST /projects/:id/team-requests', () => {
     await expect(w.ctrl.requestToJoinTeam(ORG_VIEWER, 58)).resolves.toMatchObject({ alreadyRequested: true });
   });
 
-  it('already on the Team (member or leader): 409 ALREADY_ON_TEAM, nothing sent', async () => {
-    for (const me of [TEAM_MEMBER, LEADER]) {
+  it('already on the Team: 409 ALREADY_ON_TEAM, nothing sent', async () => {
+    const err = await w.ctrl.requestToJoinTeam(TEAM_MEMBER, 58).catch((e) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect(codeOf(err)).toBe('ALREADY_ON_TEAM');
+    expect(w.db.table('notification')).toHaveLength(0);
+    expect(w.requests()).toHaveLength(0);
+  });
+
+  it('the leader and an Admin (assertProjectManage) add themselves: 409 CAN_MANAGE_PROJECT with a plain message, nothing sent', async () => {
+    for (const me of [LEADER, ADMIN]) {
       const err = await w.ctrl.requestToJoinTeam(me, 58).catch((e) => e);
       expect(err).toBeInstanceOf(ConflictException);
-      expect(codeOf(err)).toBe('ALREADY_ON_TEAM');
+      expect(codeOf(err)).toBe('CAN_MANAGE_PROJECT');
+      expect(err.getResponse().message).toBe(
+        "You can add yourself to this project's team directly in the Team tab, so there is no one to ask.",
+      );
     }
+    // An Admin is refused although he is not on the Team.
+    await expect(w.access.isOnProjectTeam(ADMIN.id, 58)).resolves.toBe(false);
     expect(w.db.table('notification')).toHaveLength(0);
     expect(w.requests()).toHaveLength(0);
   });

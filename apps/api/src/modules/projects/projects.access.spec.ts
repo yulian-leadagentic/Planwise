@@ -81,7 +81,9 @@ function makeController() {
     patchDependency: jest.fn(async () => ({})),
     removeDependency: jest.fn(async () => ({})),
   };
-  return { ctrl: new ProjectsController(projectsService, access, {} as any), projectsService };
+  // QA6 decision 2 · nobody here has asked to join (see qa6-team-join-request.spec.ts).
+  const teamRequests: any = { recentRequestAt: jest.fn(async () => null) };
+  return { ctrl: new ProjectsController(projectsService, access, teamRequests), projectsService };
 }
 
 const reasonOf = (e: any) => e?.getResponse?.()?.details?.reason;
@@ -101,20 +103,20 @@ describe('Projects controller — access on project reads (round 4)', () => {
 
   it('a member reads the project; canManage is false for him, and he is on the Team', async () => {
     const { ctrl, projectsService } = makeController();
-    await expect(ctrl.findOne(MEMBER, 42)).resolves.toEqual({ id: 42, canManage: false, isOnTeam: true });
+    await expect(ctrl.findOne(MEMBER, 42)).resolves.toEqual({ id: 42, canManage: false, isOnTeam: true, teamRequestedAt: null });
     expect(projectsService.findOne).toHaveBeenCalledWith(42, MEMBER);
   });
 
   it('QA6 — canManage follows assertProjectManage: the leader and an Admin', async () => {
     const { ctrl } = makeController();
-    await expect(ctrl.findOne(LEADER, 42)).resolves.toEqual({ id: 42, canManage: true, isOnTeam: true });
+    await expect(ctrl.findOne(LEADER, 42)).resolves.toEqual({ id: 42, canManage: true, isOnTeam: true, teamRequestedAt: null });
     // An Admin opens every project but is not on this one's Team.
-    await expect(ctrl.findOne(ADMIN, 42)).resolves.toEqual({ id: 42, canManage: true, isOnTeam: false });
+    await expect(ctrl.findOne(ADMIN, 42)).resolves.toEqual({ id: 42, canManage: true, isOnTeam: false, teamRequestedAt: null });
   });
 
   it('QA6 decision 2 — isOnTeam: a partner-role holder yes', async () => {
     const { ctrl } = makeController();
-    await expect(ctrl.findOne(ROLE_HOLDER, 42)).resolves.toEqual({ id: 42, canManage: false, isOnTeam: true });
+    await expect(ctrl.findOne(ROLE_HOLDER, 42)).resolves.toEqual({ id: 42, canManage: false, isOnTeam: true, teamRequestedAt: null });
   });
 
   it('QA6 — a task assignment alone no longer opens the project (rule 5 removed)', async () => {

@@ -19,8 +19,8 @@ export const TEAM_REQUEST_TEXT = {
   sent: 'הבקשה נשלחה למנהל הפרויקט',
   /** Why the button is there instead of assigning himself. */
   explanation: 'אינך בצוות הפרויקט, ולכן אין באפשרותך לשייך את עצמך למשימה.',
-  /** The server says he is on the Team after all (stale screen). */
-  alreadyOnTeam: 'You are already on this project team. Reopen the picker to assign yourself.',
+  /** Fallback when the server refuses because the screen is out of date and sends no message. */
+  stale: 'Your access to this project has changed. Reopen the picker.',
 } as const;
 
 /**
@@ -62,18 +62,39 @@ export function readTeamJoinRequestResult(raw: unknown): TeamJoinRequestResult {
 }
 
 /**
- * State of the button. A fresh request and `alreadyRequested` both end
+ * `teamRequestedAt` from GET /projects/:id: his own request of the last
+ * 24 hours (ISO), so the button opens as "sent" after a reload. Null
+ * when there is none, or from a server that does not send the field.
+ */
+export function readTeamRequestedAt(project: { teamRequestedAt?: unknown } | null | undefined): string | null {
+  const v = project?.teamRequestedAt;
+  return typeof v === 'string' && v ? v : null;
+}
+
+/**
+ * State of the button. A fresh request, `alreadyRequested`, and a
+ * request the server reports on the project (`teamRequestedAt`) all end
  * in 'sent' (same text, disabled): the project manager has a request
  * either way.
  */
 export type TeamRequestState = 'idle' | 'sending' | 'sent';
 
-export function teamRequestState(args: { pending: boolean; sentAt: string | null | undefined }): TeamRequestState {
-  if (args.sentAt) return 'sent';
+export function teamRequestState(args: {
+  pending: boolean;
+  /** Sent from this screen (the mutation's answer). */
+  sentAt: string | null | undefined;
+  /** `teamRequestedAt` of GET /projects/:id. */
+  serverRequestedAt?: string | null;
+}): TeamRequestState {
+  if (args.sentAt || args.serverRequestedAt) return 'sent';
   return args.pending ? 'sending' : 'idle';
 }
 
-/** A refused request: 409 ALREADY_ON_TEAM means the screen is stale, anything else is an error to show. */
-export function teamRequestFailure(errorCode: string | null): 'already-on-team' | 'error' {
-  return errorCode === 'ALREADY_ON_TEAM' ? 'already-on-team' : 'error';
+/**
+ * A refused request. 409 ALREADY_ON_TEAM / CAN_MANAGE_PROJECT mean the
+ * screen is out of date (he is on the Team now, or can add himself):
+ * refresh and show the server's message. Anything else is an error.
+ */
+export function teamRequestFailure(errorCode: string | null): 'stale' | 'error' {
+  return errorCode === 'ALREADY_ON_TEAM' || errorCode === 'CAN_MANAGE_PROJECT' ? 'stale' : 'error';
 }

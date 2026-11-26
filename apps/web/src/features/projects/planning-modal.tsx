@@ -2344,7 +2344,11 @@ function AssigneePicker({
         {/* QA6 decision 2 — not on the Team, not a manager: he cannot
             assign himself (single row or multi-row); he asks instead. */}
         {scope.selfAssign === 'request' && (
-          <TeamJoinRequest projectId={projectId} className="border-t border-slate-100 dark:border-slate-800" />
+          <TeamJoinRequest
+            projectId={projectId}
+            requestedAt={scope.teamRequestedAt}
+            className="border-t border-slate-100 dark:border-slate-800"
+          />
         )}
       </PopoverContent>
     </Popover>

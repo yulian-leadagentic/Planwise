@@ -39,6 +39,9 @@ export interface TeamJoinRequestResult {
  * the window notifies nobody and answers `{ alreadyRequested: true }`.
  * The Activity Log write is best-effort (ActivityLogService swallows its
  * errors), so a failed log row only means a repeat would notify again.
+ *
+ * The leader and an Admin (assertProjectManage) are refused with 409
+ * CAN_MANAGE_PROJECT: they add people to the Team themselves.
  */
 @Injectable()
 export class ProjectTeamRequestsService {
@@ -57,6 +60,15 @@ export class ProjectTeamRequestsService {
     // 404 for a missing project, 403 NOT_PROJECT_MEMBER without access.
     await this.access.assertProjectAccess(caller.id, projectId, isAdminUser(caller));
 
+    // Coordinator 26.11 · the leader and an Admin (assertProjectManage)
+    // add people to the Team themselves, so they have nobody to ask.
+    if (await this.access.canManageProject(caller, projectId)) {
+      throw new ConflictException({
+        code: 'CAN_MANAGE_PROJECT',
+        message: "You can add yourself to this project's team directly in the Team tab, so there is no one to ask.",
+      });
+    }
+
     const me = await this.prisma.user.findFirst({
       where: { id: caller.id, deletedAt: null },
       select: { id: true, firstName: true, lastName: true, userType: true, isActive: true, deletedAt: true },
@@ -74,14 +86,9 @@ export class ProjectTeamRequestsService {
       });
     }
 
-    const since = new Date(now.getTime() - TEAM_JOIN_REQUEST_WINDOW_MS);
-    const earlier = await this.prisma.activityLog.findFirst({
-      where: { projectId, userId: caller.id, action: TEAM_JOIN_REQUEST_ACTION, createdAt: { gte: since } },
-      orderBy: { createdAt: 'desc' },
-      select: { createdAt: true },
-    });
+    const earlier = await this.recentRequestAt(caller.id, projectId, now);
     if (earlier) {
-      return { alreadyRequested: true, requestedAt: earlier.createdAt.toISOString() };
+      return { alreadyRequested: true, requestedAt: earlier.toISOString() };
     }
 
     const project = await this.prisma.project.findFirst({
@@ -125,6 +132,22 @@ export class ProjectTeamRequestsService {
     });
 
     return { alreadyRequested: false, requestedAt: now.toISOString() };
+  }
+
+  /**
+   * When `userId` last asked to join `projectId`, if that was less than
+   * 24 hours ago; else null. The same rule the request itself uses for
+   * `alreadyRequested`; GET /projects/:id reports it as `teamRequestedAt`
+   * so the web opens in the "sent" state after a reload.
+   */
+  async recentRequestAt(userId: number, projectId: number, now: Date = new Date()): Promise<Date | null> {
+    const since = new Date(now.getTime() - TEAM_JOIN_REQUEST_WINDOW_MS);
+    const row = await this.prisma.activityLog.findFirst({
+      where: { projectId, userId, action: TEAM_JOIN_REQUEST_ACTION, createdAt: { gte: since } },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    return row?.createdAt ?? null;
   }
 
   /** The project leader when he is an active user, else the creator when he is; null when neither. */
