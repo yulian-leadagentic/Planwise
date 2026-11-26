@@ -11,17 +11,23 @@
  * only runs at the vertical edges of the scroller.
  * Guard 3: while a drag is on, a refetch or realtime update does not
  * replace the rows; the drag end shows the latest data at once.
+ * Guard 4: a drop that adds someone to a project Team opens a confirm;
+ * the move is not written before "Add and assign", and Cancel writes
+ * nothing.
  */
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { DndContext, MeasuringStrategy } from '@dnd-kit/core';
 import { describe, expect, it, vi } from 'vitest';
-import type { DropCheck } from './workload-assign';
+import { dropCheck, type DropCheck } from './workload-assign';
 import { DropTd, WORKLOAD_AUTO_SCROLL, WORKLOAD_MEASURING, type DropTarget } from './parts/workload-dnd';
+import { WorkloadTeamConfirm } from './parts/workload-team-confirm';
 import { WorkloadTray } from './parts/workload-tray';
 import {
   BOARD_MOVED_TEXT,
   DROP_TARGET_ATTR,
+  TEAM_CONFIRM_APPROVAL_NOTE,
+  answerTeamConfirm,
   dropTargetInStack,
   dropTargetKey,
   handleDrop,
@@ -29,15 +35,21 @@ import {
   parseDropTargetKey,
   releasePoint,
   resolveDropTarget,
+  teamConfirmSentence,
+  type CellTarget,
   type DropEffects,
   type Held,
   type HitElement,
+  type TeamConfirmText,
 } from './workload-drop-guards';
 
 const QA_PRO = 31; // QA Professional, the source row
 const ILAY = 17; // Ilay Edri, the wrong target on staging
 const MON = '2026-11-30';
 const TUE = '2026-12-01';
+
+/** En dash or em dash (user-visible text has none). */
+const LONG_DASH = new RegExp(`[${String.fromCharCode(0x2013, 0x2014)}]`);
 
 const cell = (userId: number, day: string): DropTarget => ({ kind: 'cell', userId, day });
 const TRAY: DropTarget = { kind: 'tray' };
@@ -53,7 +65,7 @@ const hit = (host: string | null): HitElement => ({
 const ok = (over: Partial<DropCheck> = {}): DropCheck => ({ ok: true, reason: null, crossDept: false, needsApproval: false, addsToTeam: false, ...over });
 
 function effects() {
-  const fx = { boardMoved: vi.fn(), blocked: vi.fn(), submit: vi.fn() } satisfies DropEffects;
+  const fx = { boardMoved: vi.fn(), blocked: vi.fn(), confirmTeam: vi.fn(), submit: vi.fn() } satisfies DropEffects;
   return fx;
 }
 
@@ -293,6 +305,145 @@ describe('workload drop guard 3 · the board holds still during a drag (holdWhil
     const { held, value } = holdWhileDragging<Board | undefined>(null, undefined, true);
     expect(value).toBeUndefined();
     expect(holdWhileDragging(held, refetched, true).value).toBeUndefined();
+  });
+});
+
+describe('workload drop guard 4 · confirm before adding someone to a project Team', () => {
+  const PROJECT = 59;
+  const task = { projectId: PROJECT, service: null, canDrag: true, assigneeIds: [QA_PRO] };
+  const ilay = { id: ILAY, departmentId: 4, qualificationIds: [], canDragFrom: true };
+  const teammate = { id: 44, departmentId: 4, qualificationIds: [], canDragFrom: true };
+  /** The Admin's board: the project's Team is QA Professional and one teammate (not Ilay); the Admin manages it. */
+  const assign = { projects: { [String(PROJECT)]: { canManage: true, teamUserIds: [QA_PRO, teammate.id] } }, services: {} };
+  const checkOn = (person: typeof ilay, fromUserId: number | null) =>
+    dropCheck(person, task, {
+      source: { fromUserId, fromDay: fromUserId == null ? null : MON },
+      toDay: MON,
+      assign,
+      fromPerson: fromUserId == null ? null : { id: fromUserId, departmentId: 4 },
+      day: { isWorkingDay: true },
+    });
+
+  /** The board's wiring (workload-dashboard.tsx): `mutate` stands in for the reassign mutation. */
+  function board() {
+    const mutate = vi.fn();
+    let pending: { target: CellTarget; check: DropCheck } | null = null;
+    const fx: DropEffects = {
+      boardMoved: vi.fn(),
+      blocked: vi.fn(),
+      confirmTeam: (target, check) => {
+        pending = { target, check };
+      },
+      submit: (target, check) => mutate(target, check),
+    };
+    const answer = (a: 'add' | 'cancel') => {
+      const request = pending;
+      pending = null;
+      answerTeamConfirm(request, a, (r) => mutate(r.target, r.check));
+    };
+    return { fx, mutate, answer, pending: () => pending };
+  }
+
+  it('the rules: Ilay is not on the Team and the Admin manages the project, so the drop adds him', () => {
+    expect(checkOn(ilay, QA_PRO)).toMatchObject({ ok: true, addsToTeam: true });
+    expect(checkOn(teammate, QA_PRO)).toMatchObject({ ok: true, addsToTeam: false });
+  });
+
+  it('a lane drop that adds to the Team asks first: the mutation is not called', () => {
+    const b = board();
+    const out = handleDrop({ source: { fromUserId: QA_PRO }, over: cell(ILAY, MON), pointer: cell(ILAY, MON), checkCell: () => checkOn(ilay, QA_PRO) }, b.fx);
+    expect(out).toBe('confirm');
+    expect(b.mutate).not.toHaveBeenCalled();
+    expect(b.pending()).toMatchObject({ target: { userId: ILAY, day: MON }, check: { addsToTeam: true } });
+  });
+
+  it('Cancel: nothing is written, ever', () => {
+    const b = board();
+    handleDrop({ source: { fromUserId: QA_PRO }, over: cell(ILAY, MON), pointer: cell(ILAY, MON), checkCell: () => checkOn(ilay, QA_PRO) }, b.fx);
+    b.answer('cancel');
+    expect(b.pending()).toBeNull();
+    b.answer('add'); // a late click after the dialog closed
+    expect(b.mutate).not.toHaveBeenCalled();
+  });
+
+  it('"Add and assign": the held move is written once, to the confirmed target', () => {
+    const b = board();
+    handleDrop({ source: { fromUserId: QA_PRO }, over: cell(ILAY, MON), pointer: cell(ILAY, MON), checkCell: () => checkOn(ilay, QA_PRO) }, b.fx);
+    expect(b.mutate).not.toHaveBeenCalled();
+    b.answer('add');
+    b.answer('add'); // double click
+    expect(b.mutate).toHaveBeenCalledTimes(1);
+    expect(b.mutate).toHaveBeenCalledWith({ userId: ILAY, day: MON }, expect.objectContaining({ ok: true, addsToTeam: true }));
+  });
+
+  it('a tray chip (unassigned) dropped on someone outside the Team asks the same way', () => {
+    const b = board();
+    const out = handleDrop({ source: { fromUserId: null }, over: cell(ILAY, MON), pointer: cell(ILAY, MON), checkCell: () => checkOn(ilay, null) }, b.fx);
+    expect(out).toBe('confirm');
+    expect(b.mutate).not.toHaveBeenCalled();
+  });
+
+  it('a drop on a Team member is written at once (no dialog)', () => {
+    const b = board();
+    const out = handleDrop({ source: { fromUserId: QA_PRO }, over: cell(teammate.id, MON), pointer: cell(teammate.id, MON), checkCell: () => checkOn(teammate, QA_PRO) }, b.fx);
+    expect(out).toBe('submit');
+    expect(b.pending()).toBeNull();
+    expect(b.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('the board moved: no dialog and nothing written, even when the target would join the Team', () => {
+    const b = board();
+    const out = handleDrop({ source: { fromUserId: QA_PRO }, over: cell(ILAY, MON), pointer: cell(QA_PRO, MON), checkCell: () => checkOn(ilay, QA_PRO) }, b.fx);
+    expect(out).toBe('moved');
+    expect(b.pending()).toBeNull();
+    expect(b.mutate).not.toHaveBeenCalled();
+  });
+
+  const text: TeamConfirmText = {
+    personName: 'Ilay Edri',
+    projectName: 'QA6 Sandbox',
+    task: { code: 'QA6-W5', name: 'Model check' },
+    day: 'Mon 30/11',
+    needsApproval: false,
+  };
+
+  it('the sentence', () => {
+    expect(teamConfirmSentence(text)).toBe(
+      'Ilay Edri is not on the team of QA6 Sandbox. Add Ilay Edri to the project team as a participant and assign QA6-W5 on Mon 30/11?',
+    );
+    expect(teamConfirmSentence({ ...text, task: { code: null, name: 'Model check' } })).toContain('assign Model check on Mon 30/11?');
+    expect(teamConfirmSentence({ ...text, personName: ' ', projectName: '' })).toBe(
+      'This person is not on the team of this project. Add this person to the project team as a participant and assign QA6-W5 on Mon 30/11?',
+    );
+  });
+
+  const render = (request: TeamConfirmText | null) =>
+    renderToStaticMarkup(createElement(WorkloadTeamConfirm, { request, onCancel: () => {}, onConfirm: () => {} }));
+
+  it('the dialog: a modal with the sentence, Cancel and "Add and assign", no long dashes', () => {
+    const html = render(text);
+    expect(html).toContain('role="dialog"');
+    expect(html).toContain('aria-modal="true"');
+    expect(html).toContain('rounded-2xl');
+    const sentence = html.match(/<span data-testid="workload-team-confirm-text">([\s\S]*?)<\/span>/)?.[1] ?? '';
+    expect(sentence.replace(/<[^>]+>/g, '')).toBe(teamConfirmSentence(text));
+    expect(sentence).toContain('<bdi>Ilay Edri</bdi>');
+    expect(sentence).toContain('<bdi class="font-mono text-xs font-medium">QA6-W5</bdi>');
+    expect(html).toMatch(/<button[^>]*>Cancel<\/button>/);
+    expect(html).toMatch(/<button[^>]*>(?:<svg[\s\S]*?<\/svg>)?Add and assign<\/button>/);
+    expect(html).not.toMatch(LONG_DASH);
+    expect(html).not.toContain(TEAM_CONFIRM_APPROVAL_NOTE);
+  });
+
+  it('a move that also waits for approval says so', () => {
+    const html = render({ ...text, needsApproval: true });
+    expect(html).toContain(TEAM_CONFIRM_APPROVAL_NOTE);
+    expect(TEAM_CONFIRM_APPROVAL_NOTE).not.toMatch(LONG_DASH);
+    expect(BOARD_MOVED_TEXT).not.toMatch(LONG_DASH);
+  });
+
+  it('closed: nothing rendered', () => {
+    expect(render(null)).toBe('');
   });
 });
 

@@ -16,6 +16,9 @@ import type { DropTarget } from './parts/workload-dnd';
  *  2. Droppables are re-measured while dragging and auto-scroll is kept
  *     to the scroller's edges: the DndContext config in parts/workload-dnd.tsx.
  *  3. The board data holds still while a drag is on (holdWhileDragging).
+ *  4. A drop that adds someone to a project Team waits for a confirm
+ *     (handleDrop › confirmTeam, answerTeamConfirm; the dialog is
+ *     parts/workload-team-confirm.tsx).
  */
 
 // ─── Guard 1 · the target is the cell under the pointer ─────────────────
@@ -109,11 +112,13 @@ export type DropEffects = {
   boardMoved(): void;
   /** The rules refuse the drop (same cell is silent and never reaches this). */
   blocked(reason: DropReason, target: CellTarget): void;
+  /** Guard 4: the drop adds the person to the project Team. Ask first; write nothing yet. */
+  confirmTeam(target: CellTarget, check: DropCheck): void;
   /** Write the move: a cell, or null for the tray (unassign). */
   submit(target: CellTarget | null, check: DropCheck | null): void;
 };
 
-export type DropOutcome = 'none' | 'moved' | 'blocked' | 'submit';
+export type DropOutcome = 'none' | 'moved' | 'blocked' | 'confirm' | 'submit';
 
 /**
  * What a drop does, before anything is written.
@@ -125,6 +130,10 @@ export type DropOutcome = 'none' | 'moved' | 'blocked' | 'submit';
  *  - Tray: unassign, for a chip that belongs to someone.
  *  - A cell: `checkCell` (null when the person is not on the board) must
  *    allow it; a refusal warns, the same cell is silent.
+ *  - Guard 4: a cell drop that adds the person to the project Team (he is
+ *    not on it and the caller is the leader or an Admin, `addsToTeam`)
+ *    is not written: confirmTeam asks first. A tray chip dropped on a
+ *    cell goes the same way.
  */
 export function handleDrop(
   input: {
@@ -153,8 +162,55 @@ export function handleDrop(
     if (check.reason && check.reason !== 'same-cell') fx.blocked(check.reason, cell);
     return 'blocked';
   }
+  if (check.addsToTeam) {
+    fx.confirmTeam(cell, check);
+    return 'confirm';
+  }
   fx.submit(cell, check);
   return 'submit';
+}
+
+// ─── Guard 4 · confirm before adding someone to a project Team ──────────
+
+/** What the confirm dialog names. */
+export type TeamConfirmText = {
+  personName: string;
+  projectName: string;
+  task: { code: string | null; name: string };
+  /** "Mon 30/11". */
+  day: string;
+  /** The move also waits for approval (D1 + D3): the team changes only when it is approved. */
+  needsApproval: boolean;
+};
+
+/**
+ * The words of the dialog. Names are shown as they are; a missing one
+ * falls back to plain words (`lead` starts the sentence).
+ */
+export function teamConfirmWords(t: TeamConfirmText): { lead: string; person: string; project: string; task: string } {
+  const name = t.personName.trim();
+  return {
+    lead: name || 'This person',
+    person: name || 'this person',
+    project: t.projectName.trim() || 'this project',
+    task: t.task.code?.trim() || t.task.name.trim() || 'the task',
+  };
+}
+
+/** "<Name> is not on the team of <Project>. Add <Name> to the project team as a participant and assign <Task> on <Day>?" */
+export function teamConfirmSentence(t: TeamConfirmText): string {
+  const w = teamConfirmWords(t);
+  return `${w.lead} is not on the team of ${w.project}. Add ${w.person} to the project team as a participant and assign ${w.task} on ${t.day}?`;
+}
+
+export const TEAM_CONFIRM_APPROVAL_NOTE = 'This move needs approval first. The task and the team stay as they are until it is approved.';
+
+/**
+ * The dialog's answer for the drop it holds: "add" writes it (once),
+ * "cancel" drops it and nothing is written.
+ */
+export function answerTeamConfirm<R>(request: R | null, answer: 'add' | 'cancel', submit: (request: R) => void): void {
+  if (request != null && answer === 'add') submit(request);
 }
 
 // ─── Guard 3 · the board holds still during a drag ──────────────────────

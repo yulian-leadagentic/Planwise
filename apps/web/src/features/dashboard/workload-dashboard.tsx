@@ -49,7 +49,18 @@ import {
 import { EMPTY_ASSIGN, normalizeTeamWorkload, normalizeTray, type WorkloadTaskEntry, type WorkloadTray as Tray } from './workload-contract';
 import { useWorkloadAssign } from './use-workload-assign';
 import { dragVia, useStuckDragRecovery } from './workload-drag-recovery';
-import { BOARD_MOVED_TEXT, dropTargetAtPoint, handleDrop, releasePoint, useHoldWhileDragging, useLastPointer } from './workload-drop-guards';
+import {
+  BOARD_MOVED_TEXT,
+  answerTeamConfirm,
+  dropTargetAtPoint,
+  handleDrop,
+  releasePoint,
+  useHoldWhileDragging,
+  useLastPointer,
+  type CellTarget,
+  type TeamConfirmText,
+} from './workload-drop-guards';
+import { WorkloadTeamConfirm } from './parts/workload-team-confirm';
 import {
   dayTasksTitle,
   formatWorkRange,
@@ -91,6 +102,9 @@ const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 const personName = (p: TeamWorkloadPerson | undefined | null) =>
   p ? p.name || [p.firstName, p.lastName].filter(Boolean).join(' ') : '';
+
+/** Round 3 guard 4: a drop held until the team confirm answers. */
+type TeamConfirmRequest = { drag: DragData; target: CellTarget; check: DropCheck; text: TeamConfirmText };
 
 /** Unique tasks in a person's lane (masked chips counted apart). */
 function laneCounts(p: TeamWorkloadPerson): { tasks: number; hidden: number } {
@@ -283,6 +297,16 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
   // document's own pointer events (see releasePoint).
   const lastPointer = useLastPointer();
 
+  // Round 3 (26.11) guard 4: a drop that would add the person to the
+  // project Team waits here until the dialog answers; nothing is written
+  // before "Add and assign".
+  const [teamConfirm, setTeamConfirm] = useState<TeamConfirmRequest | null>(null);
+  const answerTeam = (answer: 'add' | 'cancel') => {
+    const request = teamConfirm;
+    setTeamConfirm(null);
+    answerTeamConfirm(request, answer, (r) => submit(r.drag, r.target, r.check));
+  };
+
   const onDragEnd = (e: DragEndEvent) => {
     dragWatchdog.ended();
     const a = (e.active.data.current as DragData | undefined) ?? active;
@@ -311,6 +335,19 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
           notify.warning(dropReasonText(reason, a.task), {
             description: `${personName(peopleById.get(t.userId))} can't take ${a.task.code ?? a.task.name}.`,
             duration: 5000,
+          }),
+        confirmTeam: (t, check) =>
+          setTeamConfirm({
+            drag: a,
+            target: t,
+            check,
+            text: {
+              personName: personName(peopleById.get(t.userId)),
+              projectName: a.task.projectName ?? '',
+              task: { code: a.task.code, name: a.task.name },
+              day: dayLabel(t.day),
+              needsApproval: check.needsApproval,
+            },
           }),
         submit: (t, check) => submit(a, t, check),
       },
@@ -743,6 +780,7 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
         />
       ) : null}
     </DragOverlay>
+    <WorkloadTeamConfirm request={teamConfirm?.text ?? null} onCancel={() => answerTeam('cancel')} onConfirm={() => answerTeam('add')} />
     </DndContext>
   );
 }
