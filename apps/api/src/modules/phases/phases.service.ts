@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreatePhaseDto } from './dto/create-phase.dto';
@@ -57,10 +58,50 @@ export class PhasesService {
       throw new NotFoundException(`Phase with id ${id} not found`);
     }
 
+    const { requiredProfessionIds, ...rest } = dto;
+    const data: Prisma.PhaseUpdateInput = { ...rest };
+    if (requiredProfessionIds !== undefined) {
+      data.requiredProfessionIds = await this.resolveRequiredProfessions(requiredProfessionIds);
+    }
+
     return this.prisma.phase.update({
       where: { id },
-      data: dto,
+      data,
     });
+  }
+
+  /**
+   * QA6 PR-063 — `requiredProfessionIds` as stored: distinct, sorted
+   * profession ids, or DB NULL for "no requirement" (null / []). Every id
+   * must be an existing profession.
+   */
+  private async resolveRequiredProfessions(raw: unknown): Promise<Prisma.InputJsonValue | typeof Prisma.DbNull> {
+    if (raw == null) return Prisma.DbNull;
+    if (!Array.isArray(raw)) {
+      throw new BadRequestException({
+        code: 'PROFESSION_IDS_INVALID',
+        message: 'requiredProfessionIds must be a list of qualification ids, or null.',
+      });
+    }
+    const ids = [...new Set(raw.map(Number))];
+    if (ids.some((n) => !Number.isInteger(n) || n <= 0)) {
+      throw new BadRequestException({
+        code: 'PROFESSION_IDS_INVALID',
+        message: 'requiredProfessionIds must contain positive whole numbers only.',
+      });
+    }
+    if (ids.length === 0) return Prisma.DbNull;
+    const found = await this.prisma.profession.findMany({ where: { id: { in: ids } }, select: { id: true } });
+    const known = new Set(found.map((p) => p.id));
+    const missing = ids.filter((n) => !known.has(n));
+    if (missing.length > 0) {
+      throw new BadRequestException({
+        code: 'PROFESSION_NOT_FOUND',
+        message: `Unknown qualification id(s): ${missing.join(', ')}.`,
+        details: { missing },
+      });
+    }
+    return ids.sort((a, b) => a - b);
   }
 
   async remove(id: number) {

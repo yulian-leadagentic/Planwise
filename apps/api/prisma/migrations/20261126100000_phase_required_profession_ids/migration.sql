@@ -1,0 +1,13 @@
+-- QA6 PR-063 (2026-11-26) — the Service ↔ Qualification link for the
+-- Workload drag-and-drop gate.
+--
+-- phases.required_profession_ids — JSON array of `professions.id`
+-- values; a person must hold at least one of them (through his
+-- business partner's business_partner_professions rows) to be given a
+-- task of this service. NULL / empty = no requirement, which is every
+-- existing row, so nothing is gated until an Admin sets it on
+-- Templates › Services. Same pattern as
+-- project_role_types.required_profession_ids.
+--
+-- Additive, nullable, no backfill.
+ALTER TABLE `phases` ADD COLUMN `required_profession_ids` JSON NULL;

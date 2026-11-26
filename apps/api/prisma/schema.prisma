@@ -405,6 +405,12 @@ model User {
   checklistItemsDone    TaskChecklistItem[]      @relation("ChecklistDoneBy")
   taskReviewActions     TaskReviewEvent[]        @relation("TaskReviewActor")
   taskOpsNotesUpdated   TaskOpsNote[]            @relation("TaskOpsNoteUpdater")
+  // QA6 PR-063 — Workload drag-and-drop moves / approval requests.
+  reassignActed         TaskReassignment[]       @relation("TaskReassignmentActor")
+  reassignFrom          TaskReassignment[]       @relation("TaskReassignmentFrom")
+  reassignTo            TaskReassignment[]       @relation("TaskReassignmentTo")
+  reassignApprover      TaskReassignment[]       @relation("TaskReassignmentApprover")
+  reassignDecided       TaskReassignment[]       @relation("TaskReassignmentDecidedBy")
   templatesCreated      Template[]               @relation("TemplateCreator")
   messages              Message[]                @relation("MessageAuthor")
   messageMentions       MessageMention[]
@@ -1468,6 +1474,12 @@ model Phase {
   /// PR-069 — false = merged into another row or retired: hidden from
   /// pickers, never deleted while anything points at it.
   isActive  Boolean  @default(true) @map("is_active")
+  /// QA6 PR-063 — Qualifications (`professions.id` values) a person must
+  /// hold at least one of to be given a task of this service ("hold any
+  /// one"), the same pattern as `ProjectRoleType.requiredProfessionIds`.
+  /// Null / empty = no requirement. Gates the Workload drag-and-drop
+  /// (`providesService`, 422 SERVICE_NOT_PROVIDED).
+  requiredProfessionIds Json? @map("required_profession_ids")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1569,6 +1581,7 @@ model Task {
   reviewEvents        TaskReviewEvent[]
   opsNote             TaskOpsNote?
   projectFiles        ProjectFile[]
+  reassignments       TaskReassignment[]
 
   @@index([zoneId])
   @@index([projectId])
@@ -1599,6 +1612,81 @@ model TaskReviewEvent {
   @@index([taskId, createdAt])
   @@index([actorId, createdAt])
   @@map("task_review_events")
+}
+
+/// QA6 PR-063 — status of a Workload drag-and-drop move.
+///   applied   — written at once (same department, tray, Admin, chain manager)
+///   pending   — cross-department, waiting for the receiving department
+///   approved  — a pending request that was approved and written
+///   rejected  — a pending request that was turned down
+///   cancelled — the requester (or an Admin) withdrew a pending request
+///   undone    — an applied / approved move that was undone
+///   failed    — approved, but the task had changed so it could not be written
+enum TaskReassignmentStatus {
+  applied
+  pending
+  approved
+  rejected
+  cancelled
+  undone
+  failed
+}
+
+/// QA6 PR-063 — one Workload drag-and-drop move (Operations › Workload):
+/// the move itself, the cross-department approval request, and the
+/// before / after snapshot the server-side Undo restores. Written by
+/// TaskReassignService only.
+model TaskReassignment {
+  id                     Int                    @id @default(autoincrement())
+  taskId                 Int                    @map("task_id")
+  projectId              Int?                   @map("project_id")
+  /// Who dragged (the requester of a pending move).
+  actorId                Int                    @map("actor_id")
+  /// null = from the tray (the task had no assignee).
+  fromUserId             Int?                   @map("from_user_id")
+  /// null = back to the tray (unassign).
+  toUserId               Int?                   @map("to_user_id")
+  fromDay                DateTime?              @map("from_day") @db.Date
+  toDay                  DateTime?              @map("to_day") @db.Date
+  /// Live assignee ids before / after (JSON arrays of numbers).
+  prevAssigneeIds        Json                   @map("prev_assignee_ids")
+  newAssigneeIds         Json                   @map("new_assignee_ids")
+  prevEstimatedStartDate DateTime?              @map("prev_estimated_start_date") @db.Date
+  prevEndDate            DateTime?              @map("prev_end_date") @db.Date
+  prevDueDateOverridden  Boolean                @map("prev_due_date_overridden")
+  newEstimatedStartDate  DateTime?              @map("new_estimated_start_date") @db.Date
+  newEndDate             DateTime?              @map("new_end_date") @db.Date
+  newDueDateOverridden   Boolean                @map("new_due_date_overridden")
+  /// The move added the target to the project Team (participant role).
+  addedToTeam            Boolean                @default(false) @map("added_to_team")
+  crossDepartment        Boolean                @default(false) @map("cross_department")
+  /// Top-level org units (departments) of the two people at request time.
+  fromOrgUnitId          Int?                   @map("from_org_unit_id")
+  toOrgUnitId            Int?                   @map("to_org_unit_id")
+  /// Resolved at request time; null = any Admin decides.
+  approverUserId         Int?                   @map("approver_user_id")
+  status                 TaskReassignmentStatus
+  /// = taskId while pending, else null: one pending request per task
+  /// (MySQL allows any number of NULLs in a unique index).
+  pendingTaskId          Int?                   @unique @map("pending_task_id")
+  decidedById            Int?                   @map("decided_by_id")
+  decidedAt              DateTime?              @map("decided_at")
+  decisionNote           String?                @map("decision_note") @db.VarChar(500)
+  createdAt              DateTime               @default(now()) @map("created_at")
+  updatedAt              DateTime               @updatedAt @map("updated_at")
+
+  task      Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actor     User  @relation("TaskReassignmentActor", fields: [actorId], references: [id])
+  fromUser  User? @relation("TaskReassignmentFrom", fields: [fromUserId], references: [id], onDelete: SetNull)
+  toUser    User? @relation("TaskReassignmentTo", fields: [toUserId], references: [id], onDelete: SetNull)
+  approver  User? @relation("TaskReassignmentApprover", fields: [approverUserId], references: [id], onDelete: SetNull)
+  decidedBy User? @relation("TaskReassignmentDecidedBy", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+  @@index([approverUserId, status])
+  @@index([actorId, status])
+  @@index([status])
+  @@map("task_reassignments")
 }
 
 /// Checklist items inside a Task. Per the 2026-06-14 BM mapping meeting
