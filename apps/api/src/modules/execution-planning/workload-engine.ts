@@ -177,6 +177,20 @@ export interface WorkloadTask {
   estimatedStartDate: Date | string | null;
   startDate: Date | string | null;
   endDate: Date | string | null;
+  // QA6 PR-063 — facts the Workload drag-and-drop needs (the `tasks`
+  // index of GET /workload/team). Optional: the engine never reads them.
+  status?: string | null;
+  dueDateOverridden?: boolean;
+  isPersonal?: boolean;
+  phaseId?: number | null;
+  /** `projectDeliverable.serviceId`. */
+  deliverableServiceId?: number | null;
+  /** `deliverableTemplate.phaseId`. */
+  templatePhaseId?: number | null;
+  /** Live assignee ids of the task (everyone, not only the board's people). */
+  assigneeIds?: number[];
+  /** Hours logged on the task, per user (anyone who logged). */
+  loggedByUser?: Map<number, number>;
 }
 
 export interface PersonInput {
@@ -436,4 +450,210 @@ export function shapeChips(
     else masked.set(label, { taskId: null, code: null, name: label, projectId: null, projectName: null, hours: dt.hours, masked: true });
   }
   return [...out, ...masked.values()];
+}
+
+// ─── QA6 PR-063: drag-and-drop rules (pure) ──────────────────────────
+//
+// The same rules run in the browser (dimming / the before→after preview)
+// and on the server (POST /tasks/:id/reassign). Locked spec:
+// docs/bm2/qa6-pr063-locked-spec.md (D1, D5, D6, service gate).
+
+/** An org working day: not a weekly rest day and not a day off in the org calendar. */
+export function isOrgWorkingDay(key: string, cal: OrgCalendar): boolean {
+  return !cal.restDays.includes(dowOf(key)) && !cal.nonWorking.has(key);
+}
+
+/** Org working days in [fromKey, toKey] (closed form, see countPersonWorkingDays). */
+export function countOrgWorkingDays(fromKey: string, toKey: string, cal: OrgCalendar): number {
+  const pattern = Array.from({ length: 7 }, (_, dow) => (cal.restDays.includes(dow) ? 0 : 1));
+  return countPersonWorkingDays(fromKey, toKey, pattern, cal);
+}
+
+/**
+ * Signed number of org working days from `fromKey` to `toKey`: the
+ * working days in (from, to] going forward, minus those in (to, from]
+ * going back. Mon → Tue = 1, Thu → next Sun = 1 (Fri + Sat rest),
+ * Tue → Mon = -1, same day = 0.
+ */
+export function workingDayDelta(fromKey: string, toKey: string, cal: OrgCalendar): number {
+  if (toKey === fromKey) return 0;
+  if (toKey > fromKey) return countOrgWorkingDays(addDaysYmd(fromKey, 1), toKey, cal);
+  return -countOrgWorkingDays(addDaysYmd(toKey, 1), fromKey, cal);
+}
+
+/**
+ * `key` moved by `n` org working days (n < 0 = back). Each step lands on
+ * the next working day, so a working day stays a working day and a
+ * window keeps its working-day length. n = 0 returns `key` as is.
+ */
+export function shiftByWorkingDays(key: string, n: number, cal: OrgCalendar): string {
+  const steps = Math.trunc(Number(n) || 0);
+  if (steps === 0) return key;
+  const dir = steps > 0 ? 1 : -1;
+  let left = Math.abs(steps);
+  let k = key;
+  // A calendar with no working day at all would never stop.
+  for (let guard = left * 7 + 400; left > 0 && guard > 0; guard--) {
+    k = addDaysYmd(k, dir);
+    if (isOrgWorkingDay(k, cal)) left--;
+  }
+  return k;
+}
+
+/** The window the engine spreads a task over: `estimatedStartDate ?? startDate ?? today-or-end` → `endDate`. */
+export function effectiveWindow(
+  t: { estimatedStartDate?: Date | string | null; startDate?: Date | string | null; endDate?: Date | string | null },
+  today: string,
+): { start: string; end: string } | null {
+  const end = keyOf(t.endDate as any);
+  if (!end) return null;
+  let start = keyOf((t.estimatedStartDate ?? t.startDate) as any) ?? (today <= end ? today : end);
+  if (start > end) start = end;
+  return { start, end };
+}
+
+export interface MoveDates {
+  /** Whether `estimatedStartDate` / `endDate` change. */
+  changed: boolean;
+  estimatedStartDate: string | null;
+  endDate: string | null;
+}
+
+/**
+ * New task dates for a drop (locked spec D5 / D6).
+ *
+ * • No drop day, or the task has no end date: no date change.
+ * • From a day column (`fromDay` set) — D5: the whole task shifts by the
+ *   signed org working days between the two columns; both
+ *   `estimatedStartDate` (written explicitly from the effective start, so
+ *   the task does not "grow" from today) and `endDate` move, the
+ *   working-day length is kept. Same column → delta 0 → no change.
+ * • From the tray (`fromDay` null) — D6: a drop inside the window of a
+ *   task that is not overdue changes nothing; otherwise the window STARTS
+ *   on the drop day with its original working-day length.
+ * `startDate` (the actual start) is never touched.
+ */
+export function planMoveDates(
+  t: { estimatedStartDate?: Date | string | null; startDate?: Date | string | null; endDate?: Date | string | null },
+  fromDay: string | null,
+  toDay: string | null,
+  cal: OrgCalendar,
+  today: string,
+): MoveDates {
+  const prevStart = keyOf(t.estimatedStartDate as any);
+  const prevEnd = keyOf(t.endDate as any);
+  const unchanged: MoveDates = { changed: false, estimatedStartDate: prevStart, endDate: prevEnd };
+  const win = effectiveWindow(t, today);
+  if (!toDay || !win) return unchanged;
+
+  let start: string;
+  let end: string;
+  if (fromDay) {
+    const delta = workingDayDelta(fromDay, toDay, cal);
+    if (delta === 0) return unchanged;
+    start = shiftByWorkingDays(win.start, delta, cal);
+    end = shiftByWorkingDays(win.end, delta, cal);
+  } else {
+    const inside = win.start <= toDay && toDay <= win.end;
+    const overdue = win.end < today;
+    if (inside && !overdue) return unchanged;
+    const length = Math.max(1, countOrgWorkingDays(win.start, win.end, cal));
+    start = toDay;
+    end = shiftByWorkingDays(toDay, length - 1, cal);
+  }
+  if (start === prevStart && end === prevEnd) return unchanged;
+  return { changed: true, estimatedStartDate: start, endDate: end };
+}
+
+/**
+ * The task's effective Service (`phases` row id), the Planning column's
+ * order: `task.phaseId` → `projectDeliverable.serviceId` →
+ * `deliverableTemplate.phaseId`. Null when none is set.
+ */
+export function resolveEffectiveServiceId(t: {
+  phaseId?: number | null;
+  deliverableServiceId?: number | null;
+  templatePhaseId?: number | null;
+  projectDeliverable?: { serviceId?: number | null } | null;
+  deliverableTemplate?: { phaseId?: number | null } | null;
+}): number | null {
+  const pick = [
+    t.phaseId,
+    t.deliverableServiceId ?? t.projectDeliverable?.serviceId,
+    t.templatePhaseId ?? t.deliverableTemplate?.phaseId,
+  ];
+  for (const v of pick) {
+    const n = Number(v);
+    if (v != null && Number.isInteger(n) && n > 0) return n;
+  }
+  return null;
+}
+
+/** A JSON id list (`required_profession_ids`) → distinct positive integers, sorted. Anything else → []. */
+export function normalizeIdList(raw: unknown): number[] {
+  if (!Array.isArray(raw)) return [];
+  const out = new Set<number>();
+  for (const v of raw) {
+    const n = Number(v);
+    if (Number.isInteger(n) && n > 0) out.add(n);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+/**
+ * Does the person provide the task's service (the Qualifications gate)?
+ * True when the task has no effective service, the service is a project
+ * lifecycle phase (`kind = 'phase'`), or the service has no requirement;
+ * otherwise true only if the person holds at least one of the required
+ * qualification (profession) ids ("hold any one").
+ */
+export function providesService(
+  person: { qualificationIds?: number[] | null } | null | undefined,
+  service: { kind?: string | null; requiredProfessionIds?: unknown } | null | undefined,
+): boolean {
+  if (!service || service.kind === 'phase') return true;
+  const required = normalizeIdList(service.requiredProfessionIds);
+  if (required.length === 0) return true;
+  const held = new Set((person?.qualificationIds ?? []).map(Number));
+  return required.some((id) => held.has(id));
+}
+
+export interface OrgUnitLike {
+  id: number;
+  name?: string | null;
+  parentId?: number | null;
+  path?: string | null;
+}
+
+/**
+ * D1 — a person's department: the top-level (depth-0) ancestor of his
+ * home org unit, or the unit itself when it is top-level. Reads the
+ * materialised path ("/1/5/12/" → unit 1) and falls back to walking
+ * `parentId` where the path was never written. A unit missing from
+ * `unitsById` is its own department. No unit → null ("No department").
+ */
+export function departmentOf<U extends OrgUnitLike>(
+  unit: U | null | undefined,
+  unitsById: Map<number, U>,
+): U | null {
+  if (!unit) return null;
+  const home = unitsById.get(unit.id) ?? unit;
+  const onPath = String(home.path ?? '')
+    .split('/')
+    .filter(Boolean)
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0);
+  if (onPath.length > 0 && onPath[onPath.length - 1] === home.id) {
+    const top = unitsById.get(onPath[0]);
+    if (top) return top;
+  }
+  let cur = home;
+  const seen = new Set<number>([cur.id]);
+  while (cur.parentId != null) {
+    const parent = unitsById.get(cur.parentId);
+    if (!parent || seen.has(parent.id)) break;
+    seen.add(parent.id);
+    cur = parent;
+  }
+  return cur;
 }

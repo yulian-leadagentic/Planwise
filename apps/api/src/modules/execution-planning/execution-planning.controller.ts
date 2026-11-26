@@ -95,6 +95,33 @@ export class ExecutionPlanningController {
     );
   }
 
+  /**
+   * QA6 PR-063 — the Workload tray: unassigned tasks, overdue tasks (one
+   * item per assignee on the board) and the move requests waiting for
+   * the caller's approval. Same query, scope and masking as
+   * `workload/team`. Contract: ExecutionPlanningService.getWorkloadTray.
+   */
+  @Get('workload/tray')
+  @RequirePermissions(OPERATIONS_READ)
+  @ApiOperation({ summary: 'Workload tray: unassigned and overdue tasks, and the move requests waiting for me' })
+  async getWorkloadTray(
+    @CurrentUser() user: any,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('weekOf') weekOf?: string,
+    @Query('orgUnitId') orgUnitId?: string,
+    @Query('myDeptOnly') myDeptOnly?: string,
+  ) {
+    return this.eps.getWorkloadTray(
+      {
+        id: user.id,
+        isAdmin: isAdminUser(user),
+        visibleUserIds: await this.employeeScope.visibleUserIds(user),
+      },
+      { from, to, weekOf, orgUnitId, myDeptOnly },
+    );
+  }
+
   @Get('workload/me')
   @OwnData()
   @ApiOperation({ summary: 'Get my workload' })

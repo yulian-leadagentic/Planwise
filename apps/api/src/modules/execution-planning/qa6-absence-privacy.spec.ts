@@ -75,6 +75,9 @@ function makePrisma(absentDay: string = ABSENT_DAY) {
       findMany: jest.fn(async () => [{ userId: PERSON, role: 'Modeler', user: { id: PERSON, firstName: 'U30', lastName: 'L', position: null } }]),
     },
     projectPartnerRole: { findMany: jest.fn(async () => []) },
+    // QA6 PR-063 — the drag-and-drop `assign` block of GET /workload/team.
+    phase: { findMany: jest.fn(async () => []) },
+    taskReassignment: { findMany: jest.fn(async () => []) },
     task: {
       // Feasibility (`projectId: 59`): one open task of person 30, far
       // more hours than he has. The dashboard's lists: nothing.

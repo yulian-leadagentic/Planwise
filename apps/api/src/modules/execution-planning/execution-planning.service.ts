@@ -1,8 +1,8 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, Optional } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ProjectAccessService, activePartnerRoleWhere } from '../../common/services/project-access.service';
-import { VisibleUserIds, isUserVisible } from '../../common/services/employee-scope.service';
+import { EmployeeScopeService, VisibleUserIds, isUserVisible } from '../../common/services/employee-scope.service';
 import { INTERNAL_EMPLOYEE_WHERE } from '../../common/people/internal-employee';
 import { rollupTaskCompletion } from '../../common/task-completion';
 import { LIVE_PREDECESSOR_EDGE } from '../../common/task-dependency-filters';
@@ -12,15 +12,37 @@ import {
   addDaysYmd,
   computePersonWorkload,
   datesBetween,
+  departmentOf,
   dowOf,
   isValidYmd,
   keyOf,
+  parseYmd,
   round2,
   shapeChips,
   weekStartsOn,
   workWeekOf,
 } from './workload-engine';
-import { loadOrgCalendar, loadPeopleInputs, todayKey } from './workload-loader';
+import {
+  WORKLOAD_TASK_SELECT,
+  loadOrgCalendar,
+  loadPeopleInputs,
+  loadTaskFacts,
+  todayKey,
+  toWorkloadTask,
+} from './workload-loader';
+import {
+  REQUEST_LIST_CAP,
+  REQUEST_SELECT,
+  ServiceRow,
+  TRAY_LIST_CAP,
+  TaskEntry,
+  buildTaskEntry,
+  canDecideRow,
+  decidableWhere,
+  personName,
+  servicesWithRequirement,
+  shapeReassignmentRequest,
+} from './workload-assign';
 
 /** Longest range `GET /workload/team` computes (a quarter). */
 export const TEAM_WORKLOAD_MAX_DAYS = 93;
@@ -39,6 +61,21 @@ export interface TeamWorkloadCaller {
   isAdmin: boolean;
   /** Whose LOGGED hours the caller may see (EmployeeScopeService). Missing = only himself. */
   visibleUserIds?: VisibleUserIds;
+}
+
+/** QA6 PR-063 — internal options of getTeamWorkload (never from the query string). */
+export interface TeamWorkloadInternal {
+  /** Only these people (the reassign response); skips the `tasks` / `assign` blocks. */
+  onlyUserIds?: number[];
+}
+
+/** QA6 PR-063 — what the caller may drag, computed once per request. */
+export interface AssignScope {
+  isAdmin: boolean;
+  /** People in the caller's manager chain (isInManagerChain(caller, x)). */
+  managedUserIds: Set<number>;
+  /** Projects the caller leads. */
+  ledProjectIds: Set<number>;
 }
 
 /**
@@ -69,6 +106,10 @@ export class ExecutionPlanningService {
   constructor(
     private prisma: PrismaService,
     private access: ProjectAccessService,
+    // QA6 PR-063 — the drag rights on the Workload board (manager chain,
+    // led projects). Optional so the unit specs that build the service by
+    // hand keep working; ExecutionPlanningModule always provides it.
+    @Optional() private readonly employeeScope?: EmployeeScopeService,
   ) {}
 
   // ─── WORKLOAD ENGINE ────────────────────────────────────────────────────
@@ -265,40 +306,38 @@ export class ExecutionPlanningService {
    * plus any other day on which someone has capacity, planned or logged
    * hours (a Friday shift in a WorkSchedule).
    */
-  async getTeamWorkload(caller: TeamWorkloadCaller, q: TeamWorkloadQuery = {}) {
+  async getTeamWorkload(caller: TeamWorkloadCaller, q: TeamWorkloadQuery = {}, internal: TeamWorkloadInternal = {}) {
     const today = todayKey();
     const visible: VisibleUserIds = caller.visibleUserIds ?? [caller.id];
-    const [cal, units, me, acc] = await Promise.all([
+    const [cal, units, me, acc, scope] = await Promise.all([
       loadOrgCalendar(this.prisma),
-      this.prisma.orgUnit.findMany({
-        where: { deletedAt: null },
-        select: { id: true, name: true, parentId: true, path: true, depth: true, sortOrder: true },
-        orderBy: [{ depth: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
-      }),
+      this.loadUnits(),
       this.prisma.user.findUnique({ where: { id: caller.id }, select: { orgUnitId: true } }),
       this.access.getAccessibleProjectIds(caller.id, caller.isAdmin),
+      this.loadAssignScope(caller),
     ]);
     const range = resolveTeamRange(q, cal, today);
 
     // Unit filter — the unit and everything under it.
-    const myDeptOnly = String(q.myDeptOnly ?? '').toLowerCase() === 'true';
-    const requestedUnit = q.orgUnitId != null && String(q.orgUnitId) !== '' ? Number(q.orgUnitId) : null;
-    if (requestedUnit != null && (!Number.isInteger(requestedUnit) || requestedUnit <= 0)) {
-      throw new BadRequestException('orgUnitId must be a positive integer');
-    }
-    const rootUnit = requestedUnit ?? (myDeptOnly ? me?.orgUnitId ?? null : null);
-    const unitIds = rootUnit == null ? null : subtreeUnitIds(rootUnit, (units ?? []) as any[]);
+    const { myDeptOnly, requestedUnit, rootUnit, unitIds } = resolveUnitScope(q, units, me?.orgUnitId ?? null);
 
+    // QA6 PR-063 — `onlyUserIds` (internal: the people a reassign
+    // response carries) replaces the unit filter, and the board-wide
+    // `tasks` / `assign` blocks are skipped.
+    const only = internal.onlyUserIds
+      ? [...new Set(internal.onlyUserIds.map(Number))].filter((n) => Number.isInteger(n) && n > 0)
+      : null;
     const employees = await this.prisma.user.findMany({
       where: {
         isActive: true,
         deletedAt: null,
         userType: { in: ['employee', 'both'] },
-        ...(unitIds ? { orgUnitId: { in: unitIds } } : {}),
+        ...(only ? { id: { in: only } } : unitIds ? { orgUnitId: { in: unitIds } } : {}),
       },
       select: {
         id: true, firstName: true, lastName: true, position: true, avatarUrl: true,
         dailyStandardHours: true, orgUnitId: true, orgUnit: { select: { id: true, name: true } },
+        businessPartnerId: true,
       },
       orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
     });
@@ -344,11 +383,19 @@ export class ExecutionPlanningService {
       };
     });
 
+    // QA6 PR-063 — per-person drag-and-drop facts: department (D1, the
+    // top-level unit), qualifications (the service gate) and whether the
+    // caller may drag this person's chips (Admin or his manager chain).
+    const unitsById = new Map<number, any>(((units ?? []) as any[]).map((u) => [u.id, u]));
+    const qualsByBp = await this.loadQualifications(employees.map((e: any) => e.businessPartnerId));
+
     let teamCap = 0;
     let teamPlanned = 0;
     let teamLogged = 0;
     let anyLogged = false;
     let teamUndated = 0;
+    // Non-masked tasks on the board, for the `tasks` index.
+    const boardTasks = new Map<number, WorkloadTask>();
     const people = computed.map(({ e, wl }) => {
       const byDate = new Map(wl.days.map((d) => [d.date, d]));
       const see = canSee(e.id);
@@ -356,6 +403,11 @@ export class ExecutionPlanningService {
       teamPlanned += wl.totals.planned;
       teamUndated += wl.totals.undatedHours;
       if (wl.totals.logged != null) { teamLogged += wl.totals.logged; anyLogged = true; }
+      const homeUnit = e.orgUnitId != null
+        ? unitsById.get(e.orgUnitId) ?? (e.orgUnit ? { id: e.orgUnit.id, name: e.orgUnit.name, parentId: null, path: null } : null)
+        : null;
+      const dept = departmentOf(homeUnit, unitsById);
+      const bpId = (e as any).businessPartnerId as number | null | undefined;
       return {
         id: e.id,
         firstName: e.firstName,
@@ -364,15 +416,25 @@ export class ExecutionPlanningService {
         position: e.position ?? null,
         avatarUrl: e.avatarUrl ?? null,
         orgUnit: e.orgUnit ? { id: e.orgUnit.id, name: e.orgUnit.name } : null,
+        departmentId: dept?.id ?? null,
+        departmentName: dept?.name ?? null,
+        qualificationIds: bpId != null ? qualsByBp.get(bpId) ?? [] : [],
+        canDragFrom: scope.isAdmin || scope.managedUserIds.has(e.id),
         loggedVisible: wl.totals.logged != null,
         days: dayKeys.map((date) => {
           const d = byDate.get(date)!;
+          const tasks = shapeChips(d.tasks, wl.taskById, see);
+          for (const c of tasks) {
+            if (c.taskId == null) continue;
+            const t = wl.taskById.get(c.taskId);
+            if (t) boardTasks.set(t.id, t);
+          }
           return {
             date,
             capacity: d.capacity,
             planned: d.planned,
             logged: d.logged,
-            tasks: shapeChips(d.tasks, wl.taskById, see),
+            tasks,
           };
         }),
         totals: wl.totals,
@@ -380,6 +442,9 @@ export class ExecutionPlanningService {
     });
 
     const scopeUnit = rootUnit != null ? ((units ?? []) as any[]).find((u) => u.id === rootUnit) : null;
+    const assignBlock = only
+      ? { tasks: {} as Record<string, TaskEntry>, assign: { canAssign: false, projects: {}, services: {}, approvalsWaitingForMe: 0 } }
+      : await this.buildBoardAssign(caller, scope, visible, today, boardTasks, people);
     return {
       range: { from: range.from, to: range.to, today },
       workWeek: { restDays: cal.restDays, weekStartsOn: weekStartsOn(cal.restDays) },
@@ -399,6 +464,315 @@ export class ExecutionPlanningService {
         orgUnitId: rootUnit,
         deptName: scopeUnit?.name ?? null,
       },
+      // QA6 PR-063 — additive: the drag-and-drop `tasks` index and `assign` block.
+      tasks: assignBlock.tasks,
+      assign: assignBlock.assign,
+    };
+  }
+
+  // ─── QA6 PR-063: Workload drag-and-drop reads ───────────────────────────
+
+  private loadUnits() {
+    return this.prisma.orgUnit.findMany({
+      where: { deletedAt: null },
+      select: { id: true, name: true, parentId: true, path: true, depth: true, sortOrder: true },
+      orderBy: [{ depth: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  /**
+   * Who the caller may drag for, computed once per request (research §5):
+   * Admin; the projects he leads (assertProjectManage without the Admin
+   * bypass); the people in his manager chain (current subordinates, plus
+   * himself when he manages a unit on his own path — isInManagerChain).
+   * Without the EmployeeScopeService (hand-built unit specs) nobody is
+   * managed and nothing is led: read-only lanes, nothing extra queried.
+   */
+  async loadAssignScope(caller: { id: number; isAdmin: boolean }): Promise<AssignScope> {
+    const scope: AssignScope = { isAdmin: caller.isAdmin === true, managedUserIds: new Set(), ledProjectIds: new Set() };
+    if (!this.employeeScope) return scope;
+    const [led, subs, selfManaged] = await Promise.all([
+      this.employeeScope.ledProjectIds(caller.id),
+      scope.isAdmin ? Promise.resolve([] as number[]) : this.employeeScope.currentSubordinateIds(caller.id),
+      scope.isAdmin ? Promise.resolve(false) : this.employeeScope.isInManagerChain(caller.id, caller.id),
+    ]);
+    for (const id of led) scope.ledProjectIds.add(id);
+    for (const id of subs) scope.managedUserIds.add(id);
+    if (selfManaged) scope.managedUserIds.add(caller.id);
+    return scope;
+  }
+
+  /** Profession (qualification) ids per business partner id. One query; none when no one has a BP. */
+  async loadQualifications(bpIds: Array<number | null | undefined>): Promise<Map<number, number[]>> {
+    const ids = [...new Set(bpIds.filter((v): v is number => v != null))];
+    const out = new Map<number, number[]>();
+    if (ids.length === 0) return out;
+    const rows = await this.prisma.businessPartnerProfession.findMany({
+      where: { businessPartnerId: { in: ids } },
+      select: { businessPartnerId: true, professionId: true },
+    });
+    for (const r of rows ?? []) {
+      const list = out.get(r.businessPartnerId) ?? [];
+      if (!list.includes(r.professionId)) list.push(r.professionId);
+      out.set(r.businessPartnerId, list);
+    }
+    for (const list of out.values()) list.sort((a, b) => a - b);
+    return out;
+  }
+
+  /** Every service row (a small table), as the gate reads it. */
+  async loadServices(): Promise<Map<number, ServiceRow>> {
+    const rows = await this.prisma.phase.findMany({
+      select: { id: true, name: true, kind: true, requiredProfessionIds: true },
+    });
+    return new Map<number, ServiceRow>((rows ?? []).map((r: any) => [r.id, r as ServiceRow]));
+  }
+
+  /**
+   * `assign.projects`: per project, whether the caller manages it and
+   * which of the board's people are on its Team (leader, creator, a
+   * ProjectMember row or an active partner role — isOnProjectTeam). The
+   * browser decides a drop target from it; the server re-checks.
+   */
+  private async loadProjectTeams(
+    projectIds: number[],
+    boardUserIds: number[],
+    scope: AssignScope,
+  ): Promise<Record<string, { canManage: boolean; teamUserIds: number[] }>> {
+    const out: Record<string, { canManage: boolean; teamUserIds: number[] }> = {};
+    const pids = [...new Set(projectIds)];
+    if (pids.length === 0) return out;
+    const board = new Set(boardUserIds);
+    const ids = [...board];
+    const [projects, members, roles] = await Promise.all([
+      this.prisma.project.findMany({
+        where: { id: { in: pids }, deletedAt: null },
+        select: { id: true, leaderId: true, createdBy: true },
+      }),
+      ids.length === 0
+        ? Promise.resolve([] as any[])
+        : this.prisma.projectMember.findMany({
+            where: { projectId: { in: pids }, userId: { in: ids } },
+            select: { projectId: true, userId: true },
+          }),
+      ids.length === 0
+        ? Promise.resolve([] as any[])
+        : this.prisma.projectPartnerRole.findMany({
+            where: { projectId: { in: pids }, ...activePartnerRoleWhere(new Date()), party: { user: { id: { in: ids } } } },
+            select: { projectId: true, party: { select: { user: { select: { id: true } } } } },
+          }),
+    ]);
+    const team = new Map<number, Set<number>>(pids.map((p) => [p, new Set<number>()]));
+    const add = (pid: number, uid: number | null | undefined) => {
+      if (uid == null || !board.has(uid)) return;
+      team.get(pid)?.add(uid);
+    };
+    for (const p of (projects ?? []) as any[]) {
+      add(p.id, p.leaderId);
+      add(p.id, p.createdBy);
+    }
+    for (const m of (members ?? []) as any[]) add(m.projectId, m.userId);
+    for (const r of (roles ?? []) as any[]) add(r.projectId, r.party?.user?.id);
+    for (const pid of pids) {
+      out[String(pid)] = {
+        canManage: scope.isAdmin || scope.ledProjectIds.has(pid),
+        teamUserIds: [...(team.get(pid) ?? [])].sort((a, b) => a - b),
+      };
+    }
+    return out;
+  }
+
+  /** Pending requests of `taskIds` plus those the caller may decide (REQUEST_SELECT rows), newest first. */
+  private async loadPendingRequests(taskIds: number[], caller: { id: number }, scope: AssignScope): Promise<any[]> {
+    const decide = decidableWhere({ id: caller.id, isAdmin: scope.isAdmin }, scope.managedUserIds);
+    const where = scope.isAdmin
+      ? { status: 'pending' as const }
+      : { status: 'pending' as const, OR: [...(taskIds.length > 0 ? [{ taskId: { in: taskIds } }] : []), ...decide.OR] };
+    return (await this.prisma.taskReassignment.findMany({
+      where,
+      select: REQUEST_SELECT,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    })) as any[];
+  }
+
+  /** The `tasks` index and the `assign` block of GET /workload/team. */
+  private async buildBoardAssign(
+    caller: TeamWorkloadCaller,
+    scope: AssignScope,
+    visible: VisibleUserIds,
+    today: string,
+    boardTasks: Map<number, WorkloadTask>,
+    people: Array<{ id: number; canDragFrom: boolean; days: Array<{ tasks: Array<{ taskId: number | null }> }> }>,
+  ) {
+    const taskIds = [...boardTasks.keys()];
+    const projectIds = [...new Set([...boardTasks.values()].map((t) => t.projectId).filter((p): p is number => p != null))];
+    const [services, pendingRows, projects] = await Promise.all([
+      this.loadServices(),
+      this.loadPendingRequests(taskIds, caller, scope),
+      this.loadProjectTeams(projectIds, people.map((p) => p.id), scope),
+    ]);
+    const pendingByTask = new Map<number, any>();
+    for (const r of pendingRows) if (boardTasks.has(r.taskId) && !pendingByTask.has(r.taskId)) pendingByTask.set(r.taskId, r);
+    const ctx = { today, isAdmin: scope.isAdmin, ledProjectIds: scope.ledProjectIds, visible, services, pendingByTask };
+
+    const tasks: Record<string, TaskEntry> = {};
+    for (const t of boardTasks.values()) tasks[String(t.id)] = buildTaskEntry(t, ctx);
+
+    // Any chip this caller may drag: a task he manages, or a person he
+    // manages with a chip of a project task that is not waiting for approval.
+    let canAssign = scope.isAdmin || Object.values(tasks).some((e) => e.canDrag);
+    for (const p of people) {
+      if (canAssign) break;
+      if (!p.canDragFrom) continue;
+      canAssign = p.days.some((d) =>
+        d.tasks.some((c) => {
+          const e = c.taskId != null ? tasks[String(c.taskId)] : undefined;
+          return !!e && e.projectId != null && e.pending == null && boardTasks.get(e.id)?.isPersonal !== true;
+        }),
+      );
+    }
+    const approvalsWaitingForMe = pendingRows.filter((r) =>
+      canDecideRow(r, { id: caller.id, isAdmin: scope.isAdmin }, scope.managedUserIds),
+    ).length;
+    return {
+      tasks,
+      assign: {
+        canAssign,
+        projects,
+        services: servicesWithRequirement(services),
+        approvalsWaitingForMe,
+      },
+    };
+  }
+
+  /**
+   * QA6 PR-063 — `GET /workload/tray`: what the Workload tray lists.
+   * Same range, unit scope and masking as the team board; only tasks of
+   * projects the caller can open (a masked task is never listed).
+   *   • unassigned — open project tasks with no live assignee whose
+   *     window overlaps the range, or that are overdue (end before today);
+   *   • overdue — one item per (task, live assignee on the board) for
+   *     open tasks that ended before today;
+   *   • approvals — pending requests the caller may decide (D2).
+   * Each group is capped at TRAY_LIST_CAP with its `total`. `assign`
+   * (additive) carries the Team data of the listed tasks' projects, the
+   * same shape as the board's `assign.projects`.
+   */
+  async getWorkloadTray(caller: TeamWorkloadCaller, q: TeamWorkloadQuery = {}) {
+    const today = todayKey();
+    const visible: VisibleUserIds = caller.visibleUserIds ?? [caller.id];
+    const [cal, units, me, acc, scope] = await Promise.all([
+      loadOrgCalendar(this.prisma),
+      this.loadUnits(),
+      this.prisma.user.findUnique({ where: { id: caller.id }, select: { orgUnitId: true } }),
+      this.access.getAccessibleProjectIds(caller.id, caller.isAdmin),
+      this.loadAssignScope(caller),
+    ]);
+    const range = resolveTeamRange(q, cal, today);
+    const { unitIds } = resolveUnitScope(q, units, me?.orgUnitId ?? null);
+
+    const employees = await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        deletedAt: null,
+        userType: { in: ['employee', 'both'] },
+        ...(unitIds ? { orgUnitId: { in: unitIds } } : {}),
+      },
+      select: { id: true, firstName: true, lastName: true },
+    });
+    const boardIds = employees.map((e) => e.id);
+    const nameOf = new Map(employees.map((e) => [e.id, personName(e)]));
+
+    const noProjects = !acc.all && acc.projectIds.length === 0;
+    const projectIdFilter = acc.all ? { not: null } : { in: acc.projectIds };
+    const openTask = {
+      deletedAt: null,
+      isArchived: false,
+      status: { notIn: ['completed', 'cancelled'] },
+      projectId: projectIdFilter,
+    };
+    const todayDate = parseYmd(today);
+    const fromDate = parseYmd(range.from);
+    const toDate = parseYmd(range.to);
+    const unassignedWhere: any = {
+      ...openTask,
+      isPersonal: false,
+      endDate: { not: null },
+      project: { deletedAt: null, ...(unitIds ? { orgUnitId: { in: unitIds } } : {}) },
+      assignees: { none: { deletedAt: null } },
+      OR: [
+        { endDate: { lt: todayDate } },
+        {
+          AND: [
+            { endDate: { gte: fromDate } },
+            {
+              OR: [
+                { estimatedStartDate: { lte: toDate } },
+                { estimatedStartDate: null, startDate: { lte: toDate } },
+                { estimatedStartDate: null, startDate: null },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const overdueWhere: any = {
+      deletedAt: null,
+      userId: { in: boardIds },
+      task: { ...openTask, isPersonal: false, endDate: { lt: todayDate }, project: { deletedAt: null } },
+    };
+    const [unRows, unTotal, odRows, odTotal] = noProjects
+      ? [[] as any[], 0, [] as any[], 0]
+      : await Promise.all([
+          this.prisma.task.findMany({
+            where: unassignedWhere,
+            select: WORKLOAD_TASK_SELECT,
+            orderBy: [{ endDate: 'asc' }, { id: 'asc' }],
+            take: TRAY_LIST_CAP,
+          }) as Promise<any[]>,
+          this.prisma.task.count({ where: unassignedWhere }),
+          boardIds.length === 0
+            ? Promise.resolve([] as any[])
+            : (this.prisma.taskAssignee.findMany({
+                where: overdueWhere,
+                select: { userId: true, task: { select: WORKLOAD_TASK_SELECT } },
+                orderBy: [{ task: { endDate: 'asc' } }, { id: 'asc' }],
+                take: TRAY_LIST_CAP,
+              }) as Promise<any[]>),
+          boardIds.length === 0 ? Promise.resolve(0) : this.prisma.taskAssignee.count({ where: overdueWhere }),
+        ]);
+
+    const taskRows = [...unRows, ...odRows.map((r) => r.task).filter(Boolean)];
+    const taskIds = [...new Set(taskRows.map((t) => t.id as number))];
+    const projectIds = [...new Set(taskRows.map((t) => t.projectId).filter((p): p is number => p != null))];
+    const [facts, services, pendingRows, projects] = await Promise.all([
+      loadTaskFacts(this.prisma, taskIds),
+      this.loadServices(),
+      this.loadPendingRequests(taskIds, caller, scope),
+      this.loadProjectTeams(projectIds, boardIds, scope),
+    ]);
+    const listed = new Set(taskIds);
+    const pendingByTask = new Map<number, any>();
+    for (const r of pendingRows) if (listed.has(r.taskId) && !pendingByTask.has(r.taskId)) pendingByTask.set(r.taskId, r);
+    const ctx = { today, isAdmin: scope.isAdmin, ledProjectIds: scope.ledProjectIds, visible, services, pendingByTask };
+    const entry = (row: any) => buildTaskEntry(toWorkloadTask(row, facts), ctx);
+
+    const approvals = pendingRows
+      .filter((r) => canDecideRow(r, { id: caller.id, isAdmin: scope.isAdmin }, scope.managedUserIds))
+      .slice(0, REQUEST_LIST_CAP)
+      .map(shapeReassignmentRequest);
+
+    return {
+      range: { from: range.from, to: range.to, today },
+      unassigned: { total: Number(unTotal) || 0, items: unRows.map(entry) },
+      overdue: {
+        total: Number(odTotal) || 0,
+        items: odRows
+          .filter((r) => r.task)
+          .map((r) => ({ ...entry(r.task), assigneeId: r.userId as number, assigneeName: nameOf.get(r.userId) ?? null })),
+      },
+      approvals,
+      assign: { projects },
     };
   }
 
@@ -1931,6 +2305,26 @@ export function resolveTeamRange(q: TeamWorkloadQuery, cal: OrgCalendar, today: 
     return workWeekOf(q.weekOf, cal.restDays);
   }
   return workWeekOf(today, cal.restDays);
+}
+
+/**
+ * The unit filter of `GET /workload/team` and `/workload/tray`: the
+ * requested unit, or the caller's own unit with `myDeptOnly=true` (a
+ * caller with no unit → no narrowing), each with every unit below it.
+ */
+export function resolveUnitScope(
+  q: Pick<TeamWorkloadQuery, 'orgUnitId' | 'myDeptOnly'>,
+  units: Array<{ id: number; parentId: number | null; path?: string | null }>,
+  myOrgUnitId: number | null,
+): { myDeptOnly: boolean; requestedUnit: number | null; rootUnit: number | null; unitIds: number[] | null } {
+  const myDeptOnly = String(q.myDeptOnly ?? '').toLowerCase() === 'true';
+  const requestedUnit = q.orgUnitId != null && String(q.orgUnitId) !== '' ? Number(q.orgUnitId) : null;
+  if (requestedUnit != null && (!Number.isInteger(requestedUnit) || requestedUnit <= 0)) {
+    throw new BadRequestException('orgUnitId must be a positive integer');
+  }
+  const rootUnit = requestedUnit ?? (myDeptOnly ? myOrgUnitId : null);
+  const unitIds = rootUnit == null ? null : subtreeUnitIds(rootUnit, (units ?? []) as any[]);
+  return { myDeptOnly, requestedUnit, rootUnit, unitIds };
 }
 
 /** The unit and every unit below it (materialised path, or parentId where a path was never written). */

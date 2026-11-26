@@ -63,6 +63,7 @@ describe('Operations permission module — route gates', () => {
       'dashboard/operations/executive-review',
       'dashboard/operations/tasks/:taskId/ops-note',
       'workload/team',
+      'workload/tray',
       'workload/user/:userId',
     ]);
   });

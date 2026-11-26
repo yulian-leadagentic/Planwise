@@ -62,6 +62,12 @@ function makeService(opts: { people?: number; accessible?: { all: boolean; proje
           .map((p) => ({ userId: p.id, date: at(WEEK_FROM), _sum: { minutes: 360 } }));
       }),
     },
+    // QA6 PR-063 — the drag-and-drop `tasks` index / `assign` block.
+    phase: { findMany: jest.fn(async () => []) },
+    taskReassignment: { findMany: jest.fn(async () => []) },
+    project: { findMany: jest.fn(async () => []) },
+    projectMember: { findMany: jest.fn(async () => []) },
+    projectPartnerRole: { findMany: jest.fn(async () => []) },
   };
   const access: any = {
     getAccessibleProjectIds: jest.fn(async () => opts.accessible ?? { all: false, projectIds: [59] }),
