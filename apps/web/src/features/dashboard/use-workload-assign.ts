@@ -10,6 +10,7 @@ import {
   approveToastText,
   reassignErrorKey,
   reassignErrorText,
+  type ReassignErrorContext,
   reassignToastText,
   type DragOrigin,
   type OptimisticMove,
@@ -54,8 +55,8 @@ type Snapshot = { team?: TeamWorkload; tray?: WorkloadTray };
 const UNDO_TOAST_MS = 12_000;
 const unwrap = (r: { data: any }) => r.data?.data ?? r.data;
 
-function showError(err: unknown, fallback: string) {
-  const key = reassignErrorKey(apiErrorCode(err), apiErrorDetails(err));
+function showError(err: unknown, fallback: string, context: ReassignErrorContext) {
+  const key = reassignErrorKey(apiErrorCode(err), apiErrorDetails(err), context);
   const text = reassignErrorText(key);
   if (text) notify.warning(text.title, { description: text.description, code: key ?? undefined, duration: 8000 });
   else notify.apiError(err, fallback);
@@ -78,7 +79,7 @@ export function useWorkloadAssign({ view, teamKey }: { view: ReassignView | null
       applyServer(vars.teamKey, res, vars.taskId, null);
       notify.success(res.result === 'cancelled' ? 'Approval request cancelled' : 'Move undone');
     },
-    onError: (err) => showError(err, 'Could not undo the move'),
+    onError: (err) => showError(err, 'Could not undo the move', 'undo'),
     onSettled: () => qc.invalidateQueries({ queryKey: ['workload'] }),
   });
 
@@ -107,7 +108,7 @@ export function useWorkloadAssign({ view, teamKey }: { view: ReassignView | null
     onError: (err, vars, snap) => {
       if (snap?.team) qc.setQueryData(vars.teamKey, snap.team);
       if (snap?.tray) qc.setQueryData(vars.trayKey, snap.tray);
-      showError(err, 'Could not move the task');
+      showError(err, 'Could not move the task', 'move');
     },
     onSuccess: (res, vars) => {
       const taskId = vars.move.task.id;
@@ -161,7 +162,7 @@ export function useWorkloadAssign({ view, teamKey }: { view: ReassignView | null
         });
         return;
       }
-      showError(err, decision === 'approve' ? 'Could not approve the move' : 'Could not reject the move');
+      showError(err, decision === 'approve' ? 'Could not approve the move' : 'Could not reject the move', decision);
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ['workload'] }),
   });

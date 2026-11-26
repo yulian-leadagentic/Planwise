@@ -564,17 +564,41 @@ export function approveToastText(
   return { title: `Approved: ${label} moves to ${r.to?.name ?? 'the new person'}`, description: notes.join(' ') };
 }
 
+/** Which write failed: the same server code can mean different things (a 403 on undo is about the undo). */
+export type ReassignErrorContext = 'move' | 'approve' | 'reject' | 'undo';
+
 /**
- * The key an error is worded by. A permission 403 keeps the API's
- * convention, `code: PERMISSION_DENIED` with `details.reason`
- * (REASSIGN_NOT_ALLOWED, ASSIGNEE_NOT_ON_TEAM); an expired undo is
- * `UNDO_STALE` with `details.reason: UNDO_EXPIRED`. Everything else is the
- * envelope's `error.code`.
+ * The key an error is worded by.
+ *  - A permission 403 keeps the API's convention, `code: PERMISSION_DENIED`
+ *    with `details.reason` (REASSIGN_NOT_ALLOWED, ASSIGNEE_NOT_ON_TEAM). On
+ *    undo it is UNDO_NOT_ALLOWED: not the actor or an Admin, or the actor
+ *    lost the right to move the task.
+ *  - `UNDO_STALE` with `details.reason`: UNDO_EXPIRED (after 15 minutes),
+ *    UNDO_NOT_ON_TEAM (the person would get the task back but is no longer
+ *    on the project team).
+ *  - `REASSIGN_INVALID_DAY` with `details.reason`: MOVE_TOO_FAR (more than
+ *    93 days), NOT_A_TASK_DAY (the source day is outside the task's dates).
+ *    Without a reason it stays "Not a working day".
+ *  - Everything else is the envelope's `error.code` (e.g.
+ *    REASSIGN_REQUESTER_NOT_ALLOWED on approve).
  */
-export function reassignErrorKey(code: string | null, details: unknown): string | null {
-  const reason = details && typeof details === 'object' ? (details as Record<string, unknown>).reason : undefined;
-  if (code === 'PERMISSION_DENIED') return typeof reason === 'string' && reason ? reason : code;
-  if (code === 'UNDO_STALE' && reason === 'UNDO_EXPIRED') return 'UNDO_EXPIRED';
+export function reassignErrorKey(code: string | null, details: unknown, context: ReassignErrorContext = 'move'): string | null {
+  const raw = details && typeof details === 'object' ? (details as Record<string, unknown>).reason : undefined;
+  const reason = typeof raw === 'string' && raw ? raw : null;
+  if (code === 'PERMISSION_DENIED') {
+    if (context === 'undo' && (reason == null || reason === 'REASSIGN_NOT_ALLOWED')) return 'UNDO_NOT_ALLOWED';
+    return reason ?? code;
+  }
+  if (code === 'UNDO_STALE') {
+    if (reason === 'UNDO_EXPIRED') return 'UNDO_EXPIRED';
+    if (reason === 'NOT_ON_TEAM') return 'UNDO_NOT_ON_TEAM';
+    return code;
+  }
+  if (code === 'REASSIGN_INVALID_DAY') {
+    if (reason === 'MOVE_TOO_FAR') return 'MOVE_TOO_FAR';
+    if (reason === 'NOT_A_TASK_DAY') return 'NOT_A_TASK_DAY';
+    return code;
+  }
   return code;
 }
 
@@ -584,11 +608,21 @@ export function reassignErrorText(key: string | null): { title: string; descript
     case 'ASSIGNEE_NOT_ON_TEAM':
       return { title: 'Not on the project team', description: 'Only the project leader or an Admin can give the task to someone outside the project team.' };
     case 'REASSIGN_NOT_ALLOWED':
-      return { title: 'You cannot move this task', description: 'Only an Admin, the project leader or the person\'s manager can move it, and only the person who moved it (or an Admin) can undo it.' };
+      return { title: 'You cannot move this task', description: 'Only an Admin, the project leader or the person\'s manager can move it.' };
+    case 'UNDO_NOT_ALLOWED':
+      return { title: 'You cannot undo this move', description: 'Only the person who made the move, or an Admin, can undo it, and only while they are still allowed to move the task.' };
+    case 'REASSIGN_REQUESTER_NOT_ALLOWED':
+      return { title: 'The request was closed', description: 'The person who asked for this move is no longer allowed to move this task, so it was not applied. They were told. The list was refreshed.' };
     case 'SERVICE_NOT_PROVIDED':
       return { title: 'Does not provide this service', description: 'This person has none of the qualifications the task\'s service requires.' };
     case 'REASSIGN_INVALID_DAY':
       return { title: 'Not a working day', description: 'Drop the task on a working day.' };
+    case 'MOVE_TOO_FAR':
+      return { title: 'Too far to move', description: 'A task can move at most 93 days at a time. Drop it on a closer day.' };
+    case 'NOT_A_TASK_DAY':
+      return { title: 'The task is not on that day anymore', description: 'Its dates changed since the board was loaded. The board was refreshed. Drag it again from one of its days.' };
+    case 'UNDO_NOT_ON_TEAM':
+      return { title: 'Cannot undo', description: 'The person would get the task back, but they are no longer on the project team.' };
     case 'REASSIGN_STALE':
       return { title: 'The task changed in the meantime', description: 'Someone else moved or assigned it. The board and the tray were refreshed. Try again if it is still needed.' };
     case 'REASSIGN_PENDING':

@@ -509,7 +509,40 @@ describe('toast text', () => {
   const KEYS = [
     'ASSIGNEE_NOT_ON_TEAM', 'REASSIGN_NOT_ALLOWED', 'SERVICE_NOT_PROVIDED', 'REASSIGN_INVALID_DAY', 'REASSIGN_STALE',
     'REASSIGN_PENDING', 'REASSIGN_NOT_PENDING', 'UNDO_EXPIRED', 'UNDO_STALE', 'REASSIGN_LIST_INVALID',
+    'UNDO_NOT_ALLOWED', 'UNDO_NOT_ON_TEAM', 'MOVE_TOO_FAR', 'NOT_A_TASK_DAY', 'REASSIGN_REQUESTER_NOT_ALLOWED',
   ];
+
+  // Review 2 (A2, A3, A4, A6) error shapes.
+  it('undo: NOT_ON_TEAM, UNDO_EXPIRED, and a 403 for someone who is not the actor or an Admin', () => {
+    expect(reassignErrorKey('UNDO_STALE', { reason: 'NOT_ON_TEAM', userId: 12 }, 'undo')).toBe('UNDO_NOT_ON_TEAM');
+    expect(reassignErrorText('UNDO_NOT_ON_TEAM')!.description).toBe('The person would get the task back, but they are no longer on the project team.');
+    expect(reassignErrorKey('UNDO_STALE', { reason: 'UNDO_EXPIRED' }, 'undo')).toBe('UNDO_EXPIRED');
+    expect(reassignErrorKey('UNDO_STALE', null, 'undo')).toBe('UNDO_STALE');
+    expect(reassignErrorKey('PERMISSION_DENIED', { module: 'tasks', reason: 'REASSIGN_NOT_ALLOWED' }, 'undo')).toBe('UNDO_NOT_ALLOWED');
+    expect(reassignErrorKey('PERMISSION_DENIED', null, 'undo')).toBe('UNDO_NOT_ALLOWED');
+    expect(reassignErrorText('UNDO_NOT_ALLOWED')!.title).toBe('You cannot undo this move');
+    // The same 403 on a move is about the move.
+    expect(reassignErrorKey('PERMISSION_DENIED', { reason: 'REASSIGN_NOT_ALLOWED' }, 'move')).toBe('REASSIGN_NOT_ALLOWED');
+    expect(reassignErrorKey('PERMISSION_DENIED', { reason: 'REASSIGN_NOT_ALLOWED' })).toBe('REASSIGN_NOT_ALLOWED');
+  });
+
+  it('REASSIGN_INVALID_DAY: MOVE_TOO_FAR, NOT_A_TASK_DAY; no reason stays "Not a working day"', () => {
+    expect(reassignErrorKey('REASSIGN_INVALID_DAY', { reason: 'MOVE_TOO_FAR' })).toBe('MOVE_TOO_FAR');
+    expect(reassignErrorText('MOVE_TOO_FAR')!.description).toContain('at most 93 days');
+    expect(reassignErrorKey('REASSIGN_INVALID_DAY', { reason: 'NOT_A_TASK_DAY' })).toBe('NOT_A_TASK_DAY');
+    expect(reassignErrorText('NOT_A_TASK_DAY')!.description).toContain('The board was refreshed');
+    expect(reassignErrorKey('REASSIGN_INVALID_DAY', undefined)).toBe('REASSIGN_INVALID_DAY');
+    expect(reassignErrorText(reassignErrorKey('REASSIGN_INVALID_DAY', {}))!.title).toBe('Not a working day');
+  });
+
+  it('approve: the requester lost the right to the move, so the request was closed', () => {
+    expect(reassignErrorKey('REASSIGN_REQUESTER_NOT_ALLOWED', null, 'approve')).toBe('REASSIGN_REQUESTER_NOT_ALLOWED');
+    expect(reassignErrorText('REASSIGN_REQUESTER_NOT_ALLOWED')).toEqual({
+      title: 'The request was closed',
+      description: 'The person who asked for this move is no longer allowed to move this task, so it was not applied. They were told. The list was refreshed.',
+    });
+    expect(reassignErrorKey('REASSIGN_NOT_PENDING', null, 'reject')).toBe('REASSIGN_NOT_PENDING');
+  });
 
   it('every error key has clear words; others use the generic error', () => {
     for (const key of KEYS) expect(reassignErrorText(key)).not.toBeNull();
