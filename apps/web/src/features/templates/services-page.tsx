@@ -12,6 +12,7 @@ import { apiErrorCode, notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
 import { QualificationPicker, useQualifications } from '@/features/admin/qualification-picker';
 import { isPickableService, qualificationSaveError } from './service-options';
+import { ServiceCodeCell } from './service-code-cell';
 
 interface EditState {
   id: number;
@@ -187,11 +188,7 @@ export function PhasesPage() {
           : <span className="inline-block h-3 w-3 rounded-full bg-slate-200 dark:bg-slate-700" />;
       } },
     { accessorKey: 'code', header: 'Code', enableSorting: false, size: 112,
-      cell: ({ row }) => (
-        row.original.code
-          ? <span className="rounded-[5px] bg-slate-50 dark:bg-slate-800/50 text-slate-600 dark:text-slate-300 text-[11px] font-bold tracking-wide px-2 py-0.5">{row.original.code}</span>
-          : <span className="text-slate-300 dark:text-slate-600">—</span>
-      ) },
+      cell: ({ row }) => <ServiceCodeCell code={row.original.code} /> },
     { accessorKey: 'name', header: 'Service Name', enableSorting: false,
       cell: ({ row }) => (
         <span className="inline-flex items-center gap-2">

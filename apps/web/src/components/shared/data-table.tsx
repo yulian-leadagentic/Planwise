@@ -158,7 +158,7 @@ export function DataTable<TData>({
                         <button
                           type="button"
                           onClick={header.column.getToggleSortingHandler()}
-                          aria-label={`Sort by ${typeof header.column.columnDef.header === 'string' ? header.column.columnDef.header : header.id}${sorted === 'asc' ? ' — currently ascending' : sorted === 'desc' ? ' — currently descending' : ''}`}
+                          aria-label={`Sort by ${typeof header.column.columnDef.header === 'string' ? header.column.columnDef.header : header.id}${sorted === 'asc' ? ', currently ascending' : sorted === 'desc' ? ', currently descending' : ''}`}
                           className="flex items-center gap-1 -m-1 p-1"
                         >
                           {flexRender(header.column.columnDef.header, header.getContext())}
@@ -252,7 +252,7 @@ function FilterControl<TData>({ header }: { header: Header<TData, unknown> }) {
         onClick={(e) => e.stopPropagation()}
         className="w-full rounded-md border border-slate-200 dark:border-slate-700 bg-transparent px-1.5 py-0.5 text-[11px] font-normal text-slate-700 dark:text-slate-200 focus:outline-none focus-visible:border-blue-500"
       >
-        <option value="">— All —</option>
+        <option value="">All</option>
         {meta.filterOptions.map((opt) => (
           <option key={opt.value} value={opt.value}>{opt.label}</option>
         ))}
