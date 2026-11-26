@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 import { dayLabel, type DragSource, type OverloadItem } from '../workload-assign';
 import type { ReassignmentRequest, TrayOverdueItem, WorkloadTaskEntry, WorkloadTray } from '../workload-contract';
 import type { TeamWorkloadPerson } from '../workload-range';
+import { dropTargetKey } from '../workload-drop-guards';
 import { chipTitle } from './workload-chip';
 import { DraggableChip, type DragData, type DropTarget } from './workload-dnd';
 
@@ -138,6 +139,7 @@ export function WorkloadTray(props: Props) {
 
       <div
         ref={setNodeRef}
+        data-drop-target={dropTargetKey(TRAY_TARGET)}
         className={cn(
           'relative grid gap-4 p-4 md:grid-cols-3 transition-colors duration-150',
           acceptsDrop && (isOver ? 'bg-blue-50 dark:bg-blue-500/10' : 'bg-[#FAFBFC] dark:bg-slate-800/40'),

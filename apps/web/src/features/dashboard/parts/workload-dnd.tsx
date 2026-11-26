@@ -13,6 +13,7 @@ import {
 import { cn } from '@/lib/utils';
 import type { DragSource } from '../workload-assign';
 import type { WorkloadTaskEntry } from '../workload-contract';
+import { dropTargetKey } from '../workload-drop-guards';
 import { TaskChip, type ChipView } from './workload-chip';
 
 /**
@@ -110,7 +111,11 @@ export function DraggableChip({
   );
 }
 
-/** A table cell that accepts a chip. */
+/**
+ * A table cell that accepts a chip. It carries its target as
+ * `data-drop-target` (dropTargetKey), so a drop can check that the cell
+ * under the released pointer is the one dnd-kit resolved (round 3).
+ */
 export function DropTd({
   id,
   target,
@@ -129,7 +134,7 @@ export function DropTd({
   const { setNodeRef, isOver } = useDroppable({ id, data: { target }, disabled });
   const over = isOver && !disabled;
   return (
-    <td ref={setNodeRef} className={cn(className, over && overClassName)} {...td}>
+    <td ref={setNodeRef} data-drop-target={dropTargetKey(target)} className={cn(className, over && overClassName)} {...td}>
       {typeof children === 'function' ? children(over) : children}
     </td>
   );

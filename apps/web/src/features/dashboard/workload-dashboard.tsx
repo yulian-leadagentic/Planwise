@@ -40,6 +40,7 @@ import {
 import { EMPTY_ASSIGN, normalizeTeamWorkload, normalizeTray, type WorkloadTaskEntry, type WorkloadTray as Tray } from './workload-contract';
 import { useWorkloadAssign } from './use-workload-assign';
 import { dragVia, useStuckDragRecovery } from './workload-drag-recovery';
+import { BOARD_MOVED_TEXT, dropTargetAtPoint, handleDrop, releasePoint, useLastPointer } from './workload-drop-guards';
 import {
   dayTasksTitle,
   formatWorkRange,
@@ -250,24 +251,42 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
     dragWatchdog.ended();
     setActive(null);
   };
+  // Round 3 (26.11) guard 1: the release point of a pointer drag, from the
+  // document's own pointer events (see releasePoint).
+  const lastPointer = useLastPointer();
+
   const onDragEnd = (e: DragEndEvent) => {
     dragWatchdog.ended();
     const a = (e.active.data.current as DragData | undefined) ?? active;
     setActive(null);
-    const target = (e.over?.data.current as { target?: DropTarget } | undefined)?.target;
-    if (!a || !target) return;
-    if (target.kind === 'tray') {
-      if (a.source.fromUserId != null) submit(a, null, null);
-      return;
-    }
-    const person = peopleById.get(target.userId);
-    if (!person) return;
-    const check = checkFor(a, person, target.day);
-    if (!check.ok) {
-      if (check.reason && check.reason !== 'same-cell') notify.warning(dropReasonText(check.reason, a.task), { description: `${personName(person)} can't take ${a.task.code ?? a.task.name}.`, duration: 5000 });
-      return;
-    }
-    submit(a, { userId: target.userId, day: target.day }, check);
+    if (!a) return;
+    const over = (e.over?.data.current as { target?: DropTarget } | undefined)?.target ?? null;
+    // A pointer drop acts only on the cell under the released pointer. A
+    // keyboard drag has no pointer: its target is the cell it moved to.
+    const pointer =
+      over && dragVia(e.activatorEvent) === 'pointer'
+        ? dropTargetAtPoint(releasePoint(lastPointer.current, e.activatorEvent, e.delta))
+        : over;
+    handleDrop(
+      {
+        source: a.source,
+        over,
+        pointer,
+        checkCell: (t) => {
+          const person = peopleById.get(t.userId);
+          return person ? checkFor(a, person, t.day) : null;
+        },
+      },
+      {
+        boardMoved: () => notify.warning(BOARD_MOVED_TEXT, { duration: 6000 }),
+        blocked: (reason, t) =>
+          notify.warning(dropReasonText(reason, a.task), {
+            description: `${personName(peopleById.get(t.userId))} can't take ${a.task.code ?? a.task.name}.`,
+            duration: 5000,
+          }),
+        submit: (t, check) => submit(a, t, check),
+      },
+    );
   };
 
   const announcements: Announcements = useMemo(() => {
