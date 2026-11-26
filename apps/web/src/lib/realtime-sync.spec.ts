@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  MAX_WATCHED_PROJECTS,
   REALTIME_SOCKET_NAMESPACE,
   REALTIME_SOCKET_PATH,
   createInvalidationBatcher,
@@ -15,6 +16,7 @@ import {
   projectIdsFromPath,
   realtimeSocketUrl,
   roomChanges,
+  workloadProjectIds,
   type RealtimeEvent,
 } from './realtime-sync';
 import { queryKeys } from './query-keys';
@@ -153,6 +155,44 @@ describe('watched projects', () => {
     ];
     expect(desiredProjectIds('/projects/42/planning', active)).toEqual([42, 44, 46, 45, 50, 51, 52]);
     expect(desiredProjectIds('/projects/42', active, 3)).toEqual([42, 44, 46]);
+  });
+
+  // QA6 P4 (PR-063): an Operations › Workload tab joins the rooms of the
+  // projects on its board and tray, so a move by someone else refreshes it.
+  it('Workload board: project ids from the tasks index and the tray items (not approvals, never masked)', () => {
+    const team = {
+      queryKey: ['workload', 'team', { weekOf: '2026-11-22' }],
+      data: {
+        people: [{ id: 12, days: [{ date: '2026-11-22', tasks: [{ taskId: null, projectId: null, masked: true }] }] }],
+        tasks: { '4021': { id: 4021, projectId: 59 }, '4022': { id: 4022, projectId: 59 }, '4030': { id: 4030, projectId: 61 } },
+      },
+    };
+    const tray = {
+      queryKey: ['workload', 'tray', {}],
+      data: {
+        unassigned: { total: 1, items: [{ id: 1, projectId: 62 }] },
+        overdue: { total: 1, items: [{ id: 2, projectId: 59, assigneeId: 12 }] },
+        approvals: [{ id: 881, task: { id: 3, projectId: 99 } }],
+      },
+    };
+    expect(desiredProjectIds('/operations', [team, tray])).toEqual([59, 61, 62]);
+    expect(workloadProjectIds(team.queryKey, team.data)).toEqual([59, 61]);
+    expect(workloadProjectIds(tray.queryKey, tray.data)).toEqual([62, 59]);
+    expect(workloadProjectIds(['workload', 'team', {}], undefined)).toEqual([]);
+    expect(workloadProjectIds(['workload', 'project', 59], team.data)).toEqual([]);
+  });
+
+  it('Workload board: capped at 40 rooms', () => {
+    const tasks = Object.fromEntries(Array.from({ length: 60 }, (_, i) => [String(i + 1), { id: i + 1, projectId: i + 1 }]));
+    const team = { queryKey: ['workload', 'team', {}], data: { people: [], tasks } };
+    expect(workloadProjectIds(team.queryKey, team.data)).toHaveLength(MAX_WATCHED_PROJECTS);
+    expect(desiredProjectIds('/operations', [team])).toHaveLength(40);
+    expect(desiredProjectIds('/operations', [team])[0]).toBe(1);
+  });
+
+  it('a Workload board or tray refreshes on any task change', () => {
+    expect(hits(['workload', 'team', { weekOf: '2026-11-22' }], taskUpdated)).toBe(true);
+    expect(hits(['workload', 'tray', {}], taskUpdated)).toBe(true);
   });
 
   it('computes the rooms to join and to leave', () => {

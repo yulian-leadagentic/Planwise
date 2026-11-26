@@ -205,12 +205,45 @@ function rowsOf(data: unknown): unknown[] {
   return Array.isArray(d) ? d : [];
 }
 
+/** Operations › Workload board / tray (QA6 P4, PR-063). */
+function isWorkloadBoardKey(queryKey: readonly unknown[]): boolean {
+  return queryKey[0] === 'workload' && (queryKey[1] === 'team' || queryKey[1] === 'tray');
+}
+
+/**
+ * Projects on an Operations › Workload board or tray: the `tasks` index
+ * of `['workload','team', …]` (masked tasks never get an entry) and the
+ * Unassigned / Overdue items of `['workload','tray', …]` (approvals are
+ * left out: the approver may not open that project, D11). Capped.
+ */
+export function workloadProjectIds(queryKey: readonly unknown[], data: unknown, max = MAX_WATCHED_PROJECTS): number[] {
+  if (!isWorkloadBoardKey(queryKey) || !data || typeof data !== 'object') return [];
+  const d = data as Record<string, any>;
+  const rows: unknown[] = [];
+  if (queryKey[1] === 'team') {
+    const tasks = d.tasks;
+    if (tasks && typeof tasks === 'object') rows.push(...(Array.isArray(tasks) ? tasks : Object.values(tasks)));
+  } else {
+    for (const group of [d.unassigned, d.overdue]) {
+      if (Array.isArray(group?.items)) rows.push(...group.items);
+    }
+  }
+  const out: number[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object' || (row as Record<string, unknown>).masked) continue;
+    const id = toId((row as Record<string, unknown>).projectId);
+    if (id !== undefined && !out.includes(id)) out.push(id);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 /** Cross-project lists whose rows say which projects are on screen. */
 function isCrossProjectList(queryKey: readonly unknown[]): boolean {
   const [k0, k1] = queryKey;
   if (k0 === 'tasks') return taskDetailId(queryKey) === undefined && k1 !== 'detail' && k1 !== 'allowed-transitions';
   if (k0 === 'execution-board') return k1 == null;
-  return k0 === 'dashboard' || (k0 === 'workload' && k1 === 'all-users');
+  return k0 === 'dashboard' || (k0 === 'workload' && (k1 === 'all-users' || k1 === 'team' || k1 === 'tray'));
 }
 
 /**
@@ -236,6 +269,10 @@ export function desiredProjectIds(
   }
   for (const q of activeQueries) {
     if (!isCrossProjectList(q.queryKey) || projectIdFromKey(q.queryKey) !== undefined) continue;
+    if (isWorkloadBoardKey(q.queryKey)) {
+      ordered.push(...workloadProjectIds(q.queryKey, q.data, max));
+      continue;
+    }
     for (const row of rowsOf(q.data)) {
       const id = projectIdOf(row);
       if (id !== undefined) ordered.push(id);
