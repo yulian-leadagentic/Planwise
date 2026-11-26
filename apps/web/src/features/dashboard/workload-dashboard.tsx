@@ -49,7 +49,7 @@ import {
 import { EMPTY_ASSIGN, normalizeTeamWorkload, normalizeTray, type WorkloadTaskEntry, type WorkloadTray as Tray } from './workload-contract';
 import { useWorkloadAssign } from './use-workload-assign';
 import { dragVia, useStuckDragRecovery } from './workload-drag-recovery';
-import { BOARD_MOVED_TEXT, dropTargetAtPoint, handleDrop, releasePoint, useLastPointer } from './workload-drop-guards';
+import { BOARD_MOVED_TEXT, dropTargetAtPoint, handleDrop, releasePoint, useHoldWhileDragging, useLastPointer } from './workload-drop-guards';
 import {
   dayTasksTitle,
   formatWorkRange,
@@ -151,7 +151,7 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
   const teamKey = useMemo(() => ['workload', 'team', params] as const, [params]);
   const trayKey = useMemo(() => ['workload', 'tray', params] as const, [params]);
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TeamWorkload>({
+  const teamQuery = useQuery<TeamWorkload>({
     queryKey: teamKey,
     staleTime: 2 * 60 * 1000,
     retry: 1,
@@ -167,6 +167,25 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
     placeholderData: (prev) => prev,
     queryFn: () => client.get('/workload/tray', { params }).then((r) => normalizeTray(r.data?.data ?? r.data)),
   });
+
+  // Round 3 (26.11) guard 3: while a chip is dragged the board shows, and
+  // drops are checked against, what it showed when the drag started. A
+  // refetch or realtime update that lands meanwhile only reaches the
+  // screen when the drag ends (see holdWhileDragging).
+  const board = useHoldWhileDragging(
+    {
+      data: teamQuery.data,
+      isError: teamQuery.isError,
+      error: teamQuery.error,
+      isFetching: teamQuery.isFetching,
+      tray: trayQuery.data,
+      trayLoading: trayQuery.isLoading,
+      trayError: trayQuery.isError,
+    },
+    active != null,
+  );
+  const { data, isError, error, isFetching } = board;
+  const { isLoading, refetch } = teamQuery;
 
   const people: TeamWorkloadPerson[] = data?.people ?? [];
   const days = data?.days ?? [];
@@ -194,7 +213,7 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
 
   // A tray task's project may be missing from the board's index: the drop
   // check reads both `assign.projects` blocks.
-  const trayProjects = trayQuery.data?.assign.projects;
+  const trayProjects = board.tray?.assign.projects;
   const dropAssign = useMemo(
     () => ({ projects: mergeAssignProjects(assign.projects, trayProjects), services: assign.services }),
     [assign.projects, assign.services, trayProjects],
@@ -648,16 +667,16 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
           (D13). The scheduler list stays on Risk & Review and on the
           project workload panel. */}
       <WorkloadTray
-        tray={trayQuery.data}
-        trayLoading={trayQuery.isLoading}
-        trayError={trayQuery.isError}
+        tray={board.tray}
+        trayLoading={board.trayLoading}
+        trayError={board.trayError}
         onRetry={() => trayQuery.refetch()}
         overload={overload}
         tasks={tasks}
         peopleById={peopleById}
         canDrag={canDragFor}
         active={active}
-        approvalsCount={trayQuery.data ? trayQuery.data.approvals.length : assign.approvalsWaitingForMe}
+        approvalsCount={board.tray ? board.tray.approvals.length : assign.approvalsWaitingForMe}
         onOpenTask={(taskId) => setDrawerTaskId(taskId)}
         onApprove={(r) => decide.mutate({ r, decision: 'approve' })}
         onReject={(r) => decide.mutate({ r, decision: 'reject' })}

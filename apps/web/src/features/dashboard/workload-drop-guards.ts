@@ -15,6 +15,7 @@ import type { DropTarget } from './parts/workload-dnd';
  *     when it is released (resolveDropTarget / handleDrop).
  *  2. Droppables are re-measured while dragging and auto-scroll is kept
  *     to the scroller's edges: the DndContext config in parts/workload-dnd.tsx.
+ *  3. The board data holds still while a drag is on (holdWhileDragging).
  */
 
 // ─── Guard 1 · the target is the cell under the pointer ─────────────────
@@ -154,6 +155,32 @@ export function handleDrop(
   }
   fx.submit(cell, check);
   return 'submit';
+}
+
+// ─── Guard 3 · the board holds still during a drag ──────────────────────
+
+export type Held<T> = { value: T } | null;
+
+/**
+ * The gate. While a drag is on, the board keeps showing (and checking
+ * against) what it showed when the drag started: a background refetch, a
+ * realtime invalidation or a notification may update the query cache,
+ * but rows, tray, error banner and "Refreshing…" do not change under the
+ * pointer. When the drag ends the live value comes back at once, so
+ * whatever arrived meanwhile is applied in one go.
+ */
+export function holdWhileDragging<T>(held: Held<T>, live: T, dragging: boolean): { held: Held<T>; value: T } {
+  if (!dragging) return { held: null, value: live };
+  const h = held ?? { value: live };
+  return { held: h, value: h.value };
+}
+
+/** `holdWhileDragging` across renders. */
+export function useHoldWhileDragging<T>(live: T, dragging: boolean): T {
+  const ref = useRef<Held<T>>(null);
+  const next = holdWhileDragging(ref.current, live, dragging);
+  ref.current = next.held;
+  return next.value;
 }
 
 /**

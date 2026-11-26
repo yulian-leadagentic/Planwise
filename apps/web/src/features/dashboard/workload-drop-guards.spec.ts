@@ -9,6 +9,8 @@
  * and the user is told the board moved.
  * Guard 2: droppables are re-measured during a drag, and auto-scroll
  * only runs at the vertical edges of the scroller.
+ * Guard 3: while a drag is on, a refetch or realtime update does not
+ * replace the rows; the drag end shows the latest data at once.
  */
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -23,10 +25,12 @@ import {
   dropTargetInStack,
   dropTargetKey,
   handleDrop,
+  holdWhileDragging,
   parseDropTargetKey,
   releasePoint,
   resolveDropTarget,
   type DropEffects,
+  type Held,
   type HitElement,
 } from './workload-drop-guards';
 
@@ -229,6 +233,66 @@ describe('workload drop guard 2 · measuring and auto-scroll of the DndContext',
     expect(band).toBe(85);
     expect(150).toBeGreaterThan(band);
     expect(150).toBeLessThan(850 * 0.2); // inside dnd-kit's default 20% band
+  });
+});
+
+describe('workload drop guard 3 · the board holds still during a drag (holdWhileDragging)', () => {
+  type Board = { rows: string[]; refreshing: boolean };
+  const before: Board = { rows: ['QA TeamLeader', 'QA Professional'], refreshing: false };
+  const refetched: Board = { rows: ['Ilay Edri', 'QA TeamLeader', 'QA Professional'], refreshing: false };
+
+  /** Renders in sequence, carrying the held value like the hook's ref does. */
+  function run(frames: Array<{ live: Board; dragging: boolean }>) {
+    let held: Held<Board> = null;
+    return frames.map(({ live, dragging }) => {
+      const next = holdWhileDragging(held, live, dragging);
+      held = next.held;
+      return next.value;
+    });
+  }
+
+  it('no drag: the live data, nothing held', () => {
+    expect(holdWhileDragging(null, before, false)).toEqual({ held: null, value: before });
+  });
+
+  it('a refetch (or realtime invalidation) that lands mid-drag does not replace the rows', () => {
+    const shown = run([
+      { live: before, dragging: false },
+      { live: before, dragging: true }, // onDragStart
+      { live: { ...before, refreshing: true }, dragging: true }, // realtime invalidation: refetch starts
+      { live: refetched, dragging: true }, // the new rows arrive under the pointer
+    ]);
+    expect(shown[1]).toBe(before);
+    expect(shown[2]).toBe(before);
+    expect(shown[3]).toBe(before);
+  });
+
+  it('the drag ends: the latest data is shown at once (one flush)', () => {
+    const shown = run([
+      { live: before, dragging: true },
+      { live: refetched, dragging: true },
+      { live: refetched, dragging: false }, // onDragEnd / onDragCancel
+    ]);
+    expect(shown[1]).toBe(before);
+    expect(shown[2]).toBe(refetched);
+  });
+
+  it('the next drag holds the data of ITS start, not of the previous drag', () => {
+    const shown = run([
+      { live: before, dragging: true },
+      { live: before, dragging: false },
+      { live: refetched, dragging: false },
+      { live: refetched, dragging: true },
+      { live: before, dragging: true },
+    ]);
+    expect(shown[3]).toBe(refetched);
+    expect(shown[4]).toBe(refetched);
+  });
+
+  it('holds undefined too (a query with no data yet stays empty for the whole drag)', () => {
+    const { held, value } = holdWhileDragging<Board | undefined>(null, undefined, true);
+    expect(value).toBeUndefined();
+    expect(holdWhileDragging(held, refetched, true).value).toBeUndefined();
   });
 });
 
