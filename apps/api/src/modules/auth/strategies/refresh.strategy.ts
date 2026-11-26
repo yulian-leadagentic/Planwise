@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 
 import { PrismaService } from '../../../prisma/prisma.service';
+import { REFRESH_COOKIE_NAME } from '../refresh-cookie';
 
 function requireSecret(config: ConfigService, key: string): string {
   const value = config.get<string>(key);
@@ -23,7 +24,7 @@ export class RefreshStrategy extends PassportStrategy(Strategy, 'refresh') {
     super({
       jwtFromRequest: (req: Request) => {
         if (req && req.cookies) {
-          return req.cookies['refresh_token'];
+          return req.cookies[REFRESH_COOKIE_NAME];
         }
         return null;
       },

@@ -24,38 +24,18 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { LoginDto } from './dto/login.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { REFRESH_COOKIE_MAX_AGE_MS, REFRESH_COOKIE_NAME, refreshCookieOptions } from './refresh-cookie';
 
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  // In staging/prod the web app and the API are served from different
-  // subdomains of up.railway.app — a public suffix — so the refresh cookie
-  // travels cross-site on the /auth/refresh XHR. `SameSite=None; Secure`
-  // is required for the browser to send it; anything stricter silently
-  // drops the cookie and the user gets logged out on token expiry.
-  // Local dev is same-origin http → `SameSite=Lax` + `Secure=false`.
-  // clearCookie() on logout MUST use the same attributes or the browser
-  // ignores the delete.
-  //
-  // Detection: explicit AUTH_CROSS_SITE=true wins; otherwise anything
-  // that isn't `development` (staging, production, test on a real host)
-  // is treated as cross-site. Railway sets NODE_ENV=staging on staging,
-  // so an equality check against `production` alone would silently drop
-  // the cookie there.
-  private refreshCookieOptions() {
-    const explicit = process.env.AUTH_CROSS_SITE;
-    const crossSite =
-      explicit === 'true' ||
-      (explicit !== 'false' && (process.env.NODE_ENV ?? 'development') !== 'development');
-    return {
-      httpOnly: true,
-      secure: crossSite,
-      sameSite: crossSite ? ('none' as const) : ('lax' as const),
-      path: '/',
-    };
-  }
+  // The refresh cookie's name and attributes live in ./refresh-cookie.ts,
+  // shared with the SSO callback: clearCookie() on logout MUST use the
+  // same attributes or the browser ignores the delete, and a stricter
+  // SameSite than `None` on a cross-site deployment silently drops the
+  // cookie (the user is logged out on token expiry).
 
   @Post('login')
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
@@ -64,22 +44,27 @@ export class AuthController {
   @ApiOperation({ summary: 'Login with email and password' })
   async login(@Req() req: Request, @Res({ passthrough: true }) res: Response, @Body() _dto: LoginDto) {
     const result = await this.authService.login(req.user as any);
-    res.cookie('refresh_token', result.refreshToken, {
-      ...this.refreshCookieOptions(),
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    res.cookie(REFRESH_COOKIE_NAME, result.refreshToken, {
+      ...refreshCookieOptions(),
+      maxAge: REFRESH_COOKIE_MAX_AGE_MS,
     });
     return { accessToken: result.accessToken, user: result.user };
   }
 
+  // BM2-32: the refresh token is a stateless JWT (no rotation family, no
+  // reuse detection), so parallel refreshes from several requests or tabs
+  // all succeed, and the answer is for whoever the browser's ONE cookie
+  // belongs to now. The web client detects a different user
+  // (apps/web/src/api/auth-sync.ts).
   @Post('refresh')
   @UseGuards(AuthGuard('refresh'))
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh access token using refresh cookie' })
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const result = await this.authService.refreshTokens(req.user as any);
-    res.cookie('refresh_token', result.refreshToken, {
-      ...this.refreshCookieOptions(),
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+    res.cookie(REFRESH_COOKIE_NAME, result.refreshToken, {
+      ...refreshCookieOptions(),
+      maxAge: REFRESH_COOKIE_MAX_AGE_MS,
     });
     return { accessToken: result.accessToken };
   }
@@ -91,7 +76,7 @@ export class AuthController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Logout and clear refresh cookie' })
   async logout(@Res({ passthrough: true }) res: Response) {
-    res.clearCookie('refresh_token', this.refreshCookieOptions());
+    res.clearCookie(REFRESH_COOKIE_NAME, refreshCookieOptions());
     return { message: 'Logged out successfully' };
   }
 

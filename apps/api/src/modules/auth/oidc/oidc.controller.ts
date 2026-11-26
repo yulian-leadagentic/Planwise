@@ -41,6 +41,7 @@ import { AuthService } from '../auth.service';
 import { OidcUserResolverService } from './oidc-user-resolver.service';
 import { SsoAdminService } from '../../sso-admin/sso-admin.service';
 import { setSignedFlowCookie, readSignedFlowCookie, clearFlowCookie, OidcFlowState } from './oidc-flow-cookie.util';
+import { REFRESH_COOKIE_MAX_AGE_MS, REFRESH_COOKIE_NAME, refreshCookieOptions } from '../refresh-cookie';
 
 @ApiTags('Auth - OIDC')
 @Controller('auth/oidc')
@@ -248,11 +249,15 @@ export class OidcController {
       metadata: { provider, wasCreated: resolved.wasCreated, wasLinked: resolved.wasLinked },
     });
 
-    res.cookie('refresh_token', result.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+    // BM2-32: exactly the cookie /auth/login writes. This used to be
+    // `SameSite=Strict` (+ Secure only in production): on a cross-site
+    // deployment (web and API on different up.railway.app subdomains)
+    // the browser never sent it back on POST /auth/refresh, so an SSO
+    // user was signed out at the first access-token expiry and on every
+    // page reload.
+    res.cookie(REFRESH_COOKIE_NAME, result.refreshToken, {
+      ...refreshCookieOptions(),
+      maxAge: REFRESH_COOKIE_MAX_AGE_MS,
     });
 
     // 302 to the post-login URL. If APP_POST_LOGIN_URL isn't set, fall
