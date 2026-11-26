@@ -14,6 +14,9 @@ export const TEAM_JOIN_REQUEST_ACTION = 'team_join_request';
 export const TEAM_JOIN_REQUEST_NOTIFICATION = 'team_join_request';
 /** A second request inside this window does not notify again. */
 export const TEAM_JOIN_REQUEST_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Review 2 (A7): POST /projects/:id/team-requests, at most this many per user per TEAM_JOIN_REQUEST_LIMIT_TTL_MS. */
+export const TEAM_JOIN_REQUEST_LIMIT = 3;
+export const TEAM_JOIN_REQUEST_LIMIT_TTL_MS = 60_000;
 
 export interface TeamJoinRequestResult {
   /** True when an earlier request (same user, same project) is less than 24 hours old: nobody was notified now. */
@@ -40,11 +43,20 @@ export interface TeamJoinRequestResult {
  * The Activity Log write is best-effort (ActivityLogService swallows its
  * errors), so a failed log row only means a repeat would notify again.
  *
+ * Review 2 (A7): requests of the same (user, project) run one at a time
+ * in this process (from the 24-hour check to the Activity Log row), so
+ * parallel POSTs notify once: the second one reads the first one's row.
+ * The route allows TEAM_JOIN_REQUEST_LIMIT requests a minute per user,
+ * which bounds the repeats a failed log row allows.
+ *
  * The leader and an Admin (assertProjectManage) are refused with 409
  * CAN_MANAGE_PROJECT: they add people to the Team themselves.
  */
 @Injectable()
 export class ProjectTeamRequestsService {
+  /** Review 2 (A7): the last queued request per `${userId}:${projectId}` in this process (never rejects). */
+  private readonly inFlight = new Map<string, Promise<void>>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly access: ProjectAccessService,
@@ -86,52 +98,77 @@ export class ProjectTeamRequestsService {
       });
     }
 
-    const earlier = await this.recentRequestAt(caller.id, projectId, now);
-    if (earlier) {
-      return { alreadyRequested: true, requestedAt: earlier.toISOString() };
-    }
+    // From the 24-hour check to the Activity Log row, one request of this
+    // (user, project) at a time: a parallel one waits, then finds this row.
+    return this.oneAtATime<TeamJoinRequestResult>(`${caller.id}:${projectId}`, async () => {
+      const earlier = await this.recentRequestAt(caller.id, projectId, now);
+      if (earlier) {
+        return { alreadyRequested: true, requestedAt: earlier.toISOString() };
+      }
 
-    const project = await this.prisma.project.findFirst({
-      where: { id: projectId, deletedAt: null },
-      select: { id: true, name: true, leaderId: true, createdBy: true },
-    });
-    if (!project) throw new NotFoundException('Project not found');
-    const managerId = await this.resolveManagerId(project);
-    if (managerId == null) {
-      throw new ConflictException({
-        code: 'NO_PROJECT_MANAGER',
-        message: 'This project has no leader to ask. Ask an administrator to add you to the team.',
+      const project = await this.prisma.project.findFirst({
+        where: { id: projectId, deletedAt: null },
+        select: { id: true, name: true, leaderId: true, createdBy: true },
       });
+      if (!project) throw new NotFoundException('Project not found');
+      const managerId = await this.resolveManagerId(project);
+      if (managerId == null) {
+        throw new ConflictException({
+          code: 'NO_PROJECT_MANAGER',
+          message: 'This project has no leader to ask. Ask an administrator to add you to the team.',
+        });
+      }
+
+      const name = `${me!.firstName ?? ''} ${me!.lastName ?? ''}`.trim() || `User #${me!.id}`;
+      const projectName = project.name ?? `Project #${project.id}`;
+      const link = `/projects/${project.id}?projectTab=team`;
+
+      await this.notifications.create({
+        userId: managerId,
+        type: TEAM_JOIN_REQUEST_NOTIFICATION,
+        title: `${name} asked to join the team of ${projectName}`,
+        body: 'Open the Team tab to add them to the project.',
+        entityType: 'project',
+        entityId: project.id,
+        actorId: caller.id,
+        data: { projectId: project.id, requesterId: caller.id, link },
+      });
+
+      await this.activityLog.write({
+        category: 'project',
+        action: TEAM_JOIN_REQUEST_ACTION,
+        entityType: 'project_member',
+        entityId: caller.id,
+        entityName: name,
+        projectId: project.id,
+        actorUserId: caller.id,
+        description: `${name} asked the project manager to be added to the team`,
+        metadata: { notifiedUserId: managerId },
+      });
+
+      return { alreadyRequested: false, requestedAt: now.toISOString() };
+    });
+  }
+
+  /**
+   * Runs `fn` once every earlier call with the same key has settled: a
+   * small in-process lock. The key is forgotten when its last call ends.
+   * (Several API processes would each have their own; the per-user route
+   * limit still bounds what gets through.)
+   */
+  private async oneAtATime<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const before = this.inFlight.get(key) ?? Promise.resolve();
+    const run = before.then(fn);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.inFlight.set(key, tail);
+    try {
+      return await run;
+    } finally {
+      if (this.inFlight.get(key) === tail) this.inFlight.delete(key);
     }
-
-    const name = `${me!.firstName ?? ''} ${me!.lastName ?? ''}`.trim() || `User #${me!.id}`;
-    const projectName = project.name ?? `Project #${project.id}`;
-    const link = `/projects/${project.id}?projectTab=team`;
-
-    await this.notifications.create({
-      userId: managerId,
-      type: TEAM_JOIN_REQUEST_NOTIFICATION,
-      title: `${name} asked to join the team of ${projectName}`,
-      body: 'Open the Team tab to add them to the project.',
-      entityType: 'project',
-      entityId: project.id,
-      actorId: caller.id,
-      data: { projectId: project.id, requesterId: caller.id, link },
-    });
-
-    await this.activityLog.write({
-      category: 'project',
-      action: TEAM_JOIN_REQUEST_ACTION,
-      entityType: 'project_member',
-      entityId: caller.id,
-      entityName: name,
-      projectId: project.id,
-      actorUserId: caller.id,
-      description: `${name} asked the project manager to be added to the team`,
-      metadata: { notifiedUserId: managerId },
-    });
-
-    return { alreadyRequested: false, requestedAt: now.toISOString() };
   }
 
   /**

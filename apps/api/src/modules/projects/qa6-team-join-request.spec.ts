@@ -11,14 +11,23 @@
  * access. 107 is an external contact holding a role on the project.
  */
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { Reflector } from '@nestjs/core';
+import { ThrottlerException, ThrottlerGuard, ThrottlerStorageService } from '@nestjs/throttler';
 
 import { MemoryDb, memoryPrisma, PLANWISE_RELATIONS } from '../../testing/memory-prisma';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { PermissionDeniedException } from '../../common/errors/permission-denied';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { APP_THROTTLE } from '../../common/guards/per-user-throttle';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ProjectsController } from './projects.controller';
-import { ProjectTeamRequestsService, TEAM_JOIN_REQUEST_ACTION } from './project-team-requests.service';
+import {
+  ProjectTeamRequestsService,
+  TEAM_JOIN_REQUEST_ACTION,
+  TEAM_JOIN_REQUEST_LIMIT,
+} from './project-team-requests.service';
 
 const grant = (route: string) => ({ module: { route: `/${route}`, name: route }, canRead: true, canWrite: true, canDelete: true });
 const MODULES = ['projects', 'tasks'].map(grant);
@@ -224,6 +233,30 @@ describe('QA6 decision 2 — POST /projects/:id/team-requests', () => {
     expect(w.db.table('notification')).toHaveLength(0);
   });
 
+  it('review 2 (A7): parallel requests of the same person notify the leader once; another person is not held back', async () => {
+    const out = await Promise.all([1, 2, 3].map(() => w.ctrl.requestToJoinTeam(ORG_VIEWER, 58)));
+    expect(out.filter((r) => !r.alreadyRequested)).toHaveLength(1);
+    expect(out.filter((r) => r.alreadyRequested)).toHaveLength(2);
+    expect(w.notificationsTo(104)).toHaveLength(1);
+    expect(w.requests()).toHaveLength(1);
+
+    const both = await Promise.all([w.ctrl.requestToJoinTeam(ORG_VIEWER, 58), w.ctrl.requestToJoinTeam(CHAIN_MANAGER, 58)]);
+    expect(both.map((r) => r.alreadyRequested)).toEqual([true, false]);
+    expect(w.notificationsTo(104)).toHaveLength(2);
+  });
+
+  it('review 2 (A7): a failed request does not block the next one of the same person', async () => {
+    const notifications = (w.service as any).notifications;
+    const create = notifications.create;
+    notifications.create = async () => {
+      throw new Error('notifications down');
+    };
+    await expect(w.ctrl.requestToJoinTeam(ORG_VIEWER, 58)).rejects.toThrow('notifications down');
+    notifications.create = create;
+    await expect(w.ctrl.requestToJoinTeam(ORG_VIEWER, 58)).resolves.toMatchObject({ alreadyRequested: false });
+    expect(w.notificationsTo(104)).toHaveLength(1);
+  });
+
   it('no leader (or an inactive one): the creator is asked; nobody to ask: 409 NO_PROJECT_MANAGER', async () => {
     const project = w.db.table('project')[0];
     project.leaderId = null;
@@ -240,5 +273,48 @@ describe('QA6 decision 2 — POST /projects/:id/team-requests', () => {
     const err = await w.ctrl.requestToJoinTeam(ORG_VIEWER, 58).catch((e) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect(codeOf(err)).toBe('NO_PROJECT_MANAGER');
+  });
+});
+
+describe('review 2 (A7): POST /projects/:id/team-requests is throttled per user', () => {
+  const handler = ProjectsController.prototype.requestToJoinTeam;
+  let storage: ThrottlerStorageService;
+  let guard: ThrottlerGuard;
+  beforeEach(async () => {
+    storage = new ThrottlerStorageService();
+    // The app's guard: the module options of app.module, the route's metadata.
+    guard = new ThrottlerGuard([{ ttl: APP_THROTTLE.ttl, limit: APP_THROTTLE.limit }], storage, new Reflector());
+    await guard.onModuleInit();
+  });
+  afterEach(() => storage.onApplicationShutdown());
+  /** A request from one IP (behind the proxy, everybody's). `user` is set once JwtAuthGuard ran. */
+  const ctx = (user: any) => {
+    const req = { user, ip: '10.0.0.1', headers: {} };
+    const res = { header: jest.fn() };
+    return {
+      switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }),
+      getHandler: () => handler,
+      getClass: () => ProjectsController,
+    } as any;
+  };
+
+  it('the route runs its own ThrottlerGuard, after the controller JwtAuthGuard', () => {
+    expect(Reflect.getMetadata(GUARDS_METADATA, ProjectsController)).toEqual(expect.arrayContaining([JwtAuthGuard]));
+    expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([ThrottlerGuard]);
+  });
+
+  it(`${TEAM_JOIN_REQUEST_LIMIT} a minute per signed-in user: the next one is 429; another user on the same IP has his own`, async () => {
+    expect(TEAM_JOIN_REQUEST_LIMIT).toBe(3);
+    for (let i = 0; i < TEAM_JOIN_REQUEST_LIMIT; i++) await expect(guard.canActivate(ctx(ORG_VIEWER))).resolves.toBe(true);
+    const e = await guard.canActivate(ctx(ORG_VIEWER)).catch((x) => x);
+    expect(e).toBeInstanceOf(ThrottlerException);
+    expect(e.getStatus()).toBe(429);
+    await expect(guard.canActivate(ctx(CHAIN_MANAGER))).resolves.toBe(true);
+  });
+
+  it('the app-wide pass (before JwtAuthGuard, no user yet) keeps the app-wide limit, so one IP is not held to 3', async () => {
+    for (let i = 0; i < 10; i++) await expect(guard.canActivate(ctx(undefined))).resolves.toBe(true);
+    // ... and it does not count against a user.
+    await expect(guard.canActivate(ctx(ORG_VIEWER))).resolves.toBe(true);
   });
 });

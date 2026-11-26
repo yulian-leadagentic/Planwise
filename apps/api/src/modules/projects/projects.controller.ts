@@ -13,10 +13,16 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
 import { ProjectsService } from './projects.service';
-import { ProjectTeamRequestsService } from './project-team-requests.service';
+import {
+  ProjectTeamRequestsService,
+  TEAM_JOIN_REQUEST_LIMIT,
+  TEAM_JOIN_REQUEST_LIMIT_TTL_MS,
+} from './project-team-requests.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { perUserThrottle } from '../../common/guards/per-user-throttle';
 import { RolesGuard, isAdminUser } from '../../common/guards/roles.guard';
 import { RequirePermissions } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -124,9 +130,15 @@ export class ProjectsController {
    * 403 TEAM_REQUEST_NOT_EMPLOYEE for a non-employee; 409 ALREADY_ON_TEAM
    * when he is on the Team; 409 NO_PROJECT_MANAGER when nobody can be
    * asked; 404 for a missing project.
+   *
+   * Review 2 (A7): at most TEAM_JOIN_REQUEST_LIMIT requests a minute per
+   * user (429 after that), so parallel POSTs, or repeats after a failed
+   * Activity Log write, cannot flood the leader. See perUserThrottle.
    */
   @Post(':id/team-requests')
   @RequirePermissions({ module: 'projects', action: 'read' })
+  @UseGuards(ThrottlerGuard)
+  @Throttle(perUserThrottle(TEAM_JOIN_REQUEST_LIMIT, TEAM_JOIN_REQUEST_LIMIT_TTL_MS))
   @ApiOperation({ summary: 'Ask the project manager to add the caller to the project team' })
   async requestToJoinTeam(@CurrentUser() user: any, @Param('id', ParseIntPipe) id: number) {
     return this.teamRequests.requestToJoin(user, id);

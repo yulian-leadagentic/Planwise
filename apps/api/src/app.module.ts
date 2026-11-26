@@ -7,6 +7,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { LoggerModule } from 'nestjs-pino';
 import * as crypto from 'crypto';
 
+import { APP_THROTTLE } from './common/guards/per-user-throttle';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ProjectsModule } from './modules/projects/projects.module';
@@ -92,7 +93,7 @@ import { WorkloadAssignModule } from './modules/workload-assign/workload-assign.
         }),
       },
     }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 100 }]),
+    ThrottlerModule.forRoot([{ ttl: APP_THROTTLE.ttl, limit: APP_THROTTLE.limit }]),
     ScheduleModule.forRoot(),
     EventEmitterModule.forRoot(),
     PrismaModule,
