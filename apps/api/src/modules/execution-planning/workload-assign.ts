@@ -95,13 +95,18 @@ export function buildTaskEntry(t: WorkloadTask, ctx: TaskEntryContext): TaskEntr
   const pendingRow = ctx.pendingByTask.get(t.id) ?? null;
   const svc = effectiveService(t, ctx.services);
   const logged = t.loggedByUser ?? new Map<number, number>();
+  // Who logged time on the task is itself timesheet data (review 2, A5):
+  // the project's leader sees everyone (toLeaderView); anyone else only
+  // the task's live assignees (on the chip anyway) and the people whose
+  // timesheets he may see (the round-3 rule, as for the hours below).
+  const leads = t.projectId != null && ctx.ledProjectIds.has(t.projectId);
+  const assigned = new Set((t.assigneeIds ?? []).map(Number));
   const loggedUserIds = [...logged.entries()]
-    .filter(([, h]) => h > 0)
+    .filter(([u, h]) => h > 0 && (leads || assigned.has(u) || isUserVisible(ctx.visible, u)))
     .map(([u]) => u)
     .sort((a, b) => a - b);
   // Hours per person only for people the caller may see, or all of them
   // for the project's leader (the round-3 rule / toLeaderView).
-  const leads = t.projectId != null && ctx.ledProjectIds.has(t.projectId);
   let byUser: Record<string, number> | null = null;
   for (const uid of loggedUserIds) {
     if (!leads && !isUserVisible(ctx.visible, uid)) continue;

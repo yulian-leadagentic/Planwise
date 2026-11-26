@@ -4,10 +4,13 @@
  * rules for dimming and the before→after preview.
  */
 import {
+  MAX_MOVE_SPAN_DAYS,
+  MAX_SHIFT_WORKING_DAYS,
   OrgUnitLike,
   buildOrgCalendar,
   countOrgWorkingDays,
   departmentOf,
+  fromDayProblem,
   isOrgWorkingDay,
   normalizeIdList,
   planMoveDates,
@@ -53,6 +56,42 @@ describe('org working days', () => {
     expect(shiftByWorkingDays('2026-11-24', 0, cal)).toBe('2026-11-24');
     // A calendar with no working day at all never hangs.
     expect(typeof shiftByWorkingDays('2026-11-24', 3, buildOrgCalendar([0, 1, 2, 3, 4, 5, 6], []))).toBe('string');
+  });
+
+  it('review 2 (A6): the walk is capped, so an absurd shift is bounded', () => {
+    const capped = shiftByWorkingDays('2026-11-24', MAX_SHIFT_WORKING_DAYS, plain);
+    expect(shiftByWorkingDays('2026-11-24', 1e9, plain)).toBe(capped);
+    expect(shiftByWorkingDays('2026-11-24', Infinity, plain)).toBe(capped);
+    expect(shiftByWorkingDays('2026-11-24', -1e9, plain)).toBe(shiftByWorkingDays('2026-11-24', -MAX_SHIFT_WORKING_DAYS, plain));
+  });
+});
+
+describe('fromDayProblem — review 2 (A6): the column a chip was dragged from', () => {
+  // Mon 23/11 .. Wed 25/11.
+  const t = { estimatedStartDate: d('2026-11-23'), startDate: null, endDate: d('2026-11-25') };
+
+  it('a day of the task, near the drop day: fine', () => {
+    expect(fromDayProblem(t, '2026-11-23', '2026-11-26', TODAY)).toBeNull();
+    expect(fromDayProblem(t, '2026-11-25', '2026-11-22', TODAY)).toBeNull();
+    // Back to the tray: no drop day, the window still decides.
+    expect(fromDayProblem(t, '2026-11-24', null, TODAY)).toBeNull();
+  });
+
+  it('not one of its days: after the end, or more than 14 days before it (the engine shows a task due on a day off up to 14 days early)', () => {
+    expect(fromDayProblem(t, '2026-11-26', '2026-11-29', TODAY)).toBe('not_task_day');
+    expect(fromDayProblem(t, '2026-11-11', '2026-11-23', TODAY)).toBeNull(); // end - 14
+    expect(fromDayProblem(t, '2026-11-10', '2026-11-23', TODAY)).toBe('not_task_day');
+    // No end date: the task is on no day at all.
+    expect(fromDayProblem({ estimatedStartDate: d('2026-11-23'), endDate: null }, '2026-11-23', '2026-11-24', TODAY)).toBe('not_task_day');
+    // No start: the window starts today, as the engine spreads it.
+    expect(fromDayProblem({ estimatedStartDate: null, startDate: null, endDate: d('2026-11-25') }, TODAY, '2026-11-24', TODAY)).toBeNull();
+  });
+
+  it(`more than ${MAX_MOVE_SPAN_DAYS} days from the drop day: too far (one board shows at most 93 days)`, () => {
+    expect(MAX_MOVE_SPAN_DAYS).toBe(93);
+    expect(fromDayProblem(t, '2026-11-24', '2027-02-25', TODAY)).toBeNull(); // 93 days
+    expect(fromDayProblem(t, '2026-11-24', '2027-02-26', TODAY)).toBe('too_far'); // 94 days
+    expect(fromDayProblem(t, '2020-01-05', '2026-11-24', TODAY)).toBe('too_far');
   });
 });
 

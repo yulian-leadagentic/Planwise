@@ -11,7 +11,8 @@
  * Supported: findFirst / findUnique(OrThrow) / findMany / count /
  * aggregate / groupBy / create / createMany / update / updateMany /
  * upsert / delete / deleteMany, and $transaction (an interactive one
- * rolls back when its callback throws). Where: AND / OR / NOT,
+ * rolls back when its callback throws). $queryRaw / $executeRaw are
+ * no-ops (the row lock a transaction takes first). Where: AND / OR / NOT,
  * equals, in, notIn, not, lt, lte, gt, gte, contains, startsWith,
  * endsWith, relation filters (some / every / none, is / isNot, nested
  * where on a to-one relation) and composite unique keys
@@ -361,6 +362,11 @@ export function memoryPrisma(db: MemoryDb): any {
             }
           };
         }
+        // Raw SQL (e.g. the `SELECT ... FOR UPDATE` row lock a transaction
+        // takes first) is tolerated as a no-op: one caller runs at a time
+        // here, so there is nothing to lock and no rows to return.
+        if (prop === '$queryRaw' || prop === '$queryRawUnsafe') return async () => [];
+        if (prop === '$executeRaw' || prop === '$executeRawUnsafe') return async () => 0;
         if (prop === '__db') return db;
         if (typeof prop !== 'string' || prop.startsWith('$')) return undefined;
         return delegate(prop);

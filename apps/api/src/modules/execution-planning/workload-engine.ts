@@ -482,15 +482,24 @@ export function workingDayDelta(fromKey: string, toKey: string, cal: OrgCalendar
 }
 
 /**
+ * The most working days one shift walks (about ten years of five-day
+ * weeks). A board move is far smaller (its two columns are at most 93
+ * days apart, see fromDayProblem); the cap only bounds the loop below
+ * for absurd input (review 2, A6).
+ */
+export const MAX_SHIFT_WORKING_DAYS = 2600;
+
+/**
  * `key` moved by `n` org working days (n < 0 = back). Each step lands on
  * the next working day, so a working day stays a working day and a
  * window keeps its working-day length. n = 0 returns `key` as is.
+ * |n| is capped at MAX_SHIFT_WORKING_DAYS.
  */
 export function shiftByWorkingDays(key: string, n: number, cal: OrgCalendar): string {
   const steps = Math.trunc(Number(n) || 0);
   if (steps === 0) return key;
   const dir = steps > 0 ? 1 : -1;
-  let left = Math.abs(steps);
+  let left = Math.min(Math.abs(steps), MAX_SHIFT_WORKING_DAYS);
   let k = key;
   // A calendar with no working day at all would never stop.
   for (let guard = left * 7 + 400; left > 0 && guard > 0; guard--) {
@@ -510,6 +519,41 @@ export function effectiveWindow(
   let start = keyOf((t.estimatedStartDate ?? t.startDate) as any) ?? (today <= end ? today : end);
   if (start > end) start = end;
   return { start, end };
+}
+
+/**
+ * How far apart the two columns of one drop may be: both are on the same
+ * board, which shows at most 93 days (TEAM_WORKLOAD_MAX_DAYS).
+ */
+export const MAX_MOVE_SPAN_DAYS = 93;
+/** How far before its end the engine may show a task due on a day off (computePersonWorkload). */
+const DAY_OFF_LOOKBACK_DAYS = 14;
+
+/**
+ * Review 2 (A6) — is `fromDay` (the column a chip was dragged from) one
+ * the task can be on?
+ *   • 'too_far': more than MAX_MOVE_SPAN_DAYS from `toDay`;
+ *   • 'not_task_day': outside the task's window (effectiveWindow, the
+ *     start widened to cover the engine's day-off fallback, which shows a
+ *     task due on a day off up to 14 days before its end), or the task
+ *     has no end date (it is on no day);
+ *   • null: fine.
+ */
+export function fromDayProblem(
+  t: { estimatedStartDate?: Date | string | null; startDate?: Date | string | null; endDate?: Date | string | null },
+  fromDay: string,
+  toDay: string | null,
+  today: string,
+): 'too_far' | 'not_task_day' | null {
+  if (toDay) {
+    const days = Math.round((parseYmd(toDay).getTime() - parseYmd(fromDay).getTime()) / DAY_MS);
+    if (Math.abs(days) > MAX_MOVE_SPAN_DAYS) return 'too_far';
+  }
+  const win = effectiveWindow(t, today);
+  if (!win) return 'not_task_day';
+  const lookback = addDaysYmd(win.end, -DAY_OFF_LOOKBACK_DAYS);
+  const first = lookback < win.start ? lookback : win.start;
+  return fromDay < first || fromDay > win.end ? 'not_task_day' : null;
 }
 
 export interface MoveDates {

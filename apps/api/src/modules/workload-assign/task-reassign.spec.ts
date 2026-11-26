@@ -197,7 +197,9 @@ function world() {
   const policy = new TaskAssigneePolicyService(prisma, access, partnerRoles, activityLog);
   const eps = new ExecutionPlanningService(prisma, access, scope);
   const notifications = new NotificationsService(prisma, events as any);
-  const service = new TaskReassignService(prisma, access, scope, policy, eps, activityLog, notifications, events as any);
+  /** The service over another Prisma (a wrapper of `prisma`), the rest unchanged. */
+  const serviceWith = (p: any) => new TaskReassignService(p, access, scope, policy, eps, activityLog, notifications, events as any);
+  const service = serviceWith(prisma);
   const ctrl = new WorkloadAssignController(service);
   const epsCtrl = new ExecutionPlanningController(eps, access, scope);
   const assignees = (taskId: number) =>
@@ -210,7 +212,7 @@ function world() {
   const team = (asUser: any) => epsCtrl.getTeamWorkload(asUser, VIEW.from, VIEW.to) as Promise<any>;
   const tray = (asUser: any) => epsCtrl.getWorkloadTray(asUser, VIEW.from, VIEW.to) as Promise<any>;
   const move = (asUser: any, taskId: number, body: Record<string, any>) => ctrl.reassignTask(asUser, taskId, { view: VIEW, ...body }) as Promise<any>;
-  return { db, prisma, events, ctrl, epsCtrl, service, assignees, taskRow, lines, notes, team, tray, move };
+  return { db, prisma, events, ctrl, epsCtrl, service, serviceWith, assignees, taskRow, lines, notes, team, tray, move };
 }
 
 const err = async (p: Promise<any>) => p.then(() => { throw new Error('expected an error'); }, (e) => e);
@@ -271,13 +273,29 @@ describe('QA6 PR-063 — GET /workload/team drag-and-drop fields', () => {
     expect(out.assign.canAssign).toBe(true);
   });
 
-  it('logged hours: ⏱ ids for everyone who sees the task, hours only for the leader / visible people', async () => {
+  it('logged hours: ⏱ ids of the live assignees for everyone who sees the task, hours only for the leader / visible people', async () => {
     const leader = await w.team(LEADER);
     expect(leader.tasks['4025']).toMatchObject({ loggedUserIds: [12], loggedHoursByUser: { '12': 1.5 }, remainingHours: 3.5 });
-    const pro = await w.team(PRO);
+    const pro = await w.team(PRO); // Daniel is assigned: his ⏱ is on the chip anyway
     expect(pro.tasks['4025']).toMatchObject({ loggedUserIds: [12], loggedHoursByUser: null });
     const dana = await w.team(DANA); // Daniel is in her chain
     expect(dana.tasks['4025'].loggedHoursByUser).toEqual({ '12': 1.5 });
+  });
+
+  it('review 2 (A5): who logged time on a task he left is shown only to the leader and to those who see his timesheet (board and tray)', async () => {
+    await w.move(LEADER, 4025, { fromUserId: 12, toUserId: 34, fromDay: N(3), toDay: N(3) });
+    expect((await w.team(LEADER)).tasks['4025']).toMatchObject({ assigneeIds: [34], loggedUserIds: [12] }); // leads 59
+    expect((await w.team(DANA)).tasks['4025'].loggedUserIds).toEqual([12]); // Daniel's manager
+    // A Team member, Yair's manager and an Admin (no timesheet exception, round 3) do not learn it.
+    for (const viewer of [PRO, ASAF, ADMIN]) {
+      expect((await w.team(viewer)).tasks['4025']).toMatchObject({ loggedUserIds: [], loggedHoursByUser: null, remainingHours: 3.5 });
+    }
+    // The tray, the same rule: Daniel logged an hour on the unassigned CRD-042.
+    w.db.table('timeEntry').push({ id: 2, taskId: 4023, userId: 12, minutes: 60, date: at(N(0)), deletedAt: null });
+    const trayItem = async (viewer: any) => (await w.tray(viewer)).unassigned.items.find((t: any) => t.id === 4023);
+    expect(await trayItem(LEADER)).toMatchObject({ loggedUserIds: [12], loggedHoursByUser: { '12': 1 } });
+    expect(await trayItem(DANA)).toMatchObject({ loggedUserIds: [12], loggedHoursByUser: { '12': 1 } });
+    expect(await trayItem(PRO)).toMatchObject({ loggedUserIds: [], loggedHoursByUser: null });
   });
 });
 
@@ -520,6 +538,75 @@ describe('QA6 PR-063 — POST /tasks/:id/reassign', () => {
     expect(w.lines()).toHaveLength(0);
   });
 
+  it('review 2 (A6): the source day must be one of the task\'s days, within 93 days of the drop day (400 REASSIGN_INVALID_DAY)', async () => {
+    // CRD-040 is on Tue N(2) only: a made-up source day would shift it by any amount.
+    const far = await err(w.move(LEADER, 4021, { fromUserId: 12, toUserId: 12, fromDay: '2020-01-05', toDay: N(2) }));
+    expect(far.getStatus()).toBe(400);
+    expect(codeOf(far)).toBe('REASSIGN_INVALID_DAY');
+    expect(reasonOf(far)).toBe('MOVE_TOO_FAR');
+    const notOn = await err(w.move(LEADER, 4021, { fromUserId: 12, toUserId: 34, fromDay: N(4), toDay: N(1) }));
+    expect(codeOf(notOn)).toBe('REASSIGN_INVALID_DAY');
+    expect(reasonOf(notOn)).toBe('NOT_A_TASK_DAY');
+    expect(notOn.getResponse().message).toMatch(/^The task is not on Thu \d\d\/\d\d\. Refresh the board and drag it from one of its days\.$/);
+    expect(w.assignees(4021)).toEqual([12]);
+    expect(ymd(w.taskRow(4021).endDate)).toBe(N(2));
+    expect(w.db.table('taskReassignment')).toHaveLength(0);
+    // From its own day: moved.
+    expect((await w.move(LEADER, 4021, { fromUserId: 12, toUserId: 12, fromDay: N(2), toDay: N(1) })).task.endDate).toBe(N(1));
+  });
+
+  it('review 2 (A1): two tray drops at once: each transaction locks the task row first, so the second reads the first and gets 409 REASSIGN_STALE', async () => {
+    const locks: string[] = [];
+    const firstCalls: string[] = [];
+    let arrived = 0;
+    let release!: () => void;
+    const bothPlanned = new Promise<void>((resolve) => { release = resolve; });
+    let rowLock: Promise<unknown> = Promise.resolve();
+    // A Prisma whose transactions wait until both drops were planned (both
+    // saw the task unassigned), then run one at a time, as the row lock makes them.
+    const gated = new Proxy(w.prisma, {
+      get(target: any, prop) {
+        if (prop !== '$transaction') return target[prop];
+        return async (fn: (tx: any) => Promise<any>) => {
+          if (++arrived === 2) release();
+          if (arrived <= 2) await bothPlanned;
+          const calls: string[] = [];
+          const tx = new Proxy(target, {
+            get(t: any, p) {
+              calls.push(String(p));
+              if (p !== '$queryRaw') return t[p];
+              return async (sql: TemplateStringsArray, ...values: unknown[]) => {
+                locks.push(`${sql.join('?')} [${values.join(',')}]`);
+                return [];
+              };
+            },
+          });
+          const run = rowLock.then(() => target.$transaction(() => fn(tx)).finally(() => firstCalls.push(calls[0])));
+          rowLock = run.catch(() => undefined);
+          return run;
+        };
+      },
+    });
+    const service = w.serviceWith(gated);
+    const drop = (toUserId: number) => service.reassign(LEADER, 4023, { fromUserId: null, toUserId, toDay: N(3), view: VIEW });
+    const results = await Promise.allSettled([drop(71), drop(34)]);
+    const won = results.filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled');
+    const lost = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    expect(won).toHaveLength(1);
+    expect(lost).toHaveLength(1);
+    expect(codeOf(lost[0].reason)).toBe('REASSIGN_STALE');
+    // One assignee, one request row, one activity line.
+    expect(won[0].value.task.assigneeIds).toHaveLength(1);
+    expect(w.assignees(4023)).toEqual(won[0].value.task.assigneeIds);
+    expect(w.db.table('taskReassignment')).toHaveLength(1);
+    expect(w.lines()).toHaveLength(1);
+    // Undo takes the same lock, first too.
+    expect(((await service.undo(LEADER, won[0].value.reassignment.id, {})) as any).result).toBe('undone');
+    expect(w.assignees(4023)).toEqual([]);
+    expect(locks).toEqual(Array(3).fill('SELECT id FROM tasks WHERE id = ? FOR UPDATE [4023]'));
+    expect(firstCalls).toEqual(['$queryRaw', '$queryRaw', '$queryRaw']);
+  });
+
   it('the write is one transaction: a failure after A was removed leaves nothing behind', async () => {
     const orig = w.prisma.taskReassignment.create;
     w.prisma.taskReassignment.create = async () => { throw new Error('disk full'); };
@@ -592,6 +679,100 @@ describe('QA6 PR-063 — undo (D9)', () => {
     expect(w.notes(70, 'reassign_result')[0].title).toBe('Cancelled: move of CRD-040 Task CRD-040');
     expect(w.lines('reassign_cancel')).toHaveLength(1);
     expect(codeOf(await err(w.ctrl.approve(IDO, out.reassignment.id, {})))).toBe('REASSIGN_NOT_PENDING');
+  });
+
+  it('review 2 (A3): the approver cannot undo an approved move (D9: the actor or an Admin); the requester can', async () => {
+    const out = await w.move(LEADER, 4021, { fromUserId: 12, toUserId: 71, fromDay: N(2), toDay: N(2) });
+    await w.ctrl.approve(IDO, out.reassignment.id, {});
+    const e = await err(w.ctrl.undo(IDO, out.reassignment.id, {}));
+    expect(e).toBeInstanceOf(PermissionDeniedException);
+    expect(reasonOf(e)).toBe('REASSIGN_NOT_ALLOWED');
+    expect(w.assignees(4021)).toEqual([71]);
+    const res: any = await w.ctrl.undo(LEADER, out.reassignment.id, {});
+    expect(res.result).toBe('undone');
+    expect(w.assignees(4021)).toEqual([12]);
+  });
+
+  it('review 2 (A4): undo gives the task back only to an active employee still on the project Team (409 UNDO_STALE, NOT_ON_TEAM)', async () => {
+    const out = await w.move(LEADER, 4021, { fromUserId: 12, toUserId: 34, fromDay: N(2), toDay: N(3) });
+    const members = w.db.table('projectMember');
+    members.splice(members.findIndex((m) => m.projectId === 59 && m.userId === 12), 1); // Daniel left the Team of 59
+    const e = await err(w.ctrl.undo(LEADER, out.reassignment.id, {}));
+    expect(codeOf(e)).toBe('UNDO_STALE');
+    expect(e.getResponse().details).toEqual({ reason: 'NOT_ON_TEAM', userId: 12 });
+    expect(e.getResponse().message).toBe("Daniel Huri is no longer an active employee on this project's team, so the task cannot go back to them.");
+    expect(w.assignees(4021)).toEqual([34]);
+    expect(ymd(w.taskRow(4021).endDate)).toBe(N(3));
+    expect(w.db.table('taskReassignment')[0].status).toBe('applied');
+    expect(w.lines('reassign_undo')).toHaveLength(0);
+    // Back on the Team, but deactivated: still not.
+    members.push({ id: 99, projectId: 59, userId: 12, role: null });
+    w.db.table('user').find((x) => x.id === 12)!.isActive = false;
+    expect(reasonOf(await err(w.ctrl.undo(LEADER, out.reassignment.id, {})))).toBe('NOT_ON_TEAM');
+    // Active again: the undo goes through.
+    w.db.table('user').find((x) => x.id === 12)!.isActive = true;
+    expect(((await w.ctrl.undo(LEADER, out.reassignment.id, {})) as any).result).toBe('undone');
+    expect(w.assignees(4021)).toEqual([12]);
+  });
+
+  it("review 2 (A4): undo re-checks the actor's right to move A's chip (an Admin keeps it)", async () => {
+    // Dana moves her report Daniel's chip to Pro (both on the Team).
+    const out = await w.move(DANA, 4021, { fromUserId: 12, toUserId: 40, fromDay: N(2), toDay: N(2) });
+    expect(out.result).toBe('applied');
+    w.db.table('user').find((x) => x.id === 12)!.orgUnitId = 10; // Daniel moved to Infrastructure: Dana no longer manages him
+    const e = await err(w.ctrl.undo(DANA, out.reassignment.id, {}));
+    expect(e).toBeInstanceOf(PermissionDeniedException);
+    expect(reasonOf(e)).toBe('REASSIGN_NOT_ALLOWED');
+    expect(w.assignees(4021)).toEqual([40]);
+    expect(((await w.ctrl.undo(ADMIN, out.reassignment.id, {})) as any).result).toBe('undone');
+    expect(w.assignees(4021)).toEqual([12]);
+  });
+
+  it('review 2 (A2): approve re-checks the requester; once he may no longer move the task, the request fails and he is told', async () => {
+    const out = await w.move(LEADER, 4021, { fromUserId: 12, toUserId: 71, fromDay: N(2), toDay: N(2) });
+    expect(out.result).toBe('pending');
+    w.db.table('project').find((p) => p.id === 59)!.leaderId = 55; // Ofir no longer leads 59 (and does not manage Daniel)
+    const e = await err(w.ctrl.approve(IDO, out.reassignment.id, {}));
+    expect(e.getStatus()).toBe(409);
+    expect(codeOf(e)).toBe('REASSIGN_REQUESTER_NOT_ALLOWED');
+    expect(e.getResponse().message).toBe('Ofir Leader, who asked for this move, is no longer allowed to move this task.');
+    expect(w.assignees(4021)).toEqual([12]);
+    expect(w.db.table('taskReassignment')[0]).toMatchObject({ status: 'failed', pendingTaskId: null, decidedById: 70 });
+    const told = w.notes(9, 'reassign_result');
+    expect(told).toHaveLength(1);
+    expect(told[0].title).toBe('Could not move CRD-040 Task CRD-040');
+    expect(told[0].body).toMatch(/but it could not be applied: Ofir Leader, who asked for this move, is no longer allowed to move this task\.$/);
+    expect(w.lines('reassign_approve')).toHaveLength(0);
+    expect(w.notes(12, 'reassign_removed')).toHaveLength(0);
+  });
+
+  it('review 2 (A2): a requester who lost the project entirely: the same 409, the request fails', async () => {
+    // Ido leads 62 and asks to move Daniel's INF-1 to Rami (CAD, no manager → an Admin decides).
+    w.db.table('projectMember').push({ id: 98, projectId: 62, userId: 80, role: null });
+    const out = await w.move(IDO, 6201, { fromUserId: 12, toUserId: 80, fromDay: N(1), toDay: N(1) });
+    expect(out).toMatchObject({ result: 'pending', reassignment: { approver: null } });
+    // Ido no longer leads it, created it, sits in its unit, or manages anyone on its Team.
+    const project = w.db.table('project').find((p) => p.id === 62)!;
+    project.leaderId = 1;
+    project.createdBy = 1;
+    project.orgUnitId = 11;
+    const members = w.db.table('projectMember');
+    members.splice(members.findIndex((m) => m.projectId === 62 && m.userId === 71), 1);
+    await expect(new ProjectAccessService(w.prisma).userHasProjectAccess(70, 62)).resolves.toBe(false);
+    expect(codeOf(await err(w.ctrl.approve(ADMIN, out.reassignment.id, {})))).toBe('REASSIGN_REQUESTER_NOT_ALLOWED');
+    expect(w.db.table('taskReassignment')[0].status).toBe('failed');
+    expect(w.assignees(6201)).toEqual([12]);
+  });
+
+  it('review 2 (A6): approving a request whose task moved away from its source day: 409 REASSIGN_STALE, the request fails', async () => {
+    const out = await w.move(LEADER, 4021, { fromUserId: 12, toUserId: 71, fromDay: N(2), toDay: N(3) });
+    const t = w.taskRow(4021);
+    t.estimatedStartDate = at(N(21));
+    t.endDate = at(N(21)); // rescheduled three weeks later
+    expect(codeOf(await err(w.ctrl.approve(IDO, out.reassignment.id, {})))).toBe('REASSIGN_STALE');
+    expect(w.db.table('taskReassignment')[0].status).toBe('failed');
+    expect(w.assignees(4021)).toEqual([12]);
+    expect(ymd(w.taskRow(4021).endDate)).toBe(N(21));
   });
 
   it('approve of a request whose task changed meanwhile: 409 REASSIGN_STALE and the request becomes failed', async () => {

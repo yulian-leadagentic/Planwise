@@ -13,6 +13,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { isAdminUser } from '../../common/guards/roles.guard';
 import { PermissionDeniedException } from '../../common/errors/permission-denied';
+import { isInternalEmployee } from '../../common/people/internal-employee';
 import { ProjectAccessService } from '../../common/services/project-access.service';
 import { ActivityLogService } from '../../common/services/activity-log.service';
 import { EmployeeScopeService, VisibleUserIds, isUserVisible } from '../../common/services/employee-scope.service';
@@ -21,11 +22,13 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AssignmentPlan, TaskAssigneePolicyService } from '../tasks/task-assignee-policy.service';
 import { ExecutionPlanningService, resolveTeamRange } from '../execution-planning/execution-planning.service';
 import {
+  MAX_MOVE_SPAN_DAYS,
   MoveDates,
   OrgCalendar,
   buildOrgCalendar,
   departmentOf,
   dowOf,
+  fromDayProblem,
   isOrgWorkingDay,
   isValidYmd,
   keyOf,
@@ -156,6 +159,20 @@ function notAllowed(message: string): PermissionDeniedException {
 }
 
 /**
+ * Review 2 (A1): the first statement of every transaction that compares
+ * the task's live assignees (a move, an undo). It locks the task row, so
+ * two of them on the same task (two tray drops at once) run one after
+ * the other: the second waits for the first to commit, then reads the
+ * assignees it wrote and fails its compare (409). Without it, both read
+ * "nobody assigned" and both write a different (task, user) row. An
+ * insert into task_assignees (POST /tasks/:id/assignees) checks its
+ * foreign key against this row too, so it waits for the move as well.
+ */
+async function lockTaskRow(tx: any, taskId: number): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM tasks WHERE id = ${taskId} FOR UPDATE`;
+}
+
+/**
  * QA6 package 4 (PR-063) — drag-and-drop task assignment in
  * Operations › Workload. Locked spec: docs/bm2/qa6-pr063-locked-spec.md;
  * rules R1–R10 in qa6-pr063-research.md.
@@ -169,10 +186,13 @@ function notAllowed(message: string): PermissionDeniedException {
  *     A move to another top-level department (D1) becomes a pending
  *     request unless the actor is an Admin or in B's manager chain (D3);
  *     tray moves never wait (D4).
- *   • /workload/reassignments — list, approve (re-validated, the policy
- *     re-planned with the REQUESTER as actor), reject, undo (D9: 15
- *     minutes, only while the task still equals the post-move snapshot;
- *     undo of a pending request = cancel).
+ *   • /workload/reassignments — list, approve (re-validated: the
+ *     requester's own right to the move checked again, the policy
+ *     re-planned with the REQUESTER as actor), reject, undo (D9: the actor
+ *     or an Admin, 15 minutes, only while the task still equals the
+ *     post-move snapshot, the actor's drag right and the Team rule for
+ *     whoever gets the task back checked again; undo of a pending
+ *     request = cancel).
  *
  * It never calls TasksService.addAssignee / removeAssignee: those are two
  * separate writes with an activity line each. One activity line per user
@@ -286,10 +306,14 @@ export class TaskReassignService {
       const task = await this.loadTask(row.taskId);
       this.assertMovable(task);
       await this.assertNoPending(row.taskId, row.id);
+      // Review 2 (A2): the move is still the requester's, so he must still
+      // be allowed to make it (he may have lost the project or the person).
+      await this.assertRequesterMayMove(row, requester, task);
       mp = await this.prepare(
         task,
         { fromUserId: row.fromUserId, toUserId: row.toUserId, fromDay: keyOf(row.fromDay), toDay: keyOf(row.toDay) },
         requester,
+        { approving: true },
       );
       // The request was cross-department when it was made; it is being approved now.
       mp.crossDepartment = row.crossDepartment === true;
@@ -378,8 +402,11 @@ export class TaskReassignService {
     if (row.status !== 'applied' && row.status !== 'approved') {
       throw new ConflictException({ code: 'UNDO_STALE', message: `This move can no longer be undone (it is ${row.status}).` });
     }
-    const mayUndo = isAdmin || row.actorId === user.id || (row.status === 'approved' && row.decidedById === user.id);
-    if (!mayUndo) throw notAllowed('Only the person who made this move or an administrator can undo it.');
+    // D9: the actor (for an approved request, the person who asked) or an
+    // Admin. The approver is neither (review 2, A3).
+    if (!isAdmin && row.actorId !== user.id) {
+      throw notAllowed('Only the person who made this move or an administrator can undo it.');
+    }
     const appliedAt = new Date(row.status === 'approved' ? row.decidedAt ?? row.createdAt : row.createdAt).getTime();
     if (Date.now() - appliedAt > UNDO_WINDOW_MS) {
       throw new ConflictException({
@@ -391,6 +418,15 @@ export class TaskReassignService {
 
     const prevIds = normalizeIdList(row.prevAssigneeIds);
     const newIds = normalizeIdList(row.newAssigneeIds);
+    // Review 2 (A4): an undo is a move too. The actor must still be allowed
+    // to move A's chip, and whoever gets the task back must still be an
+    // active employee on the project Team (the transaction below requires
+    // the live assignees to equal `newIds`, so these are the ones re-added).
+    if (!isAdmin) {
+      await this.access.assertTaskAccess(user.id, row.taskId, false);
+      await this.assertCanDrag(user, false, row.projectId, row.fromUserId);
+    }
+    await this.assertCanGiveBack(row.projectId, prevIds.filter((uid) => !newIds.includes(uid)));
     const now = new Date();
     const changedStale = () =>
       new ConflictException({
@@ -398,6 +434,7 @@ export class TaskReassignService {
         message: 'The task changed after this move, so it cannot be undone. Refresh the board.',
       });
     await this.prisma.$transaction(async (tx: any) => {
+      await lockTaskRow(tx, row.taskId);
       const task = await tx.task.findFirst({
         where: { id: row.taskId, deletedAt: null },
         select: { id: true, status: true, isArchived: true, estimatedStartDate: true, endDate: true, dueDateOverridden: true },
@@ -610,8 +647,13 @@ export class TaskReassignService {
 
   // ─── The move ──────────────────────────────────────────────────────────
 
-  /** Validates the move against the task as it is now and plans the dates. Writes nothing. */
-  private async prepare(task: any, rawMove: Move, policyActor: Actor): Promise<MovePlan> {
+  /**
+   * Validates the move against the task as it is now and plans the dates.
+   * Writes nothing. `approving`: a stored request is being approved, so a
+   * source day that is no longer one of the task's days means the task
+   * changed since the request (409 stale), not a bad request.
+   */
+  private async prepare(task: any, rawMove: Move, policyActor: Actor, opts: { approving?: boolean } = {}): Promise<MovePlan> {
     const move: Move = {
       fromUserId: rawMove.fromUserId,
       toUserId: rawMove.toUserId,
@@ -642,6 +684,7 @@ export class TaskReassignService {
         message: `${fmtDay(move.toDay)} is not a working day. Drop the task on a working day.`,
       });
     }
+    if (move.fromDay) this.assertFromDay(task, move.fromDay, move.toDay, opts.approving === true);
 
     const live = sortIds((task.assignees ?? []).map((a: any) => a.userId));
     if (move.fromUserId != null && !live.includes(move.fromUserId)) {
@@ -720,7 +763,9 @@ export class TaskReassignService {
   }
 
   /**
-   * R1 — the whole move in ONE transaction: the Team role (when the
+   * R1 — the whole move in ONE transaction, the task row locked first
+   * (lockTaskRow), then the live assignees re-read and compared with the
+   * plan: the Team role (when the
    * policy adds B), A's assignment off (compare-and-set: 0 rows = stale),
    * B's on (re-activating a removed row), the dates (compare-and-set on
    * the values the plan read), and the task_reassignments row. A throw
@@ -733,6 +778,7 @@ export class TaskReassignService {
     const taskId = mp.task.id;
     const now = new Date();
     return this.prisma.$transaction(async (tx: any) => {
+      await lockTaskRow(tx, taskId);
       const live = sortIds(
         (await tx.taskAssignee.findMany({ where: { taskId, deletedAt: null }, select: { userId: true } })).map((a: any) => a.userId),
       );
@@ -1029,6 +1075,29 @@ export class TaskReassignService {
     return row;
   }
 
+  /**
+   * Review 2 (A6) — `fromDay` must be a day the chip can be on: within
+   * MAX_MOVE_SPAN_DAYS of the drop day and inside the task's window
+   * (fromDayProblem). 400 REASSIGN_INVALID_DAY; when approving a stored
+   * request, a day that is no longer the task's means the task moved
+   * since the request (409 REASSIGN_STALE).
+   */
+  private assertFromDay(task: any, fromDay: string, toDay: string | null, approving: boolean): void {
+    const problem = fromDayProblem(task, fromDay, toDay, todayKey());
+    if (!problem) return;
+    if (problem === 'not_task_day' && approving) {
+      throw stale("The task's dates changed after this move was requested. Refresh the board and try again.");
+    }
+    throw new BadRequestException({
+      code: 'REASSIGN_INVALID_DAY',
+      message:
+        problem === 'too_far'
+          ? `A task can move at most ${MAX_MOVE_SPAN_DAYS} days at a time, so it cannot go from ${fromDay} to ${toDay}.`
+          : `The task is not on ${fmtDay(fromDay)}. Refresh the board and drag it from one of its days.`,
+      details: { reason: problem === 'too_far' ? 'MOVE_TOO_FAR' : 'NOT_A_TASK_DAY' },
+    });
+  }
+
   private assertMovable(task: any): void {
     if (task.projectId == null || task.isPersonal === true) {
       throw new BadRequestException({ code: 'TASK_PERSONAL', message: 'Personal tasks cannot be moved on the Workload board.' });
@@ -1053,6 +1122,51 @@ export class TaskReassignService {
     throw notAllowed(
       `Only the project leader, an administrator or ${await this.nameOf(fromUserId)}'s manager can move this task.`,
     );
+  }
+
+  /**
+   * Review 2 (A2) — on approve, the requester's own right to the move,
+   * checked again: task access and the drag right on A's chip (the same
+   * checks as POST /tasks/:id/reassign). A refusal is a 409 for the
+   * approver (it is not his permission that is missing); `approve` marks
+   * the request failed and tells the requester.
+   */
+  private async assertRequesterMayMove(row: any, requester: Actor, task: any): Promise<void> {
+    const requesterIsAdmin = requester.isAdmin === true;
+    try {
+      await this.access.assertTaskAccess(row.actorId, row.taskId, requesterIsAdmin);
+      await this.assertCanDrag(requester, requesterIsAdmin, task.projectId, row.fromUserId);
+    } catch (err) {
+      if (!(err instanceof PermissionDeniedException)) throw err;
+      throw new ConflictException({
+        code: 'REASSIGN_REQUESTER_NOT_ALLOWED',
+        message: `${personName(row.actor) || `User #${row.actorId}`}, who asked for this move, is no longer allowed to move this task.`,
+      });
+    }
+  }
+
+  /**
+   * Review 2 (A4) — the people an undo gives the task back to: each must
+   * still be an active internal employee on the project Team (the QA6
+   * assignee policy, without the leader's "add him to the Team": an undo
+   * never brings anyone into a project). Otherwise 409 UNDO_STALE,
+   * `details.reason: NOT_ON_TEAM`.
+   */
+  private async assertCanGiveBack(projectId: number, userIds: number[]): Promise<void> {
+    if (userIds.length === 0) return;
+    const people = await this.prisma.user.findMany({
+      where: { id: { in: userIds }, deletedAt: null },
+      select: { id: true, firstName: true, lastName: true, userType: true, isActive: true, deletedAt: true },
+    });
+    for (const uid of userIds) {
+      const person = (people as any[]).find((p) => p.id === uid);
+      if (isInternalEmployee(person) && (await this.access.isOnProjectTeam(uid, projectId))) continue;
+      throw new ConflictException({
+        code: 'UNDO_STALE',
+        message: `${personName(person) || `User #${uid}`} is no longer an active employee on this project's team, so the task cannot go back to them.`,
+        details: { reason: 'NOT_ON_TEAM', userId: uid },
+      });
+    }
   }
 
   private pendingConflict(): ConflictException {
