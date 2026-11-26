@@ -28,6 +28,11 @@ import { ContactsResolveService, SheetPreview } from './resolve.service';
 import { ExtractedSheet } from './triage.service';
 import { ColumnMapping } from './split-merge.service';
 import { ContactsCommitService, CommitResult, RowDecision } from './commit.service';
+import {
+  CONTACTS_IMPORT_MAX_FILE_BYTES,
+  CONTACTS_UPLOAD_OPTIONS,
+  formatMegabytes,
+} from './import-limits';
 
 /**
  * BM2 · Contacts import wizard — the "contacts" sub-mode of the existing
@@ -76,8 +81,9 @@ export class ContactsImportController {
   /**
    * Stage 1 — triage the uploaded file by magic bytes (NEVER by
    * extension), route it to a tolerant in-process reader (xlsx / xls /
-   * csv / html-as-xlsx via SheetJS · docx via mammoth · pdf via
-   * pdf-parse + RTL fix), and return the extracted sheets. True
+   * ods / html-as-xlsx via SheetJS · csv via csv-reader · docx via
+   * mammoth · legacy doc · odt · pdf via pdf-parse), and return the
+   * extracted sheets. True
    * non-data (images, draw.io, executables) is rejected here with a
    * human-readable reason — the wizard shows it verbatim.
    *
@@ -87,11 +93,11 @@ export class ContactsImportController {
    */
   @Post('triage')
   @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', CONTACTS_UPLOAD_OPTIONS))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary:
-      'Sniff magic bytes + extract with a tolerant reader. Returns sheets for xlsx/xls/csv/html/docx, extracted lines + confidence for pdf, or a reject with reason for images/diagrams/binary.',
+      'Sniff magic bytes + extract with a tolerant reader. Returns sheets for xlsx/xls/ods/csv/html/docx/doc/odt, extracted lines + confidence for pdf, or a reject with reason for images/diagrams/binary.',
   })
   async triageFile(
     @CurrentUser() user: any,
@@ -99,22 +105,9 @@ export class ContactsImportController {
     @Body('filename') filenameOverride?: string,
   ): Promise<TriageResult> {
     this.assertCanImport(user);
-    if (!file) {
-      // Never a 500 — surface it as a rejection reason so the UI can
-      // display it in the same place the byte-triage rejections appear.
-      return { kind: 'reject', reason: 'no file was uploaded (use the "file" form field)' };
-    }
-    // Guard against unbounded uploads. The Multer module cap is 5 MB
-    // in this codebase; keep this in sync so the reject message names
-    // the same number the wizard shows on the drop-zone.
-    const MAX_BYTES = 5 * 1024 * 1024;
-    if (file.buffer.length > MAX_BYTES) {
-      return {
-        kind: 'reject',
-        reason: `file is larger than ${Math.round(MAX_BYTES / (1024 * 1024))} MB — split it or contact support`,
-      };
-    }
-    return this.triage.triage(file.buffer, filenameOverride ?? file.originalname);
+    const problem = uploadProblem(file);
+    if (problem) return { kind: 'reject', reason: problem };
+    return this.triage.triage(file!.buffer, filenameOverride ?? decodeUploadName(file!.originalname));
   }
 
   /**
@@ -129,7 +122,7 @@ export class ContactsImportController {
    */
   @Post('upload')
   @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', CONTACTS_UPLOAD_OPTIONS))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary:
@@ -141,23 +134,9 @@ export class ContactsImportController {
     @Body('filename') filenameOverride?: string,
   ): Promise<UploadResponse> {
     this.assertCanImport(user);
-    if (!file) {
-      return {
-        triage: { kind: 'reject', reason: 'no file was uploaded (use the "file" form field)' },
-        grades: [],
-      };
-    }
-    const MAX_BYTES = 5 * 1024 * 1024;
-    if (file.buffer.length > MAX_BYTES) {
-      return {
-        triage: {
-          kind: 'reject',
-          reason: `file is larger than ${Math.round(MAX_BYTES / (1024 * 1024))} MB — split it or contact support`,
-        },
-        grades: [],
-      };
-    }
-    const triage = await this.triage.triage(file.buffer, filenameOverride ?? file.originalname);
+    const problem = uploadProblem(file);
+    if (problem) return { triage: { kind: 'reject', reason: problem }, grades: [] };
+    const triage = await this.triage.triage(file!.buffer, filenameOverride ?? decodeUploadName(file!.originalname));
     if (triage.kind === 'reject') return { triage, grades: [] };
     const grades = this.headers.grade(triage.sheets);
     return { triage, grades };
@@ -252,6 +231,33 @@ export class ContactsImportController {
 export interface UploadResponse {
   triage: TriageResult;
   grades: SheetGrade[];
+}
+
+/** Why an upload cannot be read, in words the wizard shows as-is; null when fine. */
+export function uploadProblem(
+  file: { buffer?: Buffer; size?: number } | undefined,
+): string | null {
+  if (!file || !file.buffer) {
+    // Never a 500 — surface it as a rejection reason so the UI can
+    // display it in the same place the byte-triage rejections appear.
+    return 'No file was received. Choose the file again and retry.';
+  }
+  if (file.buffer.length > CONTACTS_IMPORT_MAX_FILE_BYTES) {
+    return `The file is larger than ${formatMegabytes(CONTACTS_IMPORT_MAX_FILE_BYTES)}. Remove images or split the list, then upload again.`;
+  }
+  return null;
+}
+
+/**
+ * Multer hands over the multipart file name decoded as Latin-1, so a
+ * Hebrew name arrives as mojibake. Re-decode as UTF-8 when that yields
+ * a clean string; otherwise keep what we got.
+ */
+export function decodeUploadName(name: string | undefined): string | undefined {
+  if (!name) return name;
+  if ([...name].some((ch) => ch.charCodeAt(0) > 0xff)) return name;
+  const utf8 = Buffer.from(name, 'latin1').toString('utf8');
+  return utf8.includes('�') ? name : utf8;
 }
 
 interface PreviewRequestBody {

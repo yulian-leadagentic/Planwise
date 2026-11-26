@@ -1,6 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 
-import { ContactsHeaderDetectionService, SheetGrade } from './header-detection.service';
+import {
+  ContactsHeaderDetectionService,
+  NO_HEADER_ROW,
+  SheetGrade,
+  syntheticHeaderCells,
+} from './header-detection.service';
 import { CONTACT_FIELDS, ContactField } from './header-dictionary';
 import { ContactsSplitMergeService, ColumnMapping, ResolvedRow, mappingHeaders } from './split-merge.service';
 import { ContactsDedupService, DedupDecision } from './dedup.service';
@@ -34,13 +39,18 @@ export class ContactsResolveService {
     const { sheet, mapping, headerRowIndex } = input;
     if (!sheet) throw new BadRequestException('sheet is required');
     if (!mapping || Object.keys(mapping).length === 0) {
-      throw new BadRequestException('mapping is empty — set at least one column');
+      throw new BadRequestException('No columns are mapped. Map at least one column before the preview.');
     }
     validateMapping(mapping);
 
     // ── Build header-keyed rows from the raw 2D array ──────────────
+    // BM2-28 (QA6) — NO_HEADER_ROW: a headerless sheet. Every row is
+    // data; the columns carry the same synthetic names Stage 2 gave the
+    // wizard ("Column A", ...).
     const headerIdx = headerRowIndex ?? findHeaderIndexFromGrade(sheet, mapping);
-    const headerCells: string[] = (sheet.rows[headerIdx] ?? []).map((c) => (c ?? '').trim());
+    const headerCells: string[] = headerIdx === NO_HEADER_ROW
+      ? syntheticHeaderCells(sheet.rows)
+      : (sheet.rows[headerIdx] ?? []).map((c) => (c ?? '').trim());
     const { records: dataRows, excelRowIndexes } = sheetToRecords(sheet.rows, headerIdx, headerCells);
 
     // Fail-fast: every mapped header must actually exist in the sheet.

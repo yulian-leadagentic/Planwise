@@ -4,8 +4,9 @@ import { ExtractedSheet } from './triage.service';
 import {
   ContactField,
   CONTACT_FIELDS,
+  MATCH_EXACT,
+  MATCH_SUBSTRING,
   matchHeaderToField,
-  normalizeHeader,
   scoreHeaderRow,
 } from './header-dictionary';
 
@@ -60,7 +61,7 @@ export class ContactsHeaderDetectionService {
       return {
         sheetName: sheet.name,
         verdict: 'non-contact',
-        reason: 'the sheet is empty',
+        reason: 'The sheet is empty.',
         headerRowIndex: null,
         headerCells: [],
         mapping: {},
@@ -81,15 +82,16 @@ export class ContactsHeaderDetectionService {
       idx: number;
       score: number;
       matched: Map<number, ContactField>;
+      strength: Map<number, number>;
     } | null = null;
 
     for (let i = 0; i < scanLimit; i++) {
       const row = rows[i];
       if (!row || row.every((c) => !c || !c.trim())) continue;
       if (isBannerRow(row)) continue;
-      const { score, matched } = scoreHeaderRow(row);
+      const { score, matched, strength } = scoreHeaderRow(row);
       if (!best || score > best.score) {
-        best = { idx: i, score, matched };
+        best = { idx: i, score, matched, strength };
       }
     }
 
@@ -102,30 +104,29 @@ export class ContactsHeaderDetectionService {
       // lane, 14 files).
       const emailColIdx = findEmailColumnInBody(rows);
       if (emailColIdx !== null) {
-        const cells: string[] = (rows[0] ?? []).map((c) => c ?? '');
-        // Synthesize a header for the mapping — we already know the
-        // column, so use a stable label.
-        const headerCells = cells.length > emailColIdx
-          ? cells
-          : Array.from({ length: emailColIdx + 1 }, (_, i) => cells[i] ?? '');
-        headerCells[emailColIdx] = headerCells[emailColIdx] || 'email';
+        // BM2-28 (QA6) — there is no header row, so every row is data.
+        // Name the columns "Column A", "Column B", ... and mark the
+        // sheet with NO_HEADER_ROW; Preview / Commit rebuild the same
+        // names (resolve.service.ts). The old code used the first DATA
+        // row as the header (losing that contact) or invented an
+        // "email" header that Preview then rejected as missing.
         return {
           sheetName: sheet.name,
           verdict: 'headerless',
-          reason: 'no header row detected — treating as email-only list',
-          headerRowIndex: null,
-          headerCells,
+          reason: 'No header row found. Every row is read as data, starting from the email column.',
+          headerRowIndex: NO_HEADER_ROW,
+          headerCells: syntheticHeaderCells(rows),
           mapping: { email: emailColIdx },
           confidence: 0.3,
           totalCandidateRows: scanLimit,
-          dataRowCount: rows.length,
+          dataRowCount: countDataRows(rows, NO_HEADER_ROW),
           headerMatchedFieldCount: 1,
         };
       }
       return {
         sheetName: sheet.name,
         verdict: 'non-contact',
-        reason: 'no contact-shaped columns found — this sheet does not look like a contact list',
+        reason: 'No contact columns or email addresses found. This sheet does not look like a contact list.',
         headerRowIndex: null,
         headerCells: rows[0] ?? [],
         mapping: {},
@@ -143,10 +144,10 @@ export class ContactsHeaderDetectionService {
       return {
         sheetName: sheet.name,
         verdict: 'manual',
-        reason: `only ${best.score} column matched a known contact field — confirm the mapping before continuing`,
+        reason: `Only ${best.score} column matched a known contact field. Check the mapping before continuing.`,
         headerRowIndex: best.idx,
         headerCells: rows[best.idx] ?? [],
-        mapping: mapFromMatched(best.matched),
+        mapping: mapFromMatched(best.matched, best.strength),
         confidence: 0.5,
         totalCandidateRows: scanLimit,
         dataRowCount,
@@ -163,10 +164,10 @@ export class ContactsHeaderDetectionService {
     return {
       sheetName: sheet.name,
       verdict: 'auto',
-      reason: `header row detected at row ${best.idx + 1} (${best.score} canonical fields matched)`,
+      reason: `Header row found at row ${best.idx + 1} (${best.score} contact fields matched).`,
       headerRowIndex: best.idx,
       headerCells: rows[best.idx] ?? [],
-      mapping: mapFromMatched(best.matched),
+      mapping: mapFromMatched(best.matched, best.strength),
       confidence,
       totalCandidateRows: scanLimit,
       dataRowCount,
@@ -183,9 +184,13 @@ export interface SheetGrade {
   sheetName: string;
   verdict: SheetVerdict;
   reason: string;
-  /** 0-based row index in the sheet where the header was found; null if none. */
+  /**
+   * 0-based row index in the sheet where the header was found.
+   * `NO_HEADER_ROW` (-1) for a headerless sheet whose columns got
+   * synthetic names; null when the sheet is not a contact list.
+   */
   headerRowIndex: number | null;
-  /** The header row's cell contents (or the sheet's first row if no header). */
+  /** The header row's cell contents (synthetic names when headerless; the sheet's first row when non-contact). */
   headerCells: string[];
   /**
    * Auto-suggested column mapping. Keyed by canonical field, valued by
@@ -242,11 +247,22 @@ function isBannerRow(row: readonly string[]): boolean {
  * field, the first-wins (preserves the leftmost "email" column when
  * "e-mail 1 - value" + "e-mail 2 - value" both hit).
  */
-function mapFromMatched(matched: Map<number, ContactField>): Partial<Record<ContactField, number>> {
+function mapFromMatched(
+  matched: Map<number, ContactField>,
+  strength?: Map<number, number>,
+): Partial<Record<ContactField, number>> {
   const out: Partial<Record<ContactField, number>> = {};
-  // Iterate in column order (map insertion order = column left→right)
+  const rankOf = (col: number) => ((strength?.get(col) ?? MATCH_EXACT) >= MATCH_SUBSTRING ? 2 : 1);
+  const chosenRank: Partial<Record<ContactField, number>> = {};
+  // Iterate in column order (map insertion order = column left→right).
+  // BM2-28 (QA6) — a dictionary match beats a fallback-synonym match
+  // for the same field; otherwise the leftmost column wins as before.
   for (const [col, field] of matched) {
-    if (out[field] == null) out[field] = col;
+    const rank = rankOf(col);
+    if (out[field] == null || rank > (chosenRank[field] ?? 0)) {
+      out[field] = col;
+      chosenRank[field] = rank;
+    }
   }
   return out;
 }
@@ -254,18 +270,52 @@ function mapFromMatched(matched: Map<number, ContactField>): Partial<Record<Cont
 /** Simple email regex — used by the headerless-fallback column scan.
  *  The strict grammar-validated splitter lives in Stage 4. */
 const EMAIL_LIKE = /^[\w.+-]+@[\w-]+\.[a-z]{2,}$/i;
+/** An email address anywhere inside a cell (multi-part TLDs included). */
+const EMAIL_INSIDE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/i;
+
+/**
+ * `headerRowIndex` for a sheet that has no header row. Every row is data
+ * and the columns are named by `syntheticHeaderCells`. Preview and
+ * Commit (resolve.service.ts) rebuild the same names from the sheet.
+ */
+export const NO_HEADER_ROW = -1;
+
+function columnLetters(index: number): string {
+  let n = index;
+  let out = '';
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return out;
+}
+
+/** "Column A", "Column B", ... one per column of the widest row. */
+export function syntheticHeaderCells(rows: readonly (readonly string[])[]): string[] {
+  const width = rows.reduce((m, r) => Math.max(m, r?.length ?? 0), 0);
+  return Array.from({ length: width }, (_, i) => `Column ${columnLetters(i)}`);
+}
 
 /**
  * When no header scored ≥ 1 dictionary hit, look for a column that is
  * majority email addresses. Real "bare email list" sheets in the
  * dataset have one column of addresses and nothing else.
+ *
+ * BM2-28 (QA6) — a second, looser pass for ragged grids (PDF tables,
+ * where a row's cells shift left or right): the column holding the most
+ * cells that CONTAIN an address, when that is at least 3 cells and a
+ * fifth of the column. Two real PDFs with 66 and 79 addresses used to
+ * come back as "not a contact list".
  */
 function findEmailColumnInBody(rows: readonly (readonly string[])[]): number | null {
   if (rows.length === 0) return null;
-  const width = Math.max(...rows.map((r) => r.length));
+  // reduce, not Math.max(...spread): a spread of a very long sheet
+  // overflows the call stack.
+  const width = rows.reduce((m, r) => Math.max(m, r?.length ?? 0), 0);
   const perColHits: number[] = new Array(width).fill(0);
+  const perColInside: number[] = new Array(width).fill(0);
   const perColTotal: number[] = new Array(width).fill(0);
-  const sampleLimit = Math.min(rows.length, 200);
+  const sampleLimit = Math.min(rows.length, 400);
   for (let r = 0; r < sampleLimit; r++) {
     const row = rows[r] ?? [];
     for (let c = 0; c < width; c++) {
@@ -273,6 +323,7 @@ function findEmailColumnInBody(rows: readonly (readonly string[])[]): number | n
       if (!v) continue;
       perColTotal[c]++;
       if (EMAIL_LIKE.test(v)) perColHits[c]++;
+      if (EMAIL_INSIDE.test(v)) perColInside[c]++;
     }
   }
   let bestCol = -1;
@@ -282,6 +333,16 @@ function findEmailColumnInBody(rows: readonly (readonly string[])[]): number | n
     const ratio = perColHits[c] / perColTotal[c];
     if (ratio >= 0.5 && ratio > bestRatio) {
       bestRatio = ratio;
+      bestCol = c;
+    }
+  }
+  if (bestCol >= 0) return bestCol;
+  let bestInside = 0;
+  for (let c = 0; c < width; c++) {
+    const hits = perColInside[c];
+    if (hits < 3 || hits / perColTotal[c] < 0.2) continue;
+    if (hits > bestInside) {
+      bestInside = hits;
       bestCol = c;
     }
   }

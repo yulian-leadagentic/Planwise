@@ -48,6 +48,9 @@ export const HEADER_DICTIONARY: Record<ContactField, readonly string[]> = {
   email: [
     // Hebrew synonyms
     'מייל', 'אימייל', 'דוא״ל', 'דוא"ל', 'דואל',
+    // BM2-28 (QA6) — "email address" in Hebrew. Without these the
+    // substring rule picked the longer needle "כתובת" (address).
+    'כתובת מייל', 'כתובת אימייל', 'כתובת דוא"ל', 'כתובת דואל',
     // Latin
     'e-mail', 'e.mail', 'email', 'mail', 'email address', 'e mail',
     'primary email', 'work email',
@@ -69,6 +72,10 @@ export const HEADER_DICTIONARY: Record<ContactField, readonly string[]> = {
     // reads more specialised than the generic "שם"; keep both so
     // dedup within a sheet still works.
     'שם המתכנן',
+    // BM2-28 (QA6) — person-name headers seen in the client's real
+    // folder that matched nothing, so the sheet had no name column and
+    // no row met the "name AND (email OR phone)" floor.
+    'שם פרטי', 'שם משפחה', 'איש הקשר', 'שם איש הקשר', 'אנשי קשר',
     'name', 'contact', 'contact person', 'poc', 'full name', 'given name',
     'first name', 'last name',
   ],
@@ -79,6 +86,8 @@ export const HEADER_DICTIONARY: Record<ContactField, readonly string[]> = {
     // "יועצים" (consultants). Both mean "the firm this person
     // belongs to on the project".
     'שיוך', 'יועצים',
+    // BM2-28 (QA6) — supplier lists.
+    'שם ספק', 'שם הספק',
     'company', 'office', 'firm', 'organization', 'organisation',
     'business name', 'company name',
   ],
@@ -113,6 +122,21 @@ export const HEADER_DICTIONARY: Record<ContactField, readonly string[]> = {
 };
 
 /**
+ * BM2-28 (QA6) — fallback synonyms. They name a column only when the
+ * row has no regular (dictionary) column for the same field, and only on
+ * an exact match (never by substring). Real sheets often carry BOTH
+ * "שם היועץ" (the consultant, frequently the firm) and "איש קשר" (the
+ * person); the person column must win, but when "שם היועץ" is the only
+ * name column it is still the best name we have.
+ */
+export const FALLBACK_HEADER_SYNONYMS: Partial<Record<ContactField, readonly string[]>> = {
+  contact: [
+    'שם היועץ', 'שם יועץ', 'שם מתכנן', 'שם נציג', 'שם הנציג', 'נציג',
+    'אחראי', 'שם האחראי', 'representative',
+  ],
+};
+
+/**
  * Normalize a header cell for matching. Same routine used for the
  * dictionary lookup and for hashing headers into the header→field
  * cache. Never changes source data — the raw header is preserved
@@ -142,36 +166,84 @@ const NORMALIZED_INDEX: Map<string, ContactField> = (() => {
   return idx;
 })();
 
+/** Fallback synonyms, normalized. Exact match only. */
+const FALLBACK_INDEX: Map<string, ContactField> = (() => {
+  const idx = new Map<string, ContactField>();
+  for (const field of CONTACT_FIELDS) {
+    for (const raw of FALLBACK_HEADER_SYNONYMS[field] ?? []) {
+      const key = normalizeHeader(raw);
+      if (key && !NORMALIZED_INDEX.has(key)) idx.set(key, field);
+    }
+  }
+  return idx;
+})();
+
+/**
+ * How sure a header match is. When two columns of one row match the same
+ * field, the stronger match names the column (leftmost on a tie).
+ */
+export const MATCH_EXACT = 3;
+export const MATCH_SUBSTRING = 2;
+export const MATCH_FALLBACK = 1;
+
+export interface HeaderMatch {
+  field: ContactField;
+  strength: number;
+}
+
 /**
  * Try to map a single header cell to a canonical field.
  *   1. exact normalized match wins ("email" → email)
  *   2. substring match — a dictionary needle appears inside the header
  *      OR the header is contained inside a needle (both directions)
  *      as long as the shorter side is length ≥ 3 (§4: "len ≥ 3").
+ *   3. BM2-28 — exact match against the fallback synonyms.
  * Returns null when no confident match exists.
  */
-export function matchHeaderToField(rawHeader: string): ContactField | null {
+export function matchHeader(rawHeader: string): HeaderMatch | null {
   if (!rawHeader) return null;
   const norm = normalizeHeader(rawHeader);
   if (!norm) return null;
 
+  // BM2-28 (QA6) — some PDFs come out of the text extractor with the
+  // words of a Hebrew line in visual (reversed) order: "קשר איש" for
+  // "איש קשר", "חברה שם" for "שם חברה". Try the reversed word order
+  // too, so a multi-word header still matches.
+  const words = rawHeader.trim().split(/\s+/);
+  const reversed = words.length > 1 ? normalizeHeader([...words].reverse().join(' ')) : '';
+  const candidates = reversed && reversed !== norm ? [norm, reversed] : [norm];
+
   // Exact hit.
-  const exact = NORMALIZED_INDEX.get(norm);
-  if (exact) return exact;
+  for (const candidate of candidates) {
+    const exact = NORMALIZED_INDEX.get(candidate);
+    if (exact) return { field: exact, strength: MATCH_EXACT };
+  }
 
   // Substring hit — walk once, prefer the longest needle so
   // "workemail" beats "email" only when both are in play.
   let best: { field: ContactField; needleLen: number } | null = null;
-  for (const [needle, field] of NORMALIZED_INDEX) {
-    const shorter = Math.min(needle.length, norm.length);
-    if (shorter < 3) continue;
-    if (norm.includes(needle) || needle.includes(norm)) {
-      if (!best || needle.length > best.needleLen) {
-        best = { field, needleLen: needle.length };
+  for (const candidate of candidates) {
+    for (const [needle, field] of NORMALIZED_INDEX) {
+      const shorter = Math.min(needle.length, candidate.length);
+      if (shorter < 3) continue;
+      if (candidate.includes(needle) || needle.includes(candidate)) {
+        if (!best || needle.length > best.needleLen) {
+          best = { field, needleLen: needle.length };
+        }
       }
     }
   }
-  return best?.field ?? null;
+  if (best) return { field: best.field, strength: MATCH_SUBSTRING };
+
+  for (const candidate of candidates) {
+    const fallback = FALLBACK_INDEX.get(candidate);
+    if (fallback) return { field: fallback, strength: MATCH_FALLBACK };
+  }
+  return null;
+}
+
+export function matchHeaderToField(rawHeader: string): ContactField | null {
+  return matchHeader(rawHeader)?.field ?? null;
 }
 
 /**
@@ -179,23 +251,29 @@ export function matchHeaderToField(rawHeader: string): ContactField | null {
  * a canonical field? Duplicates (same field matched twice) count once
  * toward the score — a header row with two "email" columns is still a
  * table, but the second column isn't extra evidence of header-ness.
+ *
+ * `strength` holds each matched column's match strength so the caller
+ * can let a dictionary column beat a fallback one for the same field.
  */
 export function scoreHeaderRow(row: readonly string[]): {
   score: number;
   matched: Map<number, ContactField>;
+  strength: Map<number, number>;
 } {
   const matched = new Map<number, ContactField>();
+  const strength = new Map<number, number>();
   const seen = new Set<ContactField>();
   let score = 0;
   row.forEach((cell, idx) => {
     if (!cell) return;
-    const field = matchHeaderToField(cell);
-    if (!field) return;
-    matched.set(idx, field);
-    if (!seen.has(field)) {
-      seen.add(field);
+    const match = matchHeader(cell);
+    if (!match) return;
+    matched.set(idx, match.field);
+    strength.set(idx, match.strength);
+    if (!seen.has(match.field)) {
+      seen.add(match.field);
       score++;
     }
   });
-  return { score, matched };
+  return { score, matched, strength };
 }

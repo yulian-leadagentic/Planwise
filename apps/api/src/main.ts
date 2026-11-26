@@ -20,6 +20,10 @@ import { startVitalsLogger } from './common/vitals';
 import { installStartupSignals } from './common/startup-signals';
 import { rejectStrayWebSocketUpgrades } from './common/ws-upgrade-guard';
 import { initSentry } from './observability/sentry';
+import {
+  CONTACTS_IMPORT_ROUTE_PREFIX,
+  contactsImportJsonParser,
+} from './modules/data-import/contacts/import-limits';
 
 async function bootstrap() {
   // Sync stderr signal / exit handlers FIRST — before Sentry, before Nest,
@@ -70,6 +74,15 @@ async function bootstrap() {
     },
     credentials: true,
   });
+
+  // BM2-28 (QA6) — the contacts import wizard sends the whole extracted
+  // sheet back on Preview and Commit, which is often larger than
+  // Express's 100 KB JSON default (413 after a successful upload). A
+  // larger limit for those routes only; mounted after CORS (so an error
+  // still carries the CORS headers) and before Nest's default parser,
+  // which then skips the already-parsed body. See
+  // modules/data-import/contacts/import-limits.ts.
+  app.use(CONTACTS_IMPORT_ROUTE_PREFIX, contactsImportJsonParser());
 
   // Global prefix
   app.setGlobalPrefix('api/v1');
