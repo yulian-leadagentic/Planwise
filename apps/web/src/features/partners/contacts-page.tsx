@@ -15,6 +15,10 @@ import { usePermissions } from '@/hooks/use-permissions';
 import { UserAvatar } from '@/components/shared/user-avatar';
 import { PartnerDrawer } from './partner-drawer';
 import { CreatePartnerModal } from './create-partner-modal';
+import {
+  canImportContacts,
+  contactsImportHref,
+} from '@/features/data-import/contacts/contacts-import-entry';
 
 /**
  * Dedicated Contacts page — its own route (/contacts), not a tab inside the
@@ -142,15 +146,14 @@ const GROUP_PAGE_SIZE = 500;
 export function ContactsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  // Gate the "Import contacts" action: admin OR write on
-  // `data-import/contacts` (backend enforces the same at
-  // contacts-import.controller.ts:64, module seeded in
-  // migration 20260520000000_data_import_module). Reuse the existing deep
-  // link — `?target=contacts` opens the same wizard component with the
-  // contacts branch already selected (data-import-page.tsx:82-93) — so
-  // we never duplicate the wizard here.
-  const { can, isAdmin } = usePermissions();
-  const canImportContacts = isAdmin || can('data-import/contacts', 'write');
+  // Gate the "Import contacts" action on write on `data-import/contacts`,
+  // the same rule the API enforces (no Admin bypass: data-import is in
+  // the guard's NO_ADMIN_BYPASS list). BM2-28: the old `isAdmin || ...`
+  // showed the button to Admins without the grant, whose upload then
+  // failed. The deep link opens the one shared wizard; see
+  // features/data-import/contacts/contacts-import-entry.ts.
+  const { can } = usePermissions();
+  const canImport = canImportContacts(can);
   // CT-1: default landing view is now "By Organization". The URL
   // parameter still wins so existing deep-links (?view=list, ?view=by-project)
   // stay honored; the legacy ?view=by-customer maps back to by-org
@@ -396,18 +399,17 @@ export function ContactsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-        {/* "Import contacts" — routes to the existing wizard via the
-            deep-link that data-import-page.tsx already supports
-            (?target=contacts auto-selects the contacts branch and jumps
-            past step 1). The wizard component is not duplicated. Gated
-            by admin OR data-import/contacts:write; the backend re-checks
-            the same guard at contacts-import.controller.ts:64. */}
-        {canImportContacts && (
+        {/* "Import contacts" — routes to the shared wizard via the
+            deep-link that data-import-page.tsx supports (?target=contacts
+            auto-selects the contacts branch and jumps past step 1). The
+            wizard component is not duplicated. Gated by
+            data-import/contacts:write, the same rule as the API. */}
+        {canImport && (
           <button
             type="button"
-            onClick={() => navigate('/admin/data-import?target=contacts')}
+            onClick={() => navigate(contactsImportHref())}
             className="inline-flex items-center gap-2 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-400 dark:hover:border-slate-500"
-            title="Bulk-import contacts from an Excel or CSV file"
+            title="Bulk-import contacts from Excel, CSV, Word or PDF"
           >
             <Upload className="h-4 w-4" aria-hidden="true" />
             Import contacts

@@ -20,6 +20,10 @@ import { UserAvatar } from '@/components/shared/user-avatar';
 import { PartnerDrawer } from './partner-drawer';
 import { CreateOrganizationModal } from './create-organization-modal';
 import { ImportCsvModal } from './import-csv-modal';
+import {
+  canImportContacts,
+  contactsImportHref,
+} from '@/features/data-import/contacts/contacts-import-entry';
 
 // Page size for the paginated organizations list. Matches the pattern
 // /contacts uses (see ux/contacts) — server-driven page + meta.total so
@@ -104,6 +108,9 @@ export function PartnersPage() {
   const debouncedSearch = useDebounce(search, 300);
   const { can, isAdmin } = usePermissions();
   const canWrite = isAdmin || can('partners', 'write');
+  // BM2-28 — the contacts wizard has its own permission (API: write on
+  // data-import/contacts, no Admin bypass); partners:write is not enough.
+  const canImport = canImportContacts(can);
 
   // Redirect old /partners?tab=contacts deep links to the canonical
   // /contacts surface. The Contacts tab was consolidated away in
@@ -201,15 +208,17 @@ export function PartnersPage() {
         title="Organizations"
         description="Companies you work with — customers, suppliers, partner firms, municipalities. People contacts live under Contacts."
         actions={
-          canWrite && (
+          (canWrite || canImport) && (
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowImport(true)}
-                className="flex items-center gap-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200"
-              >
-                <Upload className="h-4 w-4" aria-hidden="true" />
-                Import CSV
-              </button>
+              {canWrite && (
+                <button
+                  onClick={() => setShowImport(true)}
+                  className="flex items-center gap-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200"
+                >
+                  <Upload className="h-4 w-4" aria-hidden="true" />
+                  Import CSV
+                </button>
+              )}
               {/* Contacts / BP Excel wizard: the old BP-admin wizard
                   was retired in favour of the shared
                   /admin/data-import contacts flow so both entry points
@@ -217,21 +226,27 @@ export function PartnersPage() {
                   header detection, mapping presets, split & fill, dedup
                   preview, idempotent commit, project attach, history).
                   The CSV path above stays for the simpler
-                  "already-formatted" case. */}
-              <button
-                onClick={() => navigate('/admin/data-import?target=contacts')}
-                className="flex items-center gap-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200"
-              >
-                <Upload className="h-4 w-4" aria-hidden="true" />
-                Import Excel (wizard)
-              </button>
-              <button
-                onClick={() => setShowAdd(true)}
-                className="flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white"
-              >
-                <Plus className="h-4 w-4" aria-hidden="true" />
-                Add Organization
-              </button>
+                  "already-formatted" case. BM2-28: same label and same
+                  permission as the Contacts page entry. */}
+              {canImport && (
+                <button
+                  onClick={() => navigate(contactsImportHref())}
+                  title="Bulk-import organizations and their contacts from Excel, CSV, Word or PDF"
+                  className="flex items-center gap-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:border-slate-400 dark:hover:border-slate-500 px-4 py-2 text-[13px] font-semibold text-slate-700 dark:text-slate-200"
+                >
+                  <Upload className="h-4 w-4" aria-hidden="true" />
+                  Import contacts
+                </button>
+              )}
+              {canWrite && (
+                <button
+                  onClick={() => setShowAdd(true)}
+                  className="flex items-center gap-2 rounded-lg bg-blue-600 hover:bg-blue-700 px-4 py-2 text-[13px] font-semibold text-white"
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  Add Organization
+                </button>
+              )}
             </div>
           )
         }

@@ -76,6 +76,13 @@ import {
   TriageResult,
   UploadResponse,
 } from '@/api/contacts-import.api';
+import {
+  CONTACTS_IMPORT_ACCEPT,
+  CONTACTS_IMPORT_FORMATS_LABEL,
+  CONTACTS_IMPORT_MAX_LABEL,
+  contactsImportFileProblem,
+  contactsUploadErrorMessage,
+} from './contacts-import-entry';
 
 /** Subset of ProjectRoleType we render in the picker. */
 interface ProjectRoleTypeLite {
@@ -346,13 +353,28 @@ export function ContactsImportWizard({
   }, [attachToProjectId, projectRoleId]);
 
   // ─── Mutations ────────────────────────────────────────────────────
+  // BM2-28 — a problem found before upload (type / size) or a failed
+  // upload request is shown inline on the upload step, next to the
+  // drop zone, not only as a toast.
+  const [uploadProblem, setUploadProblem] = useState<string | null>(null);
   const uploadMutation = useMutation({
     mutationFn: (f: File) => contactsImportApi.upload(f),
+    onMutate: () => {
+      setUploadProblem(null);
+      setTriage(null);
+      setGrades([]);
+    },
     onSuccess: (data: UploadResponse) => {
       setTriage(data.triage);
       setGrades(data.grades);
       if (data.triage.kind === 'reject') {
         // Stay on upload with reject message visible
+        return;
+      }
+      // BM2-28 — the file opened but no sheet looks like a contact list:
+      // say so here instead of moving on to a Map step with nothing to
+      // map (the UploadStep shows the per-sheet reasons).
+      if (data.grades.length > 0 && data.grades.every((g) => g.verdict === 'non-contact')) {
         return;
       }
       // Pre-select the first sheet with an auto verdict, else first sheet.
@@ -367,7 +389,12 @@ export function ContactsImportWizard({
       }
       setStep(data.triage.sheets.length > 1 ? 'sheet' : 'map');
     },
-    onError: (err) => notify.apiError(err, 'Upload failed'),
+    onError: (err: any) => {
+      notify.apiError(err, 'Upload failed');
+      setUploadProblem(
+        contactsUploadErrorMessage(err?.response?.status, err?.response?.data?.error?.message),
+      );
+    },
   });
 
   const previewMutation = useMutation({
@@ -453,6 +480,7 @@ export function ContactsImportWizard({
 
   const reset = () => {
     setFile(null);
+    setUploadProblem(null);
     setTriage(null);
     setGrades([]);
     setSelectedSheetIdx(0);
@@ -594,10 +622,22 @@ export function ContactsImportWizard({
           file={file}
           onFile={(f) => {
             setFile(f);
-            if (f) uploadMutation.mutate(f);
+            if (!f) return;
+            // BM2-28 — check type and size before sending, so the user
+            // gets a clear reason instead of a failed request.
+            const problem = contactsImportFileProblem(f);
+            if (problem) {
+              setTriage(null);
+              setGrades([]);
+              setUploadProblem(problem);
+              return;
+            }
+            uploadMutation.mutate(f);
           }}
           isBusy={uploadMutation.isPending}
           triage={triage}
+          grades={grades}
+          problem={uploadProblem}
         />
       )}
 
@@ -924,11 +964,16 @@ function UploadStep({
   onFile,
   isBusy,
   triage,
+  grades,
+  problem,
 }: {
   file: File | null;
   onFile: (f: File | null) => void;
   isBusy: boolean;
   triage: TriageResult | null;
+  grades: SheetGrade[];
+  /** BM2-28 — a pre-upload check or a failed upload request, in words. */
+  problem: string | null;
 }) {
   const [drag, setDrag] = useState(false);
   // People UX U4 (P-21) · 2026-09-27 — hidden-inside-label pattern is
@@ -936,13 +981,15 @@ function UploadStep({
   // "Choose file" button restores Tab + Enter, and the drop zone keeps
   // its click-to-browse and drag-and-drop for mouse users.
   const inputRef = useRef<HTMLInputElement>(null);
+  const nothingToImport =
+    !!triage && triage.kind !== 'reject' && grades.length > 0 && grades.every((g) => g.verdict === 'non-contact');
   return (
     <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-6 space-y-4">
       <div>
         <h2 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Upload a contacts sheet</h2>
         <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-1">
-          Any .xlsx, .xls (legacy), .csv, .docx, or .pdf — the wizard sniffs the real file type
-          (not the extension) and picks the right reader. No pre-formatting; you'll map columns in
+          {CONTACTS_IMPORT_FORMATS_LABEL}. The wizard checks the real file type (not the
+          extension) and picks the right reader. No pre-formatting needed: you map the columns in
           the next step.
         </p>
       </div>
@@ -974,8 +1021,13 @@ function UploadStep({
           type="file"
           className="sr-only"
           tabIndex={-1}
-          onChange={(e) => onFile(e.target.files?.[0] ?? null)}
-          accept=".xlsx,.xls,.csv,.docx,.pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"
+          onChange={(e) => {
+            onFile(e.target.files?.[0] ?? null);
+            // BM2-28 — clear the value so picking the same file again
+            // (after fixing it, or after a failed upload) fires onChange.
+            e.target.value = '';
+          }}
+          accept={CONTACTS_IMPORT_ACCEPT}
           aria-label="Contacts sheet file"
         />
         {file ? (
@@ -999,7 +1051,7 @@ function UploadStep({
             <p className="mt-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
               Drop your file here, or use the button below
             </p>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Max 5 MB · triage never trusts the extension</p>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Max {CONTACTS_IMPORT_MAX_LABEL} · the real file type is checked, not the extension</p>
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
@@ -1018,17 +1070,37 @@ function UploadStep({
         </p>
       )}
 
-      {triage?.kind === 'reject' && (
-        <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 p-3 flex items-start gap-2">
-          <XCircle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+      {(triage?.kind === 'reject' || problem) && (
+        <div
+          role="alert"
+          className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/30 p-3 flex items-start gap-2"
+        >
+          <XCircle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" aria-hidden="true" />
           <div className="text-[13px] text-red-800 dark:text-red-200">
             <strong>Cannot import this file</strong>
-            <p className="mt-0.5">{triage.reason}</p>
+            <p className="mt-0.5">{triage?.kind === 'reject' ? triage.reason : problem}</p>
           </div>
         </div>
       )}
 
-      {triage && triage.kind !== 'reject' && (
+      {nothingToImport && (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 p-3 flex items-start gap-2"
+        >
+          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" aria-hidden="true" />
+          <div className="text-[13px] text-amber-800 dark:text-amber-200">
+            <strong>No contact list found in this file</strong>
+            <p className="mt-0.5">
+              The file opened, but no sheet or table in it has contact columns or email addresses.
+              Check that this is the right file, or copy the contacts into a spreadsheet with a
+              header row (for example Name, Company, Email, Phone).
+            </p>
+          </div>
+        </div>
+      )}
+
+      {triage && triage.kind !== 'reject' && !nothingToImport && (
         <div className="rounded-lg border border-emerald-200 dark:border-emerald-900/50 bg-emerald-50 dark:bg-emerald-950/30 p-3 flex items-start gap-2">
           <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
           <div className="text-[13px] text-emerald-800 dark:text-emerald-200">

@@ -1,6 +1,10 @@
 import { Navigate, useLocation, Outlet } from 'react-router-dom';
 import { usePermissions } from '@/hooks/use-permissions';
 
+/** Read on any of these opens /admin/data-import (and its history page). */
+export const DATA_IMPORT_ROUTE_MODULES =
+  'data-import|data-import/contacts|data-import/users|data-import/partners';
+
 /**
  * Maps URL prefixes to permission module keys. Longer (more specific) prefixes
  * are evaluated first so a sub-module like "/templates/zone" wins over the
@@ -39,6 +43,15 @@ const ROUTE_MODULE_MAP: Record<string, string> = {
   // surfaced the collision via TS1117.)
   '/admin/sso': 'org',
   '/admin/drive': 'org',
+  // BM2-28 (QA6) — Data Import is its own permission family. A role
+  // with "Import Contacts" (or Employees / Partners) but no admin:read
+  // was bounced to "/" when it clicked "Import contacts" on the
+  // Contacts / Organizations page: a dead button. Any import grant
+  // opens the page; the page and the API check the specific target.
+  '/admin/data-import': DATA_IMPORT_ROUTE_MODULES,
+  // The history list is read on the parent module only (API:
+  // GET /data-import/history needs data-import:read).
+  '/admin/data-import/history': 'data-import',
 
   // Reports sub-modules — fully-financial reports require finance:read even
   // though the Reports hub only needs reports:read. SORTED_PREFIXES below

@@ -57,6 +57,7 @@ import { MultiSelectFilter } from '@/components/shared/multi-select-filter';
 import { EmptyState } from '@/components/shared/empty-state';
 import { Modal } from '@/components/shared/modal';
 import { ContactsImportWizard } from '@/features/data-import/contacts/contacts-import-wizard';
+import { canImportContacts as canImportContactsFor } from '@/features/data-import/contacts/contacts-import-entry';
 import { RoleAssignmentPicker } from './role-assignment-picker';
 import { AddMemberDialog } from './add-member-dialog';
 import { getInitials } from './utils';
@@ -160,8 +161,9 @@ export function TeamTab({
   // QA4 D9 (2026-09-28) — separate gate from `partners:write`: importing
   // stakeholders in bulk is a distinct authority even for a PM who can
   // add people one at a time. Mirrors the wizard's own permission check
-  // on /admin/data-import.
-  const canImportContacts = isAdmin || canPerm('data-import/contacts', 'write');
+  // on /admin/data-import. BM2-28: no Admin bypass (the API has none for
+  // data-import), shared rule in contacts-import-entry.ts.
+  const canImportContacts = canImportContactsFor(canPerm);
 
   // ─── Data ──────────────────────────────────────────────────────────
   const {
@@ -1285,7 +1287,7 @@ export function TeamTab({
             setImportContactsDirty(false);
           }}
           title="Import contacts from Excel"
-          description="Upload a developer stakeholders sheet — matched rows attach to this project."
+          description="Upload a developer stakeholders sheet. Matched rows attach to this project."
           widthClass="w-[960px] max-w-[95vw]"
           bodyClassName="p-5"
           isDirty={importContactsDirty}

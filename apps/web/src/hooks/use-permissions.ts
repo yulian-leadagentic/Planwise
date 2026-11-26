@@ -1,6 +1,6 @@
 import { useAuthStore } from '@/stores/auth.store';
 
-type PermAction = 'read' | 'write' | 'delete' | 'approve' | 'export';
+export type PermAction = 'read' | 'write' | 'delete' | 'approve' | 'export';
 
 export function usePermissions() {
   const user = useAuthStore((s) => s.user) as any;
@@ -11,42 +11,7 @@ export function usePermissions() {
   // window.
   const roleModules: any[] = user?.roleModules ?? user?.role?.roleModules ?? [];
 
-  const findEntry = (key: string) => {
-    const lc = key.toLowerCase();
-    return roleModules.find((m: any) => {
-      const route = m.module?.route || '';
-      const name = m.module?.name?.toLowerCase() || '';
-      return route === key || route === `/${key}` || name === lc;
-    });
-  };
-
-  const can = (module: string, action: PermAction): boolean => {
-    // Empty list (stale cache / partial login) = fail OPEN for ordinary
-    // modules (the API still decides), but fail CLOSED for finance
-    // (permissions round 2, B-20): no money surface is ever shown
-    // without an explicit finance grant.
-    if (!roleModules.length) return !isFinanceModule(module);
-
-    // Most-specific match first; for nested routes like "/admin/roles" try the
-    // exact entry, then walk up to parent ("/admin") so a role with parent
-    // permission still satisfies child checks unless explicitly denied.
-    const candidates = expand(module);
-
-    for (const candidate of candidates) {
-      const rm = findEntry(candidate);
-      if (rm) {
-        switch (action) {
-          case 'read': return !!rm.canRead;
-          case 'write': return !!rm.canWrite;
-          case 'delete': return !!rm.canDelete;
-          case 'approve': return !!rm.canApprove;
-          case 'export': return !!rm.canExport;
-          default: return false;
-        }
-      }
-    }
-    return false;
-  };
+  const can = (module: string, action: PermAction): boolean => canWith(roleModules, module, action);
 
   // §14 — Admin check:
   //   1. Prefer the server-computed flag (`user.isAdmin`), which is
@@ -71,6 +36,45 @@ export function usePermissions() {
         roleName === 'administrator';
 
   return { can, isAdmin, user };
+}
+
+/**
+ * The `can` rule on a plain role-module list, so specs can exercise the
+ * exact lookup the hook uses (BM2-28 permission-consistency specs).
+ */
+export function canWith(roleModules: any[], module: string, action: PermAction): boolean {
+  // Empty list (stale cache / partial login) = fail OPEN for ordinary
+  // modules (the API still decides), but fail CLOSED for finance
+  // (permissions round 2, B-20): no money surface is ever shown
+  // without an explicit finance grant.
+  if (!roleModules.length) return !isFinanceModule(module);
+
+  const findEntry = (key: string) => {
+    const lc = key.toLowerCase();
+    return roleModules.find((m: any) => {
+      const route = m.module?.route || '';
+      const name = m.module?.name?.toLowerCase() || '';
+      return route === key || route === `/${key}` || name === lc;
+    });
+  };
+
+  // Most-specific match first; for nested routes like "/admin/roles" try the
+  // exact entry, then walk up to parent ("/admin") so a role with parent
+  // permission still satisfies child checks unless explicitly denied.
+  for (const candidate of expand(module)) {
+    const rm = findEntry(candidate);
+    if (rm) {
+      switch (action) {
+        case 'read': return !!rm.canRead;
+        case 'write': return !!rm.canWrite;
+        case 'delete': return !!rm.canDelete;
+        case 'approve': return !!rm.canApprove;
+        case 'export': return !!rm.canExport;
+        default: return false;
+      }
+    }
+  }
+  return false;
 }
 
 function isFinanceModule(module: string): boolean {

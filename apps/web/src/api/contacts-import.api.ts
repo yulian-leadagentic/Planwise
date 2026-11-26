@@ -40,8 +40,13 @@ export interface ExtractedSheet {
 }
 
 export type TriageResult =
-  | { kind: 'tabular'; reader: 'xlsx' | 'xls' | 'csv' | 'html-xlsx'; filename?: string; sheets: ExtractedSheet[] }
-  | { kind: 'docx-tables'; reader: 'docx'; filename?: string; sheets: ExtractedSheet[] }
+  | {
+      kind: 'tabular';
+      reader: 'xlsx' | 'xls' | 'ods' | 'csv' | 'html-xlsx' | 'eml';
+      filename?: string;
+      sheets: ExtractedSheet[];
+    }
+  | { kind: 'docx-tables'; reader: 'docx' | 'doc' | 'odt'; filename?: string; sheets: ExtractedSheet[] }
   | {
       kind: 'pdf';
       reader: 'pdf';
@@ -58,6 +63,11 @@ export interface SheetGrade {
   sheetName: string;
   verdict: SheetVerdict;
   reason: string;
+  /**
+   * 0-based header row. -1 (NO_HEADER_ROW on the API) = headerless sheet:
+   * every row is data and `headerCells` are synthetic ("Column A", ...).
+   * Sent back as-is on Preview / Commit. null = not a contact sheet.
+   */
   headerRowIndex: number | null;
   headerCells: string[];
   mapping: Partial<Record<ContactField, number>>;

@@ -32,6 +32,7 @@ import {
 } from '@/api/data-import.api';
 import { credentialsCsv } from './credentials-csv';
 import { ContactsImportWizard } from './contacts/contacts-import-wizard';
+import { canImportContacts } from './contacts/contacts-import-entry';
 
 type WizardStep = 'pick' | 'upload' | 'review' | 'done';
 
@@ -61,7 +62,7 @@ const TARGETS: Array<{
     key: 'contacts',
     label: 'Customer Contacts',
     description:
-      'Six-stage wizard for Excel / CSV / DOCX / PDF contact sheets — file-type detection, per-sheet header detection, split & forward-fill, dedup, safe re-run.',
+      'Contact lists from Excel, CSV, Word or PDF: file-type detection, per-sheet header detection, split & forward-fill, dedup, safe re-run.',
     icon: ContactIcon,
     available: true,
   },
@@ -98,15 +99,21 @@ export function DataImportPage() {
   const urlTarget = searchParams.get('target');
   const urlProjectId = searchParams.get('projectId');
   const defaultProjectId = urlProjectId ? Number(urlProjectId) : null;
+  // BM2-28 — the same permission rule as the API and every entry button
+  // (contacts-import-entry.ts). A deep link without it stays on the
+  // picker with a clear notice instead of opening a wizard whose upload
+  // would fail.
+  const mayImportContacts = canImportContacts(can);
+  const deepLinkDenied = urlTarget === 'contacts' && !mayImportContacts;
   useEffect(() => {
     // Deliberately ignore `target` in the dep list — this effect is the
     // deep-link entry-once behaviour; re-firing on every state change
     // (e.g. after `reset()`) would re-hijack the picker.
-    if (urlTarget === 'contacts') {
+    if (urlTarget === 'contacts' && mayImportContacts) {
       setTarget((prev) => (prev === null ? 'contacts' : prev));
       setStep((prev) => (prev === 'pick' ? 'upload' : prev));
     }
-  }, [urlTarget]);
+  }, [urlTarget, mayImportContacts]);
 
   const validateMutation = useMutation({
     mutationFn: (args: { target: ImportTarget; file: File }) =>
@@ -186,17 +193,35 @@ export function DataImportPage() {
           title="Data Import"
           description="Bulk-load employees, partners, and contacts from Excel."
         />
-        <Link
-          to="/admin/data-import/history"
-          className="flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-        >
-          <HistoryIcon className="h-3.5 w-3.5" />
-          Import History
-        </Link>
+        {/* History reads GET /data-import/history (data-import:read on
+            the parent module). A role with only "Import Contacts" does
+            not get a link that would fail. */}
+        {can('data-import', 'read') && (
+          <Link
+            to="/admin/data-import/history"
+            className="flex items-center gap-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-[12px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+          >
+            <HistoryIcon className="h-3.5 w-3.5" />
+            Import History
+          </Link>
+        )}
       </div>
 
       {/* Step indicator */}
       <Stepper step={step} />
+
+      {step === 'pick' && deepLinkDenied && (
+        <div
+          role="alert"
+          className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/30 p-3 flex items-start gap-2 text-[13px] text-amber-800 dark:text-amber-200"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden="true" />
+          <span>
+            You don't have permission to import contacts. Ask an administrator to give your role the
+            "Import Contacts" permission.
+          </span>
+        </div>
+      )}
 
       {/* Step bodies */}
       {step === 'pick' && (
@@ -205,7 +230,11 @@ export function DataImportPage() {
             setTarget(t);
             setStep('upload');
           }}
-          canSelect={(t) => can(`data-import/${t}`, 'write') || can('data-import', 'write')}
+          canSelect={(t) =>
+            t === 'contacts'
+              ? mayImportContacts
+              : can(`data-import/${t}`, 'write') || can('data-import', 'write')
+          }
         />
       )}
 
@@ -218,7 +247,8 @@ export function DataImportPage() {
             <div>
               <h2 className="text-[15px] font-bold text-slate-900 dark:text-slate-100">Customer Contacts import</h2>
               <p className="text-[13px] text-slate-500 dark:text-slate-400 mt-0.5">
-                6-stage pipeline. See docs/bm2/bp-import-methodology.md for the rules.
+                Upload a contact list, check the column mapping, review the people and
+                organizations, then import.
               </p>
             </div>
             <button

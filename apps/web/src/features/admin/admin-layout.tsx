@@ -20,6 +20,7 @@ import {
   ClipboardCheck,
 } from 'lucide-react';
 import { SubNavLayout, type SubNavItem } from '@/components/layout/sub-nav-layout';
+import { DATA_IMPORT_ROUTE_MODULES } from '@/router/route-permission-guard';
 
 /**
  * The full catalog of Admin sub-pages, grouped so 18 items are still
@@ -57,7 +58,8 @@ const ADMIN_ITEMS: SubNavItem[] = [
 
   { label: 'Notification Settings',  href: '/admin/notification-settings',     icon: Bell,          module: 'admin/notification-settings', group: 'Communication' },
 
-  { label: 'Data Import',            href: '/admin/data-import',               icon: Upload,        module: 'data-import',              group: 'Data' },
+  // BM2-28 — same rule as the route guard: any import grant opens the page.
+  { label: 'Data Import',            href: '/admin/data-import',               icon: Upload,        module: DATA_IMPORT_ROUTE_MODULES, group: 'Data' },
 ];
 
 export function AdminLayout() {
