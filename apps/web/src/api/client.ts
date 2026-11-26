@@ -3,7 +3,9 @@ import * as Sentry from '@sentry/react';
 import { useAuthStore } from '@/stores/auth.store';
 import { notify, getErrorCode, getErrorMessage } from '@/lib/notify';
 import { API_BASE } from '@/lib/runtime-config';
-import { refreshOnce } from './refresh-lock';
+import { hardNavigate } from '@/lib/auth-navigation';
+import { isTerminalRefreshFailure, refreshWithRetry } from './refresh-lock';
+import { AUTH_NOTICES, AccountSwitchedError, switchAccount, tokenUserId } from './auth-sync';
 
 const client = axios.create({
   baseURL: `${API_BASE}/api/v1`,
@@ -48,16 +50,56 @@ function processQueue(error: unknown, token: string | null) {
   failedQueue = [];
 }
 
+interface SentRequest {
+  url?: string;
+  headers?: { get?: (name: string) => unknown; Authorization?: unknown };
+}
+
+/** The bearer token a request was sent with (AxiosHeaders or a plain object). */
+function sentToken(config: SentRequest | undefined): string | null {
+  const header: unknown = config?.headers?.get?.('Authorization') ?? config?.headers?.Authorization;
+  return typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7) : null;
+}
+
+/** 401s from these mean "wrong credentials" / "no session", never "access token expired". */
+function isAuthEndpoint(config: SentRequest | undefined): boolean {
+  const path = String(config?.url ?? '').split('?')[0];
+  return /\/auth\/(login|refresh)$/.test(path);
+}
+
 client.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    const auth = useAuthStore.getState();
+    // BM2-32: a tab that is signed out (and not loading) has no session to
+    // refresh. A late 401 after signing out, or a wrong password on the
+    // sign-in page, used to call /auth/refresh, get 401 and reload the
+    // page (the sign-in error vanished with it).
+    const signedOut = !auth.accessToken && !auth.isBootstrapping;
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry &&
+      !isAuthEndpoint(originalRequest) &&
+      !signedOut
+    ) {
+      // BM2-32: the 401 is for an older token than the one this tab holds
+      // now (it was in flight while another request refreshed): replay it
+      // with the current token instead of refreshing a second time.
+      const sent = sentToken(originalRequest);
+      if (auth.accessToken && sent && sent !== auth.accessToken && !isRefreshing && !originalRequest._staleReplay) {
+        originalRequest._staleReplay = true;
+        originalRequest.headers.Authorization = `Bearer ${auth.accessToken}`;
+        return client(originalRequest);
+      }
+
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
           failedQueue.push({
             resolve: (token: string) => {
+              originalRequest._retry = true;
               originalRequest.headers.Authorization = `Bearer ${token}`;
               resolve(client(originalRequest));
             },
@@ -68,16 +110,31 @@ client.interceptors.response.use(
 
       originalRequest._retry = true;
       isRefreshing = true;
+      // Who this tab is signed in as, before the refresh (null while loading).
+      const userBefore = tokenUserId(auth.accessToken);
 
       try {
         // Delegate the actual POST to the shared refresh-lock so that if
         // AuthBootstrap ALSO has a refresh in flight (e.g. on F5, before
         // the spinner has released children), both callers await the same
-        // network round-trip. Two parallel /auth/refresh POSTs each rotate
-        // the server-side refresh token — one loses, the loser's caller
-        // gets kicked to /login — that's Failure A's residual vector even
-        // after the per-load queue.
-        const newToken = await refreshOnce();
+        // network round-trip. A short blip (network error, 5xx, timeout)
+        // is retried with backoff before giving up (BM2-32).
+        const newToken = await refreshWithRetry();
+
+        // BM2-32: one refresh cookie per browser. If someone signed in as
+        // another user in another tab, the refresh answers for THAT user.
+        // Never replay this tab's requests under the other identity, and
+        // never keep showing the first user's name on the second user's
+        // session: switch the tab to that account, with a note.
+        const userAfter = tokenUserId(newToken);
+        if (userBefore !== null && userAfter !== null && userAfter !== userBefore) {
+          const switched = new AccountSwitchedError();
+          processQueue(switched, null);
+          console.warn('[auth] the refresh cookie now belongs to another user, reloading this tab into that account');
+          switchAccount(newToken);
+          return Promise.reject(switched);
+        }
+
         useAuthStore.getState().setToken(newToken);
         processQueue(null, newToken);
         originalRequest.headers.Authorization = `Bearer ${newToken}`;
@@ -86,40 +143,29 @@ client.interceptors.response.use(
         processQueue(refreshError, null);
 
         // FEAS-3 / fix-midwork-logout policy (incident 2026-10-07):
-        // ONLY clear auth + redirect on an EXPLICIT auth failure from
-        // the refresh endpoint. The previous code treated any thrown
-        // refreshError — network timeout, 5xx right after a deploy,
-        // Railway restart loop, AbortError — as "session invalid" and
-        // forced the user to /login mid-work.
-        //
-        // What counts as "session invalid":
-        //   • HTTP 401 from `/auth/refresh` — the refresh token is
-        //     actually rejected by the server.
-        //   • HTTP 403 — same (role/account disabled).
-        // Everything else (network error, 5xx, timeout) is a
-        // TRANSIENT failure. We reject the original request so
-        // react-query / the call site can retry, but we KEEP the
-        // session: the user hasn't been authenticated-out, the API
-        // just briefly isn't reachable.
-        const refreshStatus: number | undefined =
-          refreshError?.response?.status;
-        const isTerminalAuthFailure =
-          refreshStatus === 401 || refreshStatus === 403;
-
-        if (isTerminalAuthFailure) {
+        // ONLY sign out on an EXPLICIT auth failure from the refresh
+        // endpoint (401 / 403: the refresh cookie is gone, expired or
+        // the account is disabled). Everything else (network error,
+        // 5xx, timeout), still failing after the retries above, is
+        // TRANSIENT: reject the original request so react-query / the
+        // call site can retry, but KEEP the session.
+        if (isTerminalRefreshFailure(refreshError)) {
           console.warn(
             '[auth] refresh rejected by server (401/403) → redirecting to /login',
             refreshError?.message ?? refreshError,
           );
-          useAuthStore.getState().clearAuth();
-          window.location.href = '/login';
+          // While the page is still loading, AuthBootstrap owns this outcome.
+          if (useAuthStore.getState().isAuthenticated) {
+            useAuthStore.getState().clearAuth('expired');
+            hardNavigate('/login', AUTH_NOTICES.sessionEnded);
+          }
         } else {
           // Transient — keep the session. Log for diagnostics so the
           // kick-out reports still have a trail; the UI will show
           // the per-call error from the rejection below.
           console.warn(
             '[auth] refresh failed transiently (keeping session, caller may retry):',
-            refreshStatus ?? refreshError?.code ?? 'network',
+            refreshError?.response?.status ?? refreshError?.code ?? 'network',
             refreshError?.message ?? refreshError,
           );
         }

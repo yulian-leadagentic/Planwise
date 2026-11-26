@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { User } from '@/types';
+import { announceAuthEvent, type LogoutReason } from '@/lib/auth-events';
 
 /**
  * Access token is held in memory only — never localStorage — so XSS cannot
@@ -9,6 +10,12 @@ import type { User } from '@/types';
  * A lightweight "was-authenticated" flag IS stored in localStorage so the
  * app can distinguish "first visit, go to /login" from "returning user,
  * try to refresh". The flag contains no secrets.
+ *
+ * BM2-32 (2026-11-26): a sign-in (`setAuth`) and a sign-out (`clearAuth`)
+ * also tell the other tabs of the browser (lib/auth-events.ts), because
+ * they all share one refresh cookie. `dropSession` forgets the session in
+ * THIS tab only, without telling anyone: it is what a tab does when it
+ * reacts to another tab, or when the API refused the cookie on page load.
  */
 const AUTH_FLAG_KEY = 'planwise.was_authenticated';
 
@@ -32,10 +39,20 @@ interface AuthState {
   setMustChangePassword: (value: boolean) => void;
   setToken: (token: string) => void;
   setBootstrapComplete: () => void;
-  clearAuth: () => void;
+  /** Sign out: forget the session here and tell the other tabs (default reason: a deliberate sign-out). */
+  clearAuth: (reason?: LogoutReason) => void;
+  /** Forget the session in this tab only. `forgetFlag` also drops the "was signed in" flag. */
+  dropSession: (options?: { forgetFlag?: boolean }) => void;
 }
 
 const hasAuthFlag = typeof localStorage !== 'undefined' && localStorage.getItem(AUTH_FLAG_KEY) === '1';
+
+const SIGNED_OUT = { accessToken: null, user: null, isAuthenticated: false, isBootstrapping: false } as const;
+
+function displayName(user: AuthUser): string {
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  return name || user.email || '';
+}
 
 export const useAuthStore = create<AuthState>((set) => ({
   accessToken: null,
@@ -46,6 +63,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   setAuth: (token, user) => {
     try { localStorage.setItem(AUTH_FLAG_KEY, '1'); } catch { /* localStorage may be unavailable in private mode */ }
     set({ accessToken: token, user, isAuthenticated: true, isBootstrapping: false });
+    announceAuthEvent({ type: 'login', userId: typeof user?.id === 'number' ? user.id : null, name: user ? displayName(user) : undefined });
   },
 
   setUser: (user) => {
@@ -67,8 +85,16 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   setBootstrapComplete: () => set({ isBootstrapping: false }),
 
-  clearAuth: () => {
+  clearAuth: (reason = 'signed-out') => {
     try { localStorage.removeItem(AUTH_FLAG_KEY); } catch { /* localStorage may be unavailable in private mode */ }
-    set({ accessToken: null, user: null, isAuthenticated: false, isBootstrapping: false });
+    set(SIGNED_OUT);
+    announceAuthEvent({ type: 'logout', reason });
+  },
+
+  dropSession: (options) => {
+    if (options?.forgetFlag) {
+      try { localStorage.removeItem(AUTH_FLAG_KEY); } catch { /* localStorage may be unavailable in private mode */ }
+    }
+    set(SIGNED_OUT);
   },
 }));

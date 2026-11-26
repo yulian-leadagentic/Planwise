@@ -11,8 +11,7 @@
  * invariant, not a network-layer one. Any module-load side effect (a stray
  * setInterval, a future WebSocket wire-up, a third-party SDK) could fire an
  * authed request BEFORE bootstrap resolves — triggering the interceptor's
- * own refresh in parallel with bootstrap's. Two /auth/refresh POSTs race, one
- * rotates the token the other used, and the loser drops the user to /login.
+ * own refresh in parallel with bootstrap's.
  *
  * This module gives both callers a shared, deduped promise. First caller
  * kicks off the POST; every caller that arrives while it's in flight awaits
@@ -24,9 +23,24 @@
  * event (later token expiry, user idle, whatever) starts fresh. This is
  * intentional: we don't want a single failure to permanently block future
  * refreshes for the session.
+ *
+ * BM2-32 (2026-11-26): the API's refresh token is a stateless JWT (no
+ * rotation family, no reuse detection, see
+ * apps/api/src/modules/auth/bm2-32-refresh-flow.spec.ts), so two tabs
+ * refreshing at once is harmless and needs no cross-tab lock. What this
+ * module adds: a timeout (a hung connection used to hold every request of
+ * the tab in the interceptor's queue forever), the one rule for "the API
+ * really refused the session" (`isTerminalRefreshFailure`), and a short
+ * retry with backoff for everything else (`refreshWithRetry`).
  */
 import axios from 'axios';
 import { API_BASE } from '@/lib/runtime-config';
+
+/** A refresh slower than this is treated as a network failure (and retried). */
+export const REFRESH_TIMEOUT_MS = 15_000;
+
+/** Mid-session: wait 1s, 2s, 4s between attempts (4 attempts, about 7s), then give up for now. */
+export const REFRESH_RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
 
 let refreshInFlight: Promise<string> | null = null;
 
@@ -42,7 +56,7 @@ export function refreshOnce(): Promise<string> {
   if (refreshInFlight) return refreshInFlight;
 
   refreshInFlight = axios
-    .post(`${API_BASE}/api/v1/auth/refresh`, null, { withCredentials: true })
+    .post(`${API_BASE}/api/v1/auth/refresh`, null, { withCredentials: true, timeout: REFRESH_TIMEOUT_MS })
     .then((res) => {
       // Server may wrap the response as { success, data: { accessToken } }
       // (the ResponseInterceptor's default) or return it flat. Handle both —
@@ -66,4 +80,34 @@ export function refreshOnce(): Promise<string> {
     });
 
   return refreshInFlight;
+}
+
+/**
+ * FEAS-3 / fix-midwork-logout / BM2-32: the ONLY refresh failures that mean
+ * "this browser is signed out" are an explicit 401 or 403 from the API.
+ * A network error, a timeout, a 5xx (a deploy, a Railway restart) or a
+ * malformed body is transient: keep the session and try again.
+ */
+export function isTerminalRefreshFailure(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } } | null)?.response?.status;
+  return status === 401 || status === 403;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * `refreshOnce`, retried with backoff while the failure is transient, so a
+ * short blip (a few seconds of 502 during a deploy, a dropped Wi-Fi)
+ * never reaches the user. Rejects at once on a terminal failure, and with
+ * the last transient error once the delays are used up.
+ */
+export async function refreshWithRetry(delaysMs: number[] = REFRESH_RETRY_DELAYS_MS): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await refreshOnce();
+    } catch (error) {
+      if (isTerminalRefreshFailure(error) || attempt >= delaysMs.length) throw error;
+      await sleep(delaysMs[attempt]);
+    }
+  }
 }
