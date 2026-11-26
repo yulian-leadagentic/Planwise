@@ -26,6 +26,8 @@ export interface BellNotification {
   canOpenEntity?: boolean | null;
   /** QA6 (2026-11-26) · an in-app path the server put in `data.link` (e.g. a project's Team tab). */
   link?: string;
+  /** The row's JSON payload (e.g. a task move's `{ taskId, projectId, toDay }`, QA6 P4). */
+  data?: Record<string, unknown> | null;
   isRead: boolean;
   createdAt: string;
 }
@@ -50,6 +52,7 @@ export function toBellNotification(row: any): BellNotification {
     messageId: row?.messageId ?? undefined,
     canOpenEntity: row?.canOpenEntity ?? undefined,
     link: inAppLink(row?.data?.link),
+    data: row?.data && typeof row.data === 'object' && !Array.isArray(row.data) ? row.data : undefined,
     isRead: row?.isRead === true || row?.readAt != null,
     createdAt: row?.createdAt,
   };

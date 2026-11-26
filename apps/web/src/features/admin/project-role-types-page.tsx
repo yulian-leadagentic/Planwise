@@ -16,6 +16,7 @@ import { notify } from '@/lib/notify';
 import { usePermissions } from '@/hooks/use-permissions';
 import client from '@/api/client';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { QualificationPicker, useQualifications } from './qualification-picker';
 
 // Project Role Types — catalog of roles a party can hold on a project
 // (Customer, Supplier, Participant, Architect, …). Mirrors the existing
@@ -46,12 +47,6 @@ interface PartnerRoleType {
   name: string;
   /** M4a.3 — Filters this role's visibility in the project-role form to a kind. */
   appliesToKind: 'person' | 'organization' | 'any';
-}
-
-interface Profession {
-  id: number;
-  name: string;
-  sortOrder: number;
 }
 
 const inputClass = 'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-200 focus:border-blue-500 focus:outline-none';
@@ -283,16 +278,8 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
         return Array.isArray(d) ? d : [];
       }),
   });
-  // Job Title (Profession) catalog.
-  const { data: professions = [] } = useQuery<Profession[]>({
-    queryKey: ['professions'],
-    staleTime: 10 * 60 * 1000,
-    queryFn: () =>
-      client.get('/admin/config/professions').then((r) => {
-        const d = r.data?.data ?? r.data;
-        return Array.isArray(d) ? d : [];
-      }),
-  });
+  // Qualifications (Profession) catalog, shared with Templates › Services.
+  const { data: professions = [] } = useQualifications();
 
   const [form, setForm] = useState({
     code: type?.code ?? '',
@@ -322,15 +309,6 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
       setForm((f) => ({ ...f, requiredPartnerRoleCode: '' }));
     }
   }, [form.allowedPartnerKind, partnerRoleTypes]);
-
-  const toggleProfession = (id: number) => {
-    setForm((f) => ({
-      ...f,
-      requiredProfessionIds: f.requiredProfessionIds.includes(id)
-        ? f.requiredProfessionIds.filter((x) => x !== id)
-        : [...f.requiredProfessionIds, id],
-    }));
-  };
 
   const save = useMutation({
     mutationFn: () => {
@@ -464,30 +442,12 @@ function EditRow({ type, onClose }: { type?: ProjectRoleType; onClose: () => voi
               </a>
             )}
           </div>
-          {professions.length > 0 ? (
-            <div className="flex flex-wrap gap-1">
-              {professions.map((p) => {
-                const on = form.requiredProfessionIds.includes(p.id);
-                return (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => toggleProfession(p.id)}
-                    className={cn(
-                      'rounded-full border px-2 py-0.5 text-[11px] font-medium',
-                      on
-                        ? 'border-violet-500 bg-violet-50 text-violet-700'
-                        : 'border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600',
-                    )}
-                  >
-                    {p.name}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-[10px] italic text-slate-400 dark:text-slate-500">No job titles defined yet.</p>
-          )}
+          <QualificationPicker
+            qualifications={professions}
+            value={form.requiredProfessionIds}
+            onChange={(next) => setForm((f) => ({ ...f, requiredProfessionIds: next }))}
+            emptyText="No job titles defined yet."
+          />
         </div>
         <label
           className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300 pt-1"

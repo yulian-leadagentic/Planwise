@@ -62,4 +62,24 @@ describe('Bell notification click', () => {
       notificationClickAction({ entityType: 'project', entityId: 10, messageId: 1, canOpenEntity: false, link: '/projects/10' }),
     ).toEqual({ kind: 'drawer', target: { entityType: 'project', entityId: 10 } });
   });
+
+  // QA6 P4 (PR-063): task-move notifications open Operations › Workload on the right week.
+  it('a reassign request opens the Workload tab on the week of the move, with the approvals', () => {
+    expect(
+      notificationClickAction({ type: 'reassign_request', entityType: 'task_reassignment', entityId: 881, data: { taskId: 4021, projectId: 59, toDay: '2026-11-24' } }),
+    ).toEqual({ kind: 'navigate', to: '/operations?tab=workload&weekOf=2026-11-24&approvals=1' });
+  });
+
+  it('a reassign result (or the moved-away notice) opens the week too; no usable day: this week', () => {
+    expect(notificationClickAction({ type: 'reassign_result', entityType: 'task_reassignment', entityId: 881, data: { toDay: '2026-12-01' } })).toEqual({
+      kind: 'navigate',
+      to: '/operations?tab=workload&weekOf=2026-12-01',
+    });
+    expect(notificationClickAction({ type: 'reassign_moved', entityType: 'task', entityId: 4021, data: { fromDay: '2026-11-23' } })).toEqual({
+      kind: 'navigate',
+      to: '/operations?tab=workload&weekOf=2026-11-23',
+    });
+    expect(notificationClickAction({ type: 'reassign_result', data: { toDay: 'soon' } })).toEqual({ kind: 'navigate', to: '/operations?tab=workload' });
+    expect(notificationClickAction({ type: 'system', entityType: 'task_reassignment', entityId: 1 })).toEqual({ kind: 'navigate', to: '/operations?tab=workload' });
+  });
 });

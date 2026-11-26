@@ -59,6 +59,12 @@ export function useNotifications() {
       if (notification.entityType) {
         queryClient.invalidateQueries({ queryKey: [notification.entityType] });
       }
+      // QA6 P4 (PR-063): a task-move request / result refreshes an open
+      // Workload board and its "Waiting for my approval" list (the
+      // approver may not be in that project's realtime room, D11).
+      if (notification.type.startsWith('reassign')) {
+        queryClient.invalidateQueries({ queryKey: ['workload'] });
+      }
       loadList();
     });
 

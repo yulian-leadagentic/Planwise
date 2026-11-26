@@ -40,15 +40,39 @@ export function inboxItemAction(msg: { entityType?: string; entityId?: number; c
   return { kind: 'navigate', to: inboxEntityLink(msg) };
 }
 
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * QA6 P4 (PR-063): a task-move notification (`reassign_request` to the
+ * approver, `reassign_result` to the requester, the notice to the person
+ * the task left) opens Operations › Workload on the week of the move.
+ * Contract assumption: the week comes from `data.toDay` (else
+ * `data.fromDay`), any date of that week; the API's `weekOf` takes it.
+ */
+export function workloadNotificationLink(n: { type?: string; entityType?: string; data?: unknown }): string | null {
+  const isMove = (typeof n.type === 'string' && n.type.startsWith('reassign')) || n.entityType === 'task_reassignment';
+  if (!isMove) return null;
+  const data = (n.data && typeof n.data === 'object' ? n.data : {}) as Record<string, unknown>;
+  const day = [data.toDay, data.fromDay, data.weekOf].find((v): v is string => typeof v === 'string' && YMD.test(v));
+  const params = new URLSearchParams({ tab: 'workload' });
+  if (day) params.set('weekOf', day);
+  if (n.type === 'reassign_request') params.set('approvals', '1');
+  return `/operations?${params.toString()}`;
+}
+
 /** Bell item: a mention / reply he can't open as a page → the drawer; otherwise as before. */
 export function notificationClickAction(n: {
+  type?: string;
   entityType?: string;
   entityId?: number;
   messageId?: number;
   canOpenEntity?: boolean | null;
   /** QA6 (2026-11-26) · in-app path from the notification's `data.link` (already checked by `inAppLink`). */
   link?: string;
+  data?: unknown;
 }): OpenAction {
+  const workload = workloadNotificationLink(n);
+  if (workload) return { kind: 'navigate', to: workload };
   const target = discussionTarget(n.entityType, n.entityId);
   if (n.canOpenEntity === false && n.messageId != null && target) return { kind: 'drawer', target };
   // E.g. a "join the team" request opens the project's Team tab.

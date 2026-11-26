@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, Check, MessageSquare, UserPlus, AlertCircle, ChevronRight } from 'lucide-react';
+import { Bell, Check, MessageSquare, UserPlus, AlertCircle, ChevronRight, ArrowLeftRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useNotifications } from '@/hooks/use-notifications';
 import { formatRelative } from '@/lib/date-utils';
@@ -16,7 +16,16 @@ const typeIcons: Record<string, any> = {
   status_change: { icon: AlertCircle, color: 'text-amber-600 bg-amber-100' },
   message: { icon: MessageSquare, color: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800' },
   system: { icon: AlertCircle, color: 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800' },
+  // QA6 P4 (PR-063): Workload task moves (approval request, its result, the moved-away notice).
+  reassign_request: { icon: ArrowLeftRight, color: 'text-violet-600 bg-violet-100 dark:bg-violet-500/15' },
+  reassign_result: { icon: ArrowLeftRight, color: 'text-blue-600 bg-blue-100 dark:bg-blue-500/15' },
+  reassign: { icon: ArrowLeftRight, color: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800' },
 };
+
+/** Icon of a bell row; any other `reassign_*` type gets the task-move icon. */
+function typeIconFor(type: string) {
+  return typeIcons[type] || (type.startsWith('reassign') ? typeIcons.reassign : typeIcons.system);
+}
 
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);
@@ -83,7 +92,7 @@ export function NotificationCenter() {
             ) : (
               <div className="divide-y divide-slate-50 dark:divide-slate-800">
                 {notifications.slice(0, 15).map((n) => {
-                  const typeInfo = typeIcons[n.type] || typeIcons.system;
+                  const typeInfo = typeIconFor(n.type);
                   const Icon = typeInfo.icon;
                   return (
                     <button

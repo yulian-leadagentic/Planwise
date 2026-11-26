@@ -10,6 +10,7 @@ import { EmptyState } from '@/components/shared/empty-state';
 import client from '@/api/client';
 import { notify } from '@/lib/notify';
 import { useConfirm } from '@/components/shared/confirm-dialog';
+import { QualificationPicker, useQualifications } from '@/features/admin/qualification-picker';
 import { isPickableService } from './service-options';
 
 interface EditState {
@@ -17,7 +18,33 @@ interface EditState {
   name: string;
   code: string;
   color: string;
+  /** QA6 P4 (PR-063): "hold any one" qualification ids; [] = anyone. Not for project phases. */
+  requiredProfessionIds: number[];
+  /** The saved value, to send the field only when it changed. */
+  savedProfessionIds: number[];
+  isPhase: boolean;
 }
+
+/** `phases.required_profession_ids` as the API returns it (null / [] = no requirement). */
+function requiredIdsOf(row: any): number[] {
+  const v = row?.requiredProfessionIds;
+  return Array.isArray(v) ? v.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+}
+
+function editStateOf(row: any): EditState {
+  const ids = requiredIdsOf(row);
+  return {
+    id: row.id,
+    name: row.name,
+    code: row.code ?? '',
+    color: row.color ?? '',
+    requiredProfessionIds: ids,
+    savedProfessionIds: ids,
+    isPhase: row.kind === 'phase',
+  };
+}
+
+const sameIds = (a: number[], b: number[]) => a.length === b.length && a.every((x) => b.includes(x));
 
 interface CreateFormState {
   name: string;
@@ -64,11 +91,17 @@ export function PhasesPage() {
     onError: (err: any) => notify.apiError(err, 'Failed to create'),
   });
 
+  // QA6 P4 (PR-063): the qualification catalog for the service gate.
+  const { data: qualifications = [] } = useQualifications();
+  const qualificationName = useMemo(() => new Map(qualifications.map((q) => [q.id, q.name])), [qualifications]);
+
   const updateMutation = useMutation({
-    mutationFn: ({ id, ...payload }: { id: number; name?: string; code?: string; color?: string }) =>
+    mutationFn: ({ id, ...payload }: { id: number; name?: string; code?: string; color?: string; requiredProfessionIds?: number[] | null }) =>
       client.patch(`/phases/${id}`, payload).then((r) => r.data),
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       queryClient.invalidateQueries({ queryKey: ['phases'] });
+      // The Workload board dims people by the service requirement.
+      if (vars.requiredProfessionIds !== undefined) queryClient.invalidateQueries({ queryKey: ['workload'] });
       notify.success('Service updated');
       setEditing(null);
     },
@@ -93,11 +126,15 @@ export function PhasesPage() {
     if (!editing) return;
     const trimmedName = editing.name.trim();
     if (!trimmedName) { notify.warning('Name is required'); return; }
+    const qualificationsChanged = !editing.isPhase && !sameIds(editing.requiredProfessionIds, editing.savedProfessionIds);
     updateMutation.mutate({
       id: editing.id,
       name: trimmedName,
       code: editing.code.trim() || undefined,
       color: editing.color.trim() || undefined,
+      ...(qualificationsChanged
+        ? { requiredProfessionIds: editing.requiredProfessionIds.length > 0 ? editing.requiredProfessionIds : null }
+        : {}),
     });
   }, [editing, updateMutation]);
 
@@ -162,13 +199,30 @@ export function PhasesPage() {
           )}
         </span>
       ) },
+    // QA6 P4 (PR-063): who may receive this service's tasks on the
+    // Workload board ("hold any one"). Empty = anyone.
+    { id: 'qualifications', header: 'Required qualifications', enableSorting: false,
+      cell: ({ row }) => {
+        if (row.original.kind === 'phase') return <span className="text-[11px] text-slate-300 dark:text-slate-600">Not a service</span>;
+        const ids = requiredIdsOf(row.original);
+        if (ids.length === 0) return <span className="text-[11px] text-slate-400 dark:text-slate-500">Anyone</span>;
+        return (
+          <span className="inline-flex flex-wrap gap-1">
+            {ids.map((qid) => (
+              <span key={qid} className="rounded-[5px] bg-violet-50 dark:bg-violet-500/15 px-2 py-0.5 text-[11px] font-bold tracking-wide text-violet-700 dark:text-violet-300">
+                {qualificationName.get(qid) ?? `#${qid}`}
+              </span>
+            ))}
+          </span>
+        );
+      } },
     { id: 'actions', header: 'Actions', enableSorting: false, size: 112,
       cell: ({ row }) => (
         <div className="flex items-center justify-end gap-1">
           <button
             onClick={(e) => {
               e.stopPropagation();
-              setEditing({ id: row.original.id, name: row.original.name, code: row.original.code ?? '', color: row.original.color ?? '' });
+              setEditing(editStateOf(row.original));
               setShowForm(false);
             }}
             aria-label={`Edit ${row.original.name}`}
@@ -188,7 +242,7 @@ export function PhasesPage() {
           </button>
         </div>
       ) },
-  ], [confirm, deleteMutation]);
+  ], [confirm, deleteMutation, qualificationName]);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-2 py-6">
@@ -282,6 +336,28 @@ export function PhasesPage() {
               </div>
             </div>
           </div>
+          {/* QA6 P4 (PR-063): the service gate of the Workload board.
+              Same picker as Admin › Project Role Types. */}
+          {!editing.isPhase && (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">Required qualifications</span>
+                {qualifications.length === 0 && (
+                  <a href="/templates/types?tab=profession" target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-blue-600 hover:underline">
+                    Add qualifications
+                  </a>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                On the Workload board, this service's tasks can go only to people who hold at least one of these. None selected: anyone.
+              </p>
+              <QualificationPicker
+                qualifications={qualifications}
+                value={editing.requiredProfessionIds}
+                onChange={(next) => setEditing({ ...editing, requiredProfessionIds: next })}
+              />
+            </div>
+          )}
           <div className="flex gap-2">
             <button type="button" onClick={saveEditing} disabled={updateMutation.isPending}
               className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50">
@@ -317,7 +393,7 @@ export function PhasesPage() {
           data={rows}
           pageSize={1000}
           onRowClick={(row: any) => {
-            setEditing({ id: row.id, name: row.name, code: row.code ?? '', color: row.color ?? '' });
+            setEditing(editStateOf(row));
             setShowForm(false);
           }}
         />

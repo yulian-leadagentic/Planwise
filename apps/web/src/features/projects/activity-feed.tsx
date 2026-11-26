@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import {
   Activity, MessageSquare, UserPlus, CheckCircle, AlertCircle, Clock, FolderPlus,
-  Edit3, Trash2, FileText, Paperclip, Briefcase,
+  Edit3, Trash2, FileText, Paperclip, Briefcase, ArrowLeftRight, Hourglass, XCircle, Ban, Undo2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatRelative } from '@/lib/date-utils';
@@ -51,6 +51,13 @@ const ICON_CONFIG: Record<string, { icon: any; color: string }> = {
   'task:assignee_remove':   { icon: UserPlus,    color: 'text-amber-600 bg-amber-100' },
   'task:attachment_add':    { icon: Paperclip,   color: 'text-cyan-600 bg-cyan-100' },
   'task:attachment_remove': { icon: Paperclip,   color: 'text-rose-500 bg-rose-100' },
+  // QA6 P4 (PR-063): Workload drag-and-drop moves, one line per user action.
+  'task:reassign':          { icon: ArrowLeftRight, color: 'text-blue-600 bg-blue-100' },
+  'task:reassign_request':  { icon: Hourglass,   color: 'text-violet-600 bg-violet-100' },
+  'task:reassign_approve':  { icon: CheckCircle, color: 'text-emerald-600 bg-emerald-100' },
+  'task:reassign_reject':   { icon: XCircle,     color: 'text-red-600 bg-red-100' },
+  'task:reassign_cancel':   { icon: Ban,         color: 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800' },
+  'task:reassign_undo':     { icon: Undo2,       color: 'text-amber-600 bg-amber-100' },
   'time:create':            { icon: Clock,       color: 'text-violet-600 bg-violet-100' },
   'time:delete':            { icon: Clock,       color: 'text-rose-500 bg-rose-100' },
   'message':                { icon: MessageSquare, color: 'text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800' },
