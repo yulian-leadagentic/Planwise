@@ -1,17 +1,26 @@
 import {
+  BadRequestException,
   Body,
+  CallHandler,
   Controller,
   Delete,
+  ExecutionContext,
   Get,
+  Injectable,
+  NestInterceptor,
   Param,
   ParseIntPipe,
+  PayloadTooLargeException,
   Post,
   Query,
+  Type,
   UploadedFile,
   UseGuards,
   UseInterceptors,
+  mixin,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Observable } from 'rxjs';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
@@ -29,10 +38,75 @@ import { ExtractedSheet } from './triage.service';
 import { ColumnMapping } from './split-merge.service';
 import { ContactsCommitService, CommitResult, RowDecision } from './commit.service';
 import {
-  CONTACTS_IMPORT_MAX_FILE_BYTES,
+  CONTACTS_FILE_TOO_LARGE_MESSAGE,
   CONTACTS_UPLOAD_OPTIONS,
-  formatMegabytes,
+  CellBudget,
+  ContactsImportLimitError,
 } from './import-limits';
+
+/** The multipart limits Multer reports as 400s (see CONTACTS_UPLOAD_OPTIONS). */
+const MULTIPART_LIMIT_MESSAGES = new Set([
+  'Too many files',
+  'Unexpected field',
+  'Too many fields',
+  'Too many parts',
+  'Field value too long',
+  'Field name too long',
+]);
+
+/**
+ * Review 2 (B5) · `FileInterceptor('file')` with the wizard's limits,
+ * answering Multer's limit errors in words. Multer stops reading at the
+ * size cap and Nest turns that into a bare 413 "File too large", so the
+ * controller never saw an oversized file (its own size branch was dead
+ * and is gone): the clear message is set here instead.
+ */
+export function ContactsUploadInterceptor(): Type<NestInterceptor> {
+  const Inner = FileInterceptor('file', CONTACTS_UPLOAD_OPTIONS);
+  @Injectable()
+  class ContactsUpload implements NestInterceptor {
+    private readonly inner: NestInterceptor = new Inner();
+
+    async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<unknown>> {
+      try {
+        return (await this.inner.intercept(context, next)) as Observable<unknown>;
+      } catch (err) {
+        throw clearUploadError(err);
+      }
+    }
+  }
+  return mixin(ContactsUpload);
+}
+
+export function clearUploadError(err: unknown): unknown {
+  if (err instanceof PayloadTooLargeException) {
+    return new PayloadTooLargeException(CONTACTS_FILE_TOO_LARGE_MESSAGE);
+  }
+  if (err instanceof BadRequestException && MULTIPART_LIMIT_MESSAGES.has(err.message)) {
+    return new BadRequestException(
+      'The upload form is not what the wizard expects: send one file, in the "file" field. Choose the file again and retry.',
+    );
+  }
+  return err;
+}
+
+/**
+ * Review 2 (B1) · Preview and Commit get the sheet back from the client.
+ * A sheet the upload step could not have produced (past the cell budget)
+ * is refused before any row is resolved.
+ */
+function assertSheetWithinBudget(sheet: ExtractedSheet | undefined): void {
+  const rows = sheet?.rows;
+  if (!Array.isArray(rows) || !rows.every((r) => Array.isArray(r))) {
+    throw new BadRequestException('The sheet is missing or malformed. Upload the file again.');
+  }
+  try {
+    new CellBudget().checkRows(typeof sheet?.name === 'string' ? sheet.name : 'Sheet', rows);
+  } catch (err) {
+    if (err instanceof ContactsImportLimitError) throw new PayloadTooLargeException(err.message);
+    throw err;
+  }
+}
 
 /**
  * BM2 · Contacts import wizard — the "contacts" sub-mode of the existing
@@ -93,7 +167,7 @@ export class ContactsImportController {
    */
   @Post('triage')
   @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
-  @UseInterceptors(FileInterceptor('file', CONTACTS_UPLOAD_OPTIONS))
+  @UseInterceptors(ContactsUploadInterceptor())
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary:
@@ -122,7 +196,7 @@ export class ContactsImportController {
    */
   @Post('upload')
   @RequirePermissions({ module: 'data-import/contacts', action: 'write' })
-  @UseInterceptors(FileInterceptor('file', CONTACTS_UPLOAD_OPTIONS))
+  @UseInterceptors(ContactsUploadInterceptor())
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
     summary:
@@ -166,6 +240,7 @@ export class ContactsImportController {
     @Body() body: PreviewRequestBody,
   ): Promise<SheetPreview> {
     this.assertCanImport(user);
+    assertSheetWithinBudget(body.sheet);
     return this.resolve.previewSheet({
       sheet: body.sheet,
       mapping: body.mapping,
@@ -206,6 +281,7 @@ export class ContactsImportController {
     },
   ): Promise<CommitResult> {
     this.assertCanImport(user);
+    assertSheetWithinBudget(body.sheet);
     // Round 4 (review fix) — attaching the imported people to a project
     // changes that project's team: leader or Admin only, as on the Team
     // tab. Checked before anything is written.
@@ -233,7 +309,11 @@ export interface UploadResponse {
   grades: SheetGrade[];
 }
 
-/** Why an upload cannot be read, in words the wizard shows as-is; null when fine. */
+/**
+ * Why an upload cannot be read, in words the wizard shows as-is; null
+ * when fine. (A file over the size cap never gets here: Multer stops
+ * reading it and ContactsUploadInterceptor answers 413 in words.)
+ */
 export function uploadProblem(
   file: { buffer?: Buffer; size?: number } | undefined,
 ): string | null {
@@ -241,9 +321,6 @@ export function uploadProblem(
     // Never a 500 — surface it as a rejection reason so the UI can
     // display it in the same place the byte-triage rejections appear.
     return 'No file was received. Choose the file again and retry.';
-  }
-  if (file.buffer.length > CONTACTS_IMPORT_MAX_FILE_BYTES) {
-    return `The file is larger than ${formatMegabytes(CONTACTS_IMPORT_MAX_FILE_BYTES)}. Remove images or split the list, then upload again.`;
   }
   return null;
 }

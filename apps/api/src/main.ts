@@ -1,5 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
@@ -22,8 +24,10 @@ import { rejectStrayWebSocketUpgrades } from './common/ws-upgrade-guard';
 import { initSentry } from './observability/sentry';
 import {
   CONTACTS_IMPORT_ROUTE_PREFIX,
+  contactsImportAuthGate,
   contactsImportJsonParser,
 } from './modules/data-import/contacts/import-limits';
+import { requireSecret } from './modules/auth/strategies/jwt.strategy';
 
 async function bootstrap() {
   // Sync stderr signal / exit handlers FIRST — before Sentry, before Nest,
@@ -82,7 +86,17 @@ async function bootstrap() {
   // still carries the CORS headers) and before Nest's default parser,
   // which then skips the already-parsed body. See
   // modules/data-import/contacts/import-limits.ts.
-  app.use(CONTACTS_IMPORT_ROUTE_PREFIX, contactsImportJsonParser());
+  //
+  // Review 2 (B4) — Express parsers run before Nest's guards, so the
+  // auth gate in front of the parser answers 401 without reading the
+  // body unless the request carries a valid access token (same secret
+  // and checks as JwtStrategy: signature + expiry, no database).
+  const accessTokens = new JwtService({ secret: requireSecret(app.get(ConfigService), 'JWT_ACCESS_SECRET') });
+  app.use(
+    CONTACTS_IMPORT_ROUTE_PREFIX,
+    contactsImportAuthGate((token) => accessTokens.verify(token)),
+    contactsImportJsonParser(),
+  );
 
   // Global prefix
   app.setGlobalPrefix('api/v1');
