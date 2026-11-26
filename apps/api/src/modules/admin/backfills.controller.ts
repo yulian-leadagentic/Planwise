@@ -3088,38 +3088,51 @@ export class BackfillsController {
   /**
    * PR-069 (QA6, 2026-11-25) — separate project phases from services in
    * the `phases` table (the app's "Service" catalog) and clean its
-   * duplicates. Rules: `qa6-service-phase-cleanup.plan.ts`.
+   * duplicates. Rules: `qa6-service-phase-cleanup.plan.ts`. Since
+   * 2026-11-26 the same duplicate check also runs on the `service_types`
+   * table (`GET /service-types`); every row carries its `table`.
    *
    * Same body convention as p1-copies-to-refs, DRY-RUN IS THE DEFAULT:
    *
    *   { "dryRun"?: boolean,
-   *     "approved"?: [{ "id": number, "action": "mark_phase" | "merge" | "deactivate", "mergeInto"?: number }] }
+   *     "approved"?: [{ "table"?: "phases" | "service_types" (default "phases"),
+   *                     "id": number,
+   *                     "action": "mark_phase" | "merge" | "deactivate" (service_types: merge | deactivate),
+   *                     "mergeInto"?: number }] }
    *
    *   • dry-run (no body, or anything but `dryRun: false`): returns every
-   *     candidate row with id, name, code, kind guess, usage counts
-   *     (tasks, templates, task-catalog items, template tasks, project
-   *     deliverables, projects) and the proposed action (`mark_phase`,
-   *     `merge` into X, `deactivate`), plus the untouched rows. Writes
-   *     nothing.
+   *     candidate row of both tables with table, id, name, code, kind
+   *     guess, reason, usage counts (phases: tasks, templates,
+   *     task-catalog items, template tasks, project deliverables,
+   *     projects; service_types: tasks, task-catalog items, template
+   *     tasks, zone links, project categories, projects) and the proposed
+   *     action (`mark_phase`, `merge` into X, `deactivate`), plus the
+   *     untouched rows with the same usage counts. Writes nothing.
    *   • real run: `dryRun: false` AND `approved` (400 otherwise): the
    *     reviewed dry-run rows with the action and merge target approved
    *     for each. The plan is recomputed; if any approved row now plans
    *     another action or target, 409 SERVICE_PHASE_CLEANUP_PLAN_CHANGED
    *     and nothing is written. Otherwise acts only on the approved
-   *     candidates, in one transaction. Nothing is deleted; a merge
-   *     re-points every reference before it deactivates the duplicate,
-   *     so no task loses its service.
+   *     candidates of both tables, in one transaction. No catalog row is
+   *     deleted; a merge re-points every reference before it deactivates
+   *     the duplicate, so no task loses its service. (A service_types
+   *     zone link / project category the row that stays already has is
+   *     removed instead of moved: one link per zone / project is allowed.)
    *   • `approvedIds` (the old body) is a 400.
    */
   @Post('qa6-service-phase-cleanup')
   @RequirePermissions({ module: 'admin', action: 'write' })
   @ApiOperation({
     summary:
-      'PR-069 · Backfill · mark project phases / merge duplicate services in the Service (phases) table. Body { dryRun?: boolean (default TRUE, only false writes), approved?: [{ id, action, mergeInto? }] (required for a real run; 409 when the recomputed plan differs) }. Never deletes.',
+      'PR-069 · Backfill · mark project phases / merge duplicate services in the Service (phases) table and duplicate rows of the service_types table. Body { dryRun?: boolean (default TRUE, only false writes), approved?: [{ table?: "phases" | "service_types" (default "phases"), id, action, mergeInto? }] (required for a real run; 409 when the recomputed plan differs) }. Never deletes a catalog row.',
   })
   async runQa6ServicePhaseCleanup(
     @CurrentUser() user: { id?: number } | undefined,
-    @Body() body?: { dryRun?: boolean; approved?: Array<{ id: number; action: string; mergeInto?: number | null }> },
+    @Body()
+    body?: {
+      dryRun?: boolean;
+      approved?: Array<{ table?: string; id: number; action: string; mergeInto?: number | null }>;
+    },
   ) {
     const parsed = parseServicePhaseCleanupBody(body);
     return this.servicePhaseCleanup.run({ ...parsed, actorId: user?.id });

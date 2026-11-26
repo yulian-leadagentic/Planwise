@@ -13,8 +13,15 @@ import { UpdateServiceTypeDto } from './dto/update-service-type.dto';
 export class ServiceTypesService {
   constructor(private prisma: PrismaService) {}
 
+  /**
+   * PR-069 (2026-11-26) - the picker list: active rows only. A row merged
+   * into another one (or retired) by the reviewed
+   * `POST /admin/backfills/qa6-service-phase-cleanup` run is kept, with
+   * `isActive = false`, and left out here.
+   */
   async findAll() {
     return this.prisma.serviceType.findMany({
+      where: { isActive: true },
       orderBy: { sortOrder: 'asc' },
     });
   }
