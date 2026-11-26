@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { ContactField } from './header-dictionary';
 import { classifyCell } from './recognizers/classifier';
 import { DEFAULT_SECONDARY_TITLE } from './recognizers/titles';
+import { EMAIL_DOMAIN, extractEmails } from './email-scan';
 
 /**
  * BM2 · Contacts import wizard · Stage 4 — Split & merge.
@@ -429,13 +430,17 @@ export function splitEmailCell(cell: string): {
  * seen order. Empty when no address is found — caller can then decide
  * whether to fall back to the delimiter-split (for legacy strings that
  * were valid before this pass landed).
+ *
+ * Review 2 (B2) · was
+ *   /[\w.+-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+/gi
+ * which retries the local part from every position (quadratic on a long
+ * cell, and Preview cells come straight from the request body). Same
+ * grammar, bounded, matched in linear time: see email-scan.ts.
  */
-const EMAIL_EXTRACT_RE = /[\w.+-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+/gi;
 function extractEmailAddresses(cell: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  const matches = cell.match(EMAIL_EXTRACT_RE);
-  if (!matches) return out;
+  const matches = extractEmails(cell, EMAIL_DOMAIN.hostname);
   for (const raw of matches) {
     const clean = raw.trim().toLowerCase();
     if (!clean || seen.has(clean)) continue;

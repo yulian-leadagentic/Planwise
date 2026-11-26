@@ -5,6 +5,25 @@ import mammoth from 'mammoth';
 import { decodeMimeWords, decodePreview, decodeText } from './text-decoding';
 import { parseDelimitedText } from './csv-reader';
 import { LegacyDocError, oleStreamNames, readLegacyDoc } from './legacy-doc-reader';
+import {
+  CONTACTS_IMPORT_MAX_CELL_TAGS,
+  CONTACTS_IMPORT_MAX_CELLS,
+  CONTACTS_IMPORT_MAX_COLUMNS,
+  CONTACTS_IMPORT_MAX_DOCX_XML_BYTES,
+  CONTACTS_IMPORT_MAX_HTML_SPAN_WORK,
+  CONTACTS_IMPORT_MAX_ROWS,
+  CONTACTS_IMPORT_MAX_UNZIPPED_BYTES,
+  CellBudget,
+  ContactsImportLimitError,
+  formatMegabytes,
+  tooManyCellTagsError,
+  tooManyCellsError,
+} from './import-limits';
+import { ZIP_DAMAGED_MESSAGE, ZipEntry, ZipInspection, inspectZipArchive, readZipDirectory, readZipEntry } from './zip-guard';
+import { countXmlTags, htmlTableStats, isLinearSafeXml, odsCellStats } from './markup-guard';
+import { BARE_EMAIL_RE, EMAIL_DOMAIN, containsEmail, findEmails, findNamedEmails } from './email-scan';
+
+export { zipEntryNames } from './zip-guard';
 // pdf-parse v2 exports a PDFParse class rather than the v1 callable
 // default. The old wrapper (`require('pdf-parse')` as a function) was
 // silently broken on this version; QA4 R2 IMP-11 (2026-09-29) moves
@@ -105,7 +124,18 @@ export class ContactsTriageService {
     }
 
     // ─── Accept — dispatch to a tolerant reader ─────────────────────
+    // Review 2 (B1) · one cell budget for the whole file, shared by
+    // every reader; past it the file is refused with a clear reason.
+    const budget = new CellBudget();
     try {
+      // Review 2 (B3) · ZIP-based formats are checked (sizes, ratio,
+      // entries, ZIP64, honest headers, cell counts) before SheetJS or
+      // mammoth unpack anything.
+      let zip: ZipInspection | null = null;
+      if (sig === 'xlsx' || sig === 'docx' || sig === 'ods' || sig === 'odt') {
+        zip = inspectZipArchive(buffer, zipPartCheck(sig));
+        if (!zip.ok) return reject(zip.reason);
+      }
       if (
         sig === 'xlsx' ||
         sig === 'ole2' ||
@@ -114,28 +144,30 @@ export class ContactsTriageService {
         sig === 'xml' ||
         sig === 'csv'
       ) {
-        return await this.readTabular(buffer, sig, filename);
+        // xlsx / ods only get here after the archive check above.
+        return await this.readTabular(buffer, sig, budget, filename);
       }
       if (sig === 'docx') {
-        return await this.readDocx(buffer, filename);
+        return await this.readDocx(buffer, budget, filename);
       }
       if (sig === 'doc') {
-        return this.readDoc(buffer, filename);
+        return this.readDoc(buffer, budget, filename);
       }
       if (sig === 'odt') {
-        return this.readOdt(buffer, filename);
+        return this.readOdt(zip, budget, filename);
       }
       if (sig === 'eml') {
-        return this.readEmail(buffer, filename);
+        return this.readEmail(buffer, budget, filename);
       }
       if (sig === 'pdf') {
-        return await this.readPdf(buffer, filename);
+        return await this.readPdf(buffer, budget, filename);
       }
       // Very small or unknown-magic files — last-chance CSV attempt.
       if (looksLikeText(buffer)) {
-        return await this.readTabular(buffer, 'csv', filename);
+        return await this.readTabular(buffer, 'csv', budget, filename);
       }
     } catch (err: unknown) {
+      if (err instanceof ContactsImportLimitError) return reject(err.message);
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`triage read failed (${sig}): ${message}`);
       return reject(`Could not read this file. ${humanizeReaderError(message)}`);
@@ -164,12 +196,13 @@ export class ContactsTriageService {
   private async readTabular(
     buffer: Buffer,
     sig: TabularSig,
+    budget: CellBudget,
     filename?: string,
   ): Promise<TriageResult> {
     if (sig === 'csv') {
       // Decode ourselves (BOM / UTF-8 / UTF-16 / Windows-1255) and parse
       // every cell as text, so "0501234567" keeps its leading zero.
-      const rows = parseDelimitedText(decodeText(buffer).text);
+      const rows = parseDelimitedText(decodeText(buffer).text, budget.meter('Sheet1'));
       return {
         kind: 'tabular',
         reader: 'csv',
@@ -187,19 +220,35 @@ export class ContactsTriageService {
         'This is the cover page of an Excel "Web Page" export. The contacts are in a separate folder that was not uploaded. Open the file in Excel, save it as .xlsx, and upload that.',
       );
     }
+    if (isText) {
+      // Review 2 (B1) · SheetJS's HTML reader compares every cell with
+      // every merged range (cells x spans work); bound it, and the cell
+      // tags it parses, before reading.
+      const stats = htmlTableStats(text);
+      if (stats.cells > CONTACTS_IMPORT_MAX_CELL_TAGS) throw tooManyCellTagsError();
+      if (stats.cells * stats.spans > CONTACTS_IMPORT_MAX_HTML_SPAN_WORK) {
+        return reject(
+          'This web-page table has too many merged cells for the wizard to read. Open it in Excel, save it as .xlsx, and upload that.',
+        );
+      }
+    }
+    // Review 2 (B1) · `sheetRows` stops SheetJS at row 20,001 of every
+    // sheet: one row more than the budget, so a sheet that goes past it
+    // is seen (and refused) without reading the rest.
+    const sheetRows = CONTACTS_IMPORT_MAX_ROWS + 1;
     const wb = isText
       ? // HTML / XML exports: decode ourselves and hand SheetJS a
         // string. `raw: true` turns off value parsing.
-        XLSX.read(text, { type: 'string', raw: true, cellDates: false })
+        XLSX.read(text, { type: 'string', raw: true, cellDates: false, sheetRows })
       : // Binary workbooks carry their own code page; never force one
         // (the old forced UTF-8 code page is what broke BOM CSVs).
-        XLSX.read(buffer, { type: 'buffer', cellDates: false, cellText: false, raw: false });
+        XLSX.read(buffer, { type: 'buffer', cellDates: false, cellText: false, raw: false, sheetRows });
     if (!wb.SheetNames || wb.SheetNames.length === 0) {
       return reject('The file opened, but it has no worksheets.');
     }
     const sheets: ExtractedSheet[] = wb.SheetNames.map((name) => {
       const ws = wb.Sheets[name];
-      if (!ws || !tightenRange(ws)) return { name, rows: [] };
+      if (!ws || !fitRangeToBudget(ws, name, budget)) return { name, rows: [] };
       // sheet_to_json with header:1 gives a 2D array (rows of cells).
       // defval:'' keeps empty cells as '', which matters for
       // forward-fill (Stage 4) — we want to know a cell is blank vs
@@ -233,23 +282,18 @@ export class ContactsTriageService {
    * like a spreadsheet tab. A document without tables falls back to its
    * lines when they hold contact details.
    */
-  private async readDocx(buffer: Buffer, filename?: string): Promise<TriageResult> {
+  private async readDocx(buffer: Buffer, budget: CellBudget, filename?: string): Promise<TriageResult> {
     const result = await mammoth.convertToHtml({ buffer });
     const tables = extractHtmlTables(result.value);
     if (tables.length > 0) {
-      return {
-        kind: 'docx-tables',
-        filename,
-        reader: 'docx',
-        sheets: tables.map((rows, i) => ({ name: `Table ${i + 1}`, rows })),
-      };
+      return documentTablesResult(tables, 'docx', budget, filename);
     }
     const raw = await mammoth.extractRawText({ buffer });
-    return documentLinesResult(raw.value.split(/\r?\n/), 'docx', filename);
+    return documentLinesResult(raw.value.split(/\r?\n/), 'docx', budget, filename);
   }
 
   /** Legacy Word 97-2003 (.doc), usually renamed to .docx by the sender. */
-  private readDoc(buffer: Buffer, filename?: string): TriageResult {
+  private readDoc(buffer: Buffer, budget: CellBudget, filename?: string): TriageResult {
     let content;
     try {
       content = readLegacyDoc(buffer);
@@ -265,25 +309,25 @@ export class ContactsTriageService {
       throw err;
     }
     if (content.tables.length > 0) {
-      return {
-        kind: 'docx-tables',
-        filename,
-        reader: 'doc',
-        sheets: content.tables.map((rows, i) => ({ name: `Table ${i + 1}`, rows })),
-      };
+      return documentTablesResult(content.tables, 'doc', budget, filename);
     }
-    return documentLinesResult(content.paragraphs, 'doc', filename);
+    return documentLinesResult(content.paragraphs, 'doc', budget, filename);
   }
 
-  /** OpenDocument text (LibreOffice / Google Docs export) — tables from content.xml. */
-  private readOdt(buffer: Buffer, filename?: string): TriageResult {
-    const zip = XLSX.CFB.read(buffer, { type: 'buffer' });
-    const entry = XLSX.CFB.find(zip, 'content.xml');
-    if (!entry || !entry.content) {
+  /**
+   * OpenDocument text (LibreOffice / Google Docs export) — tables from
+   * content.xml. Review 2 (B3): the entry comes from the checked archive
+   * (bounded unpacking) instead of `XLSX.CFB.read`, which unpacks every
+   * entry whole; the archive check also made sure content.xml is
+   * well-formed, so the regex extraction below stays linear.
+   */
+  private readOdt(zip: ZipInspection | null, budget: CellBudget, filename?: string): TriageResult {
+    const entry = zip && zip.ok ? zip.read('content.xml', CONTACTS_IMPORT_MAX_UNZIPPED_BYTES) : null;
+    if (!entry) {
       return reject('This OpenDocument file has no readable content. Open it and save it as .docx or .xlsx.');
     }
-    const xml = Buffer.from(entry.content as Uint8Array).toString('utf8');
-    const tables = extractOdfTables(xml);
+    const xml = entry.toString('utf8');
+    const tables = extractOdfTables(xml, budget);
     if (tables.length > 0) {
       return {
         kind: 'docx-tables',
@@ -292,14 +336,14 @@ export class ContactsTriageService {
         sheets: tables.map((rows, i) => ({ name: `Table ${i + 1}`, rows })),
       };
     }
-    return documentLinesResult(extractOdfParagraphs(xml), 'odt', filename);
+    return documentLinesResult(extractOdfParagraphs(xml), 'odt', budget, filename);
   }
 
   /**
    * A raw email message (RFC 822 text) saved under a spreadsheet name.
    * The contacts are the people in its To / Cc / From headers.
    */
-  private readEmail(buffer: Buffer, filename?: string): TriageResult {
+  private readEmail(buffer: Buffer, budget: CellBudget, filename?: string): TriageResult {
     const { text } = decodeText(buffer);
     const headerBlock = text.split(/\r?\n\r?\n/, 1)[0] ?? '';
     const unfolded: string[] = [];
@@ -319,11 +363,13 @@ export class ContactsTriageService {
         'This file is an email message, but its headers have no recipients with email addresses. Upload the contact list itself.',
       );
     }
+    const sheetRows = [['Name', 'Email'], ...rows];
+    budget.checkRows('Email recipients', sheetRows);
     return {
       kind: 'tabular',
       reader: 'eml',
       filename,
-      sheets: [{ name: 'Email recipients', rows: [['Name', 'Email'], ...rows] }],
+      sheets: [{ name: 'Email recipients', rows: sheetRows }],
     };
   }
 
@@ -339,7 +385,7 @@ export class ContactsTriageService {
    * methodology) routes low-confidence PDFs to the manual/conflict
    * lane rather than the auto-map path.
    */
-  private async readPdf(buffer: Buffer, filename?: string): Promise<TriageResult> {
+  private async readPdf(buffer: Buffer, budget: CellBudget, filename?: string): Promise<TriageResult> {
     const parser = new PDFParse({ data: buffer });
     const parsed = await parser.getText();
     const rawText = parsed.text ?? '';
@@ -370,21 +416,15 @@ export class ContactsTriageService {
     const stitched = stitchHeaderContinuations(lines);
     const gmailRows = extractGmailRecipientRows(stitched);
     if (gmailRows.length > 0) {
+      const recipientRows = [['Name', 'Email'], ...gmailRows];
+      budget.checkRows('Recipients', recipientRows);
       return {
         kind: 'pdf',
         filename,
         reader: 'pdf',
         confidence: Math.min(1, 0.5 + gmailRows.length / 40),
         pages,
-        sheets: [
-          {
-            name: 'Recipients',
-            rows: [
-              ['Name', 'Email'],
-              ...gmailRows,
-            ],
-          },
-        ],
+        sheets: [{ name: 'Recipients', rows: recipientRows }],
       };
     }
 
@@ -397,8 +437,11 @@ export class ContactsTriageService {
     // single-column extract so the classifier can still mine tokens
     // per line and the PM can inline-edit low-confidence rows.
     const tabularRows = extractTabularRows(lines);
-    const emailCount = (rawText.match(/[\w.+-]+@[\w-]+\.[a-z]{2,}/gi) ?? []).length;
+    // Review 2 (B2) · linear count (was /[\w.+-]+@[\w-]+\.[a-z]{2,}/gi
+    // over the whole text, quadratic on long word runs).
+    const emailCount = findEmails(rawText, EMAIL_DOMAIN.single).length;
     if (tabularRows.length > 1 && tabularRows.some((r) => r.length >= 3)) {
+      budget.checkRows('PDF Table', tabularRows);
       const confidence = Math.min(1, 0.4 + emailCount / 30);
       return {
         kind: 'pdf',
@@ -415,15 +458,87 @@ export class ContactsTriageService {
     // Preview lets the PM inline-edit low-confidence rows (QA4 R2
     // IMP-11 known limitation for structure-less PDFs).
     const confidence = Math.min(1, emailCount / 20);
+    const extractRows = lines.map((l) => [l]);
+    budget.checkRows('PDF Extract', extractRows);
     return {
       kind: 'pdf',
       filename,
       reader: 'pdf',
       confidence,
       pages,
-      sheets: [{ name: 'PDF Extract', rows: lines.map((l) => [l]) }],
+      sheets: [{ name: 'PDF Extract', rows: extractRows }],
     };
   }
+}
+
+/**
+ * Review 2 (B1, B3) · Per-entry checks run inside the archive check, on
+ * each entry's verified bytes:
+ *   • xlsx: SheetJS materialises every filled cell and shared string of
+ *     the workbook, whatever the columns, before we see the grid. The cell
+ *     and shared-string tags are counted first (filled cells and strings
+ *     up to the cell budget, all cell tags up to twice that).
+ *   • docx: mammoth builds a full tree of each Word XML part (about
+ *     0.3 s and 200 MB per MB); one part may unpack to at most 5 MB.
+ *   • ods / odt: content.xml must be well-formed (the regex readers would
+ *     otherwise rescan the text for every unclosed tag), and for ods the
+ *     cells SheetJS would build from the repeat attributes must fit the
+ *     budget.
+ */
+function zipPartCheck(sig: 'xlsx' | 'docx' | 'ods' | 'odt'): (entry: ZipEntry, data: Buffer) => string | null {
+  if (sig === 'xlsx') {
+    let cellTags = 0;
+    let filledCells = 0;
+    let sharedStrings = 0;
+    let binarySheetBytes = 0;
+    return (entry, data) => {
+      if (/\.bin$/i.test(entry.name)) {
+        // Binary workbook parts (.xlsb): a cell record takes at least 8 bytes.
+        if (/^xl\/worksheets\//i.test(entry.name)) binarySheetBytes += data.length;
+        return binarySheetBytes > 8 * CONTACTS_IMPORT_MAX_CELLS ? tooManyCellsError().message : null;
+      }
+      if (!looksLikeXml(data)) return null;
+      const counts = countXmlTags(data, ['c', 'si']);
+      cellTags += counts.c.all;
+      filledCells += counts.c.withContent;
+      sharedStrings += counts.si.all;
+      if (filledCells > CONTACTS_IMPORT_MAX_CELLS || sharedStrings > CONTACTS_IMPORT_MAX_CELLS) {
+        return tooManyCellsError().message;
+      }
+      if (cellTags > CONTACTS_IMPORT_MAX_CELL_TAGS) return tooManyCellTagsError().message;
+      return null;
+    };
+  }
+  if (sig === 'docx') {
+    return (entry, data) =>
+      /^word\/.*\.xml$/i.test(entry.name) && data.length > CONTACTS_IMPORT_MAX_DOCX_XML_BYTES
+        ? `This Word file's text is larger than the wizard can read (more than ${formatMegabytes(CONTACTS_IMPORT_MAX_DOCX_XML_BYTES)} of document content). Save the table as .xlsx, or split the document, and upload again.`
+        : null;
+  }
+  return (entry, data) => {
+    if (entry.name !== 'content.xml') return null;
+    const xml = data.toString('utf8');
+    if (!isLinearSafeXml(xml)) return ZIP_DAMAGED_MESSAGE;
+    if (sig === 'ods') {
+      const stats = odsCellStats(xml);
+      if (!stats) return ZIP_DAMAGED_MESSAGE;
+      if (stats.cellTags > CONTACTS_IMPORT_MAX_CELL_TAGS) return tooManyCellTagsError().message;
+      if (stats.storedCells > CONTACTS_IMPORT_MAX_CELLS) return tooManyCellsError().message;
+    }
+    return null;
+  };
+}
+
+/** First non-blank byte (after a UTF-8 BOM) is '<'. */
+function looksLikeXml(data: Buffer): boolean {
+  let i = data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf ? 3 : 0;
+  const end = Math.min(data.length, i + 64);
+  for (; i < end; i++) {
+    const ch = data[i];
+    if (ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d) continue;
+    return ch === 0x3c;
+  }
+  return false;
 }
 
 // ─── Types ─────────────────────────────────────────────────────────────
@@ -613,14 +728,17 @@ function classifyZip(buffer: Buffer): Sig {
   // OpenDocument: the first entry is an uncompressed `mimetype` file.
   if (head.includes('mimetypeapplication/vnd.oasis.opendocument.spreadsheet')) return 'ods';
   if (head.includes('mimetypeapplication/vnd.oasis.opendocument.text')) return 'odt';
-  const entries = zipEntryNames(buffer);
-  if (entries) {
+  const dir = readZipDirectory(buffer);
+  const entries = dir && (dir.complete || dir.entries.length > 0) ? dir.entries.map((e) => e.name) : null;
+  if (dir && entries) {
     if (entries.some((e) => e.startsWith('xl/'))) return 'xlsx';
     if (entries.some((e) => e.startsWith('word/'))) return 'docx';
     if (entries.some((e) => e.startsWith('ppt/'))) return 'pptx';
     if (entries.includes('content.xml') && entries.includes('mimetype')) {
-      // ODF whose mimetype entry was not first (re-zipped by hand).
-      const mimetype = readZipEntryText(buffer, 'mimetype');
+      // ODF whose mimetype entry was not first (re-zipped by hand). Read
+      // just that entry, a few bytes at most (review 2, B3: the old code
+      // unpacked the whole archive with XLSX.CFB.read to get it).
+      const mimetype = readZipEntry(buffer, dir, 'mimetype', 256)?.toString('utf8') ?? '';
       if (mimetype.includes('opendocument.spreadsheet')) return 'ods';
       if (mimetype.includes('opendocument.text')) return 'odt';
     }
@@ -634,41 +752,6 @@ function classifyZip(buffer: Buffer): Sig {
     if (head.includes('document.xml')) return 'docx';
   }
   return 'zip-other';
-}
-
-function readZipEntryText(buffer: Buffer, name: string): string {
-  try {
-    const zip = XLSX.CFB.read(buffer, { type: 'buffer' });
-    const entry = XLSX.CFB.find(zip, name);
-    return entry?.content ? Buffer.from(entry.content as Uint8Array).toString('utf8') : '';
-  } catch {
-    return '';
-  }
-}
-
-/** Entry names from the ZIP central directory, or null when unreadable. */
-export function zipEntryNames(buffer: Buffer): string[] | null {
-  const minEocd = Math.max(0, buffer.length - 22 - 0xffff);
-  let eocd = -1;
-  for (let i = buffer.length - 22; i >= minEocd; i--) {
-    if (buffer.readUInt32LE(i) === 0x06054b50) {
-      eocd = i;
-      break;
-    }
-  }
-  if (eocd < 0) return null;
-  const count = buffer.readUInt16LE(eocd + 10);
-  let off = buffer.readUInt32LE(eocd + 16);
-  const names: string[] = [];
-  for (let i = 0; i < count; i++) {
-    if (off + 46 > buffer.length || buffer.readUInt32LE(off) !== 0x02014b50) return names.length ? names : null;
-    const nameLen = buffer.readUInt16LE(off + 28);
-    const extraLen = buffer.readUInt16LE(off + 30);
-    const commentLen = buffer.readUInt16LE(off + 32);
-    names.push(buffer.subarray(off + 46, off + 46 + nameLen).toString('utf8'));
-    off += 46 + nameLen + extraLen + commentLen;
-  }
-  return names;
 }
 
 function looksLikeText(buffer: Buffer): boolean {
@@ -721,8 +804,15 @@ function readerLabel(sig: TabularSig): TabularReader {
  * XFD): one real file came back as 37 rows x 16,379 columns, a 1.8 MB
  * grid of empty strings. The range start is kept so row numbering stays
  * as before. Returns false when the sheet has no values at all.
+ *
+ * Review 2 (B1) · Shrinking alone is not enough: the furthest filled cell
+ * is the uploader's choice. The tightened sheet is charged to the file's
+ * cell budget (rows and columns up to its last value, counted from A1)
+ * and refused past it, before `sheet_to_json` walks the range. The range
+ * written back is also clamped to 200 columns, so `sheet_to_json` can
+ * never walk a wider grid whatever happens above.
  */
-function tightenRange(ws: XLSX.WorkSheet): boolean {
+function fitRangeToBudget(ws: XLSX.WorkSheet, name: string, budget: CellBudget): boolean {
   let maxR = -1;
   let maxC = -1;
   for (const key of Object.keys(ws)) {
@@ -734,10 +824,12 @@ function tightenRange(ws: XLSX.WorkSheet): boolean {
     if (c > maxC) maxC = c;
   }
   if (maxR < 0) return false;
+  budget.checkShape(name, maxR + 1, maxC + 1);
+  const lastCol = Math.min(maxC, CONTACTS_IMPORT_MAX_COLUMNS - 1);
   const start = ws['!ref'] ? XLSX.utils.decode_range(ws['!ref']).s : { r: 0, c: 0 };
   ws['!ref'] = XLSX.utils.encode_range({
-    s: { r: Math.min(start.r, maxR), c: Math.min(start.c, maxC) },
-    e: { r: maxR, c: maxC },
+    s: { r: Math.min(start.r, maxR), c: Math.min(start.c, lastCol) },
+    e: { r: maxR, c: lastCol },
   });
   return true;
 }
@@ -768,7 +860,9 @@ function humanizeReaderError(raw: string): string {
 
 // ─── Document helpers (docx / doc / odt) ──────────────────────────────
 
-const CONTACT_SIGNAL_EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/i;
+// The email signal was /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/i, which is
+// quadratic on long lines (review 2, B2); containsEmail is the linear
+// equivalent. The phone pattern is bounded and stays a regex.
 const CONTACT_SIGNAL_PHONE = /(?:\+?972[-\s]?|\b0)(?:[2-9]|5\d)[-\s]?\d{3}[-\s]?\d{4}\b/;
 
 /**
@@ -780,21 +874,36 @@ const CONTACT_SIGNAL_PHONE = /(?:\+?972[-\s]?|\b0)(?:[2-9]|5\d)[-\s]?\d{3}[-\s]?
 function documentLinesResult(
   rawLines: string[],
   reader: DocumentReader,
+  budget: CellBudget,
   filename?: string,
 ): TriageResult {
   const lines = rawLines.map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
-  const hasContactSignal = lines.some((l) => CONTACT_SIGNAL_EMAIL.test(l) || CONTACT_SIGNAL_PHONE.test(l));
+  const hasContactSignal = lines.some((l) => containsEmail(l) || CONTACT_SIGNAL_PHONE.test(l));
   if (!hasContactSignal) {
     return reject(
       'This document has no tables and no email addresses or phone numbers, so there are no contacts to import.',
     );
   }
+  const rows = lines.map((l) => [l]);
+  budget.checkRows('Document text', rows);
   return {
     kind: 'docx-tables',
     filename,
     reader,
-    sheets: [{ name: 'Document text', rows: lines.map((l) => [l]) }],
+    sheets: [{ name: 'Document text', rows }],
   };
+}
+
+/** Tables of a Word document, one sheet each, charged to the cell budget. */
+function documentTablesResult(
+  tables: string[][][],
+  reader: 'docx' | 'doc',
+  budget: CellBudget,
+  filename?: string,
+): TriageResult {
+  const sheets = tables.map((rows, i) => ({ name: `Table ${i + 1}`, rows }));
+  for (const sheet of sheets) budget.checkRows(sheet.name, sheet.rows);
+  return { kind: 'docx-tables', filename, reader, sheets };
 }
 
 /**
@@ -860,8 +969,15 @@ function odfText(xml: string): string {
  * Tables from an ODF `content.xml`. Repeated rows / cells are expanded,
  * with a cap so the "repeat this empty cell 1,000 times" padding that
  * LibreOffice writes does not blow up the grid.
+ *
+ * Review 2 (B1) · Even capped (x64 cells, x50 rows) the repeats multiply,
+ * so every table is metered against the file's cell budget while it is
+ * built and the extraction stops at the first row past it. Empty cells
+ * are only counted until a value follows them (trailing padding is never
+ * stored). The caller checks that `xml` is well-formed first
+ * (isLinearSafeXml), which keeps these lazy regexes linear.
  */
-export function extractOdfTables(xml: string): string[][][] {
+export function extractOdfTables(xml: string, budget: CellBudget = new CellBudget()): string[][][] {
   const tables: string[][][] = [];
   const tableRe = /<table:table\b[^>]*>([\s\S]*?)<\/table:table>/g;
   const rowRe = /<table:table-row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/table:table-row>)/g;
@@ -873,22 +989,33 @@ export function extractOdfTables(xml: string): string[][][] {
   let t: RegExpExecArray | null;
   while ((t = tableRe.exec(xml)) !== null) {
     const rows: string[][] = [];
+    const meter = budget.meter(`Table ${tables.length + 1}`);
     let r: RegExpExecArray | null;
     rowRe.lastIndex = 0;
     while ((r = rowRe.exec(t[1])) !== null) {
       const cells: string[] = [];
+      let pendingEmpty = 0;
       let c: RegExpExecArray | null;
       cellRe.lastIndex = 0;
       while ((c = cellRe.exec(r[2] ?? '')) !== null) {
         const text = odfText(c[3] ?? '');
         const n = Math.min(repeat(c[2], 'number-columns-repeated'), 64);
+        if (text === '') {
+          pendingEmpty += n;
+          continue;
+        }
+        meter.widen(cells.length + pendingEmpty + n);
+        for (; pendingEmpty > 0; pendingEmpty--) cells.push('');
         for (let k = 0; k < n; k++) cells.push(text);
       }
-      while (cells.length > 0 && cells[cells.length - 1] === '') cells.pop();
       if (cells.length === 0) continue;
       const times = Math.min(repeat(r[1], 'number-rows-repeated'), 50);
-      for (let k = 0; k < times; k++) rows.push([...cells]);
+      for (let k = 0; k < times; k++) {
+        meter.addRow(cells.length);
+        rows.push([...cells]);
+      }
     }
+    meter.close();
     if (rows.length > 0) tables.push(rows);
   }
   return tables;
@@ -919,35 +1046,45 @@ export function extractOdfParagraphs(xml: string): string[] {
  * new header token (To:/Cc:/…) AND the prior line ended mid-token
  * (no closing `>` on the last address seen, or a trailing `-`
  * inside an address).
+ *
+ * Review 2 (B2) · The heuristic only looks at the end of the carried
+ * line, so only its last characters are kept for the test (the old code
+ * ran `/[<,]\s*$/` and friends over the whole, ever-growing carry for
+ * every continuation line: quadratic). Same result: the carry is the
+ * header line, right-trimmed once something is appended, plus each
+ * continuation line trimmed.
  */
 function stitchHeaderContinuations(lines: string[]): string[] {
   const HEADER_START = /^\s*(to|cc|bcc|from|reply-to|אל|עותק|עותק נסתר|מאת)\s*:/i;
   const out: string[] = [];
-  let carry: string | null = null;
-  let carryIsHeader = false;
+  let parts: string[] | null = null;
+  // The last 64 characters of the carry without its trailing whitespace.
+  let tail = '';
   const flush = () => {
-    if (carry != null) out.push(carry);
-    carry = null;
-    carryIsHeader = false;
+    if (parts) out.push(parts.join(''));
+    parts = null;
   };
   for (const line of lines) {
-    const isHeader = HEADER_START.test(line);
-    if (isHeader) {
+    if (HEADER_START.test(line)) {
       flush();
-      carry = line;
-      carryIsHeader = true;
+      parts = [line];
+      tail = line.trimEnd().slice(-64);
       continue;
     }
-    if (carryIsHeader && carry != null) {
+    if (parts) {
       // Continuation heuristic: previous carry ends with a hyphen
       // inside what looks like an email (`<foo@peer-`) or with `,`
       // (mid-list). Otherwise treat this line as an unrelated
       // paragraph and flush.
-      const trimmed = carry.trimEnd();
-      const looksContinuing =
-        /[<,]\s*$/.test(trimmed) || /-\s*$/.test(trimmed) || !/>/.test(trimmed.slice(-40));
+      const last = tail.slice(-1);
+      const looksContinuing = last === '<' || last === ',' || last === '-' || !tail.slice(-40).includes('>');
       if (looksContinuing) {
-        carry = trimmed + line.trim();
+        if (parts.length === 1) parts[0] = parts[0].trimEnd();
+        const piece = line.trim();
+        if (piece) {
+          parts.push(piece);
+          tail = (tail + piece).slice(-64);
+        }
         continue;
       }
       flush();
@@ -1001,13 +1138,14 @@ function extractTabularRows(lines: string[]): string[][] {
  * lower-cased email. When the pattern doesn't fire at all, returns
  * an empty array so the caller falls through to the single-column
  * fallback. Never throws.
+ *
+ * Review 2 (B2) · The `Name <email>` pairs come from findNamedEmails
+ * (the old /(?:"([^"]+)"|([^,<;]+?))\s*<(…)>/gi pattern was quadratic
+ * on header lines of any length) and bare addresses from a bounded
+ * pattern; see email-scan.ts. Email domain allows dots inside so
+ * multi-part TLDs like co.il / ac.uk / com.au parse correctly.
  */
 function extractGmailRecipientRows(lines: string[]): string[][] {
-  // Email domain allows dots inside so multi-part TLDs like co.il /
-  // ac.uk / com.au parse correctly (regressed on the earlier
-  // `[\w-]+\.[a-z]{2,}` shape which only matched single-part TLDs).
-  const NAME_EMAIL_RE = /(?:"([^"]+)"|([^,<;]+?))\s*<([\w.+-]+@[\w.-]+\.[a-z]{2,})>/gi;
-  const BARE_EMAIL_RE = /(^|[\s,;])([\w.+-]+@[\w.-]+\.[a-z]{2,})(?=$|[\s,;])/gi;
   const HEADER_LINE_RE = /^\s*(to|cc|bcc|from|reply-to|אל|עותק|עותק נסתר|מאת)\s*:/i;
   // Strip the header prefix ("To: ", "Cc: ", "אל: " …) from the
   // first name we capture on a header line so it doesn't stick to
@@ -1033,14 +1171,9 @@ function extractGmailRecipientRows(lines: string[]): string[][] {
   for (const line of lines) {
     const isHeader = HEADER_LINE_RE.test(line);
     if (isHeader) sawHeader = true;
-    NAME_EMAIL_RE.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    let hitInLine = false;
-    while ((m = NAME_EMAIL_RE.exec(line)) !== null) {
-      hitInLine = true;
-      const name = (m[1] ?? m[2] ?? '').trim();
-      pushPair(name, m[3]);
-    }
+    const pairs = findNamedEmails(line);
+    const hitInLine = pairs.length > 0;
+    for (const pair of pairs) pushPair(pair.name.trim(), pair.email);
     // Only mine bare emails from HEADER lines — the body can carry
     // stray addresses (footers, disclaimers) that aren't contacts.
     if (isHeader && !hitInLine) {

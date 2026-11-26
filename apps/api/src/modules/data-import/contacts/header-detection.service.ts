@@ -9,6 +9,7 @@ import {
   matchHeaderToField,
   scoreHeaderRow,
 } from './header-dictionary';
+import { EMAIL_MAX_LENGTH, containsEmail } from './email-scan';
 
 /**
  * BM2 · Contacts import · Stage 2 — Per-sheet header detection.
@@ -268,10 +269,13 @@ function mapFromMatched(
 }
 
 /** Simple email regex — used by the headerless-fallback column scan.
- *  The strict grammar-validated splitter lives in Stage 4. */
+ *  The strict grammar-validated splitter lives in Stage 4. Anchored, so
+ *  it runs once from the start; longer values cannot be an address. */
 const EMAIL_LIKE = /^[\w.+-]+@[\w-]+\.[a-z]{2,}$/i;
-/** An email address anywhere inside a cell (multi-part TLDs included). */
-const EMAIL_INSIDE = /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/i;
+const isEmailLike = (v: string) => v.length <= EMAIL_MAX_LENGTH && EMAIL_LIKE.test(v);
+// "An email address anywhere inside a cell (multi-part TLDs included)"
+// was /[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/i, quadratic on long cells
+// (review 2, B2); containsEmail is the linear equivalent.
 
 /**
  * `headerRowIndex` for a sheet that has no header row. Every row is data
@@ -322,8 +326,8 @@ function findEmailColumnInBody(rows: readonly (readonly string[])[]): number | n
       const v = row[c]?.trim();
       if (!v) continue;
       perColTotal[c]++;
-      if (EMAIL_LIKE.test(v)) perColHits[c]++;
-      if (EMAIL_INSIDE.test(v)) perColInside[c]++;
+      if (isEmailLike(v)) perColHits[c]++;
+      if (containsEmail(v)) perColInside[c]++;
     }
   }
   let bestCol = -1;

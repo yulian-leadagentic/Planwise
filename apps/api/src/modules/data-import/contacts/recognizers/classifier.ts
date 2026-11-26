@@ -77,7 +77,10 @@ function tokenize(cell: string): string[] {
   if (!trimmed) return [];
   // Insert a standalone `-` where a space-hyphen-space appears so it
   // doesn't glue onto the next word (city recognition uses it).
-  const spaced = trimmed.replace(/\s+-\s+/g, ' - ');
+  // Review 2 (B2) · `(?<!\s)` starts a match only at the first space of
+  // a run: plain /\s+-\s+/ retried every position of a long run of
+  // spaces (quadratic). Same matches otherwise.
+  const spaced = trimmed.replace(/(?<!\s)\s+-\s+/g, ' - ');
   return spaced
     .split(/[\s,;\n\r]+/)
     .map((t) => t.trim())
@@ -208,7 +211,8 @@ export function classifyCell(cell: string): AssembledCell {
     } else if (!cityFromTokens) {
       // Reconstruct tail without embedded hyphens for a readable value.
       const readable = tail
-        .replace(/\s*[-‐-―]\s*/g, ' ')
+        // `(?<!\s)`: see tokenize (review 2, B2).
+        .replace(/(?<!\s)\s*[-‐-―]\s*/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
       cityFromTokens = { value: readable, confidence: 0.5 };

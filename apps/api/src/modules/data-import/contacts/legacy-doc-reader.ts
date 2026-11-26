@@ -1,5 +1,7 @@
 import * as XLSX from 'xlsx';
 
+import { CONTACTS_IMPORT_MAX_DOC_PIECES } from './import-limits';
+
 /**
  * BM2-28 (QA6) · Legacy Word 97-2003 (.doc) reader for the contacts
  * import wizard.
@@ -149,7 +151,7 @@ export function readLegacyDoc(buffer: Buffer): LegacyDocContent {
   const btePapx = fcLcb(13);
   if (!clx.lcb || clx.fc + clx.lcb > tbl.length) throw corrupt('piece table');
 
-  const pieces = readPieces(tbl, clx.fc, clx.lcb);
+  const pieces = readPieces(tbl, clx.fc, clx.lcb, wd.length);
   const totalCp = pieces.reduce((m, p) => Math.max(m, p.cpEnd), 0);
   const ccpText = ccpTextRaw > 0 && ccpTextRaw <= totalCp ? ccpTextRaw : totalCp;
 
@@ -187,7 +189,19 @@ export function readLegacyDoc(buffer: Buffer): LegacyDocContent {
     : assembleWithoutProps(codes);
 }
 
-function readPieces(tbl: Buffer, fc: number, lcb: number): Piece[] {
+/**
+ * The piece table (PlcPcd) inside the Clx.
+ *
+ * Review 2 (B1) · Each piece is read character by character into the
+ * text, so a crafted table could make the reader go over the stream
+ * again and again (pieces that all point at the whole stream, or CPs out
+ * of order): n_pieces x stream size. The table is refused as damaged
+ * unless the CPs strictly increase, every piece's bytes lie inside the
+ * WordDocument stream, no two pieces share bytes, and there are at most
+ * CONTACTS_IMPORT_MAX_DOC_PIECES pieces. The text read is then never
+ * longer than the stream.
+ */
+function readPieces(tbl: Buffer, fc: number, lcb: number, streamLength: number): Piece[] {
   let p = fc;
   const end = fc + lcb;
   while (p < end) {
@@ -204,20 +218,26 @@ function readPieces(tbl: Buffer, fc: number, lcb: number): Piece[] {
     if (start + len > tbl.length) break;
     const n = Math.floor((len - 4) / 12);
     if (n <= 0) break;
+    if (n > CONTACTS_IMPORT_MAX_DOC_PIECES) throw corrupt('piece table');
     const pieces: Piece[] = [];
     for (let i = 0; i < n; i++) {
       const cpStart = tbl.readUInt32LE(start + i * 4);
       const cpEnd = tbl.readUInt32LE(start + (i + 1) * 4);
+      if (cpEnd <= cpStart) throw corrupt('piece table');
       const pcd = start + (n + 1) * 4 + i * 8;
       const fcRaw = tbl.readUInt32LE(pcd + 2);
       const compressed = (fcRaw & 0x40000000) !== 0;
       const fcValue = fcRaw & 0x3fffffff;
-      pieces.push({
-        cpStart,
-        cpEnd,
-        compressed,
-        byteStart: compressed ? Math.floor(fcValue / 2) : fcValue,
-      });
+      const byteStart = compressed ? Math.floor(fcValue / 2) : fcValue;
+      if (byteStart + (cpEnd - cpStart) * (compressed ? 1 : 2) > streamLength) throw corrupt('piece table');
+      pieces.push({ cpStart, cpEnd, compressed, byteStart });
+    }
+    const byBytes = [...pieces].sort((a, b) => a.byteStart - b.byteStart);
+    for (let i = 1; i < byBytes.length; i++) {
+      const prev = byBytes[i - 1];
+      if (prev.byteStart + (prev.cpEnd - prev.cpStart) * (prev.compressed ? 1 : 2) > byBytes[i].byteStart) {
+        throw corrupt('piece table');
+      }
     }
     return pieces;
   }
@@ -228,8 +248,13 @@ function readPieces(tbl: Buffer, fc: number, lcb: number): Piece[] {
 function readParagraphRuns(wd: Buffer, tbl: Buffer, fc: number, lcb: number): ParaRun[] {
   const n = Math.floor((lcb - 4) / 8);
   const runs: ParaRun[] = [];
+  // Review 2 (B1) · each FKP page is read once: a table listing the same
+  // page millions of times would otherwise multiply its runs.
+  const seen = new Set<number>();
   for (let i = 0; i < n; i++) {
     const pn = tbl.readUInt32LE(fc + (n + 1) * 4 + i * 4) & 0x3fffff;
+    if (seen.has(pn)) continue;
+    seen.add(pn);
     const page = pn * 512;
     if (page + 512 > wd.length) continue;
     const crun = wd[page + 511];
@@ -333,6 +358,10 @@ function assemble(
   let cellParts: string[] = [];
   let para = '';
   const fieldStack: Array<'instr' | 'result'> = [];
+  // How many open fields are still in their instruction part (kept as a
+  // count: `fieldStack.includes` per character is quadratic on a crafted
+  // run of unclosed field marks).
+  let openInstr = 0;
 
   const closeTable = () => {
     if (row.length > 0) {
@@ -350,17 +379,21 @@ function assemble(
     // instruction part, keep the visible result.
     if (code === 0x13) {
       fieldStack.push('instr');
+      openInstr++;
       continue;
     }
     if (code === 0x14) {
-      if (fieldStack.length) fieldStack[fieldStack.length - 1] = 'result';
+      if (fieldStack.length && fieldStack[fieldStack.length - 1] === 'instr') {
+        fieldStack[fieldStack.length - 1] = 'result';
+        openInstr--;
+      }
       continue;
     }
     if (code === 0x15) {
-      fieldStack.pop();
+      if (fieldStack.pop() === 'instr') openInstr--;
       continue;
     }
-    if (fieldStack.includes('instr')) continue;
+    if (openInstr > 0) continue;
 
     if (code !== 0x0d && code !== 0x07) {
       para += charFor(code);
