@@ -11,8 +11,10 @@ import {
   createGoverningTargetDateLookup,
   createTargetScopeMemo,
   loadTargetScopeZoneIds,
+  loadUngovernedZoneIds,
   resolveGoverningTargetZoneId,
   resolveTargetScopeZoneIds,
+  resolveUngovernedZoneIds,
   type ZoneTreeNode,
 } from './target-scope.util';
 
@@ -96,6 +98,64 @@ describe('resolveGoverningTargetZoneId', () => {
       { id: 2, parentId: 1 },
     ];
     expect(resolveGoverningTargetZoneId(cyclic, 1, [])).toBeNull();
+  });
+});
+
+// PR-077 follow-up (2026-11-26) · the zones a deliverable's project-level
+// target takes over: the complement of its zone targets' scopes.
+describe('resolveUngovernedZoneIds', () => {
+  it('no zone target → every live zone; a target removes its whole scope', () => {
+    expect(resolveUngovernedZoneIds(ZONES, [])).toEqual([1, 2, 3, 4, 5, 6, 9]);
+    expect(resolveUngovernedZoneIds(ZONES, [3])).toEqual([1, 2, 4, 9]);
+    expect(resolveUngovernedZoneIds(ZONES, [1])).toEqual([9]);
+    expect(resolveUngovernedZoneIds(ZONES, [1, 9])).toEqual([]);
+  });
+
+  it('is exactly the complement of the zone targets’ scopes', () => {
+    for (const targets of [[], [3], [1, 6], [2, 5], [6, 9]]) {
+      const covered = targets.flatMap((t) => resolveTargetScopeZoneIds(ZONES, t, targets));
+      const ungoverned = resolveUngovernedZoneIds(ZONES, targets);
+      expect(ungoverned.filter((z) => covered.includes(z))).toEqual([]);
+      expect([...covered, ...ungoverned].sort((a, b) => a - b)).toEqual(ZONES.map((z) => z.id).sort((a, b) => a - b));
+    }
+  });
+
+  it('withinZoneId limits the answer to that sub-tree', () => {
+    expect(resolveUngovernedZoneIds(ZONES, [5], 3)).toEqual([3]);
+    expect(resolveUngovernedZoneIds(ZONES, [], 3)).toEqual([3, 5, 6]);
+    // A zone governed from above has nothing ungoverned under it.
+    expect(resolveUngovernedZoneIds(ZONES, [1], 3)).toEqual([]);
+  });
+
+  it('a zone that is not live (absent from the tree) is never returned', () => {
+    expect(resolveUngovernedZoneIds(ZONES, [], 77)).toEqual([]);
+  });
+});
+
+describe('loadUngovernedZoneIds', () => {
+  it('reads live zones and DATED targets of the deliverable, through the memo', async () => {
+    const client = {
+      zone: { findMany: jest.fn().mockResolvedValue(ZONES) },
+      zoneDeliverableTarget: { findMany: jest.fn().mockResolvedValue([{ zoneId: 3 }]) },
+    } as any;
+    const memo = createTargetScopeMemo();
+
+    await expect(loadUngovernedZoneIds(client, { projectId: 59, projectDeliverableId: 230 }, memo)).resolves.toEqual([
+      1, 2, 4, 9,
+    ]);
+    await loadTargetScopeZoneIds(client, { projectId: 59, projectDeliverableId: 230, rootZoneId: 3 }, memo);
+    expect(client.zone.findMany).toHaveBeenCalledTimes(1);
+    expect(client.zoneDeliverableTarget.findMany).toHaveBeenCalledTimes(1);
+    expect(client.zoneDeliverableTarget.findMany).toHaveBeenCalledWith({
+      where: { projectDeliverableId: 230, targetDate: { not: null } },
+      select: { zoneId: true },
+    });
+  });
+
+  it('an unresolvable project yields no zones, without queries', async () => {
+    const client = { zone: { findMany: jest.fn() }, zoneDeliverableTarget: { findMany: jest.fn() } } as any;
+    await expect(loadUngovernedZoneIds(client, { projectId: null, projectDeliverableId: 230 })).resolves.toEqual([]);
+    expect(client.zone.findMany).not.toHaveBeenCalled();
   });
 });
 

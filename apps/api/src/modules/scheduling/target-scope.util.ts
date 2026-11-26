@@ -94,6 +94,34 @@ export function resolveGoverningTargetZoneId(
   return walkUpToTarget(buildParentMap(zones), zoneId, new Set<number>(targetZoneIds));
 }
 
+/**
+ * PR-077 follow-up (2026-11-26) · Zones whose tasks NO dated zone target
+ * of the deliverable governs: live zones from which the walk up (own
+ * zone, then ancestors) meets no zone in `targetZoneIds`. Owner's
+ * decision 3 (26.11): such a task is scheduled by the project-level
+ * target of the SAME deliverable (`ProjectDeliverable.targetDate`).
+ * Exact complement of the zone targets' scopes over the live tree, so a
+ * task is never claimed by both a zone target and the fallback.
+ *
+ * `withinZoneId` limits the answer to that zone's sub-tree (the
+ * Deliverable Planning row of one zone). Ascending for stable queries.
+ */
+export function resolveUngovernedZoneIds(
+  zones: ReadonlyArray<ZoneTreeNode>,
+  targetZoneIds: Iterable<number>,
+  withinZoneId?: number | null,
+): number[] {
+  const parentOf = buildParentMap(zones);
+  const claimed = new Set<number>(targetZoneIds);
+  const candidates =
+    withinZoneId == null
+      ? zones.map((z) => z.id)
+      : resolveTargetScopeZoneIds(zones, withinZoneId, claimed);
+  return candidates
+    .filter((id) => parentOf.has(id) && walkUpToTarget(parentOf, id, claimed) == null)
+    .sort((a, b) => a - b);
+}
+
 function buildParentMap(zones: ReadonlyArray<ZoneTreeNode>): Map<number, number | null> {
   const parentOf = new Map<number, number | null>();
   for (const z of zones) parentOf.set(z.id, z.parentId);
@@ -232,4 +260,24 @@ export async function loadTargetScopeZoneIds(
     loadDatedTargetZoneIds(client, args.projectDeliverableId, memo),
   ]);
   return resolveTargetScopeZoneIds(zones, args.rootZoneId, targetZoneIds);
+}
+
+/**
+ * PR-077 follow-up (2026-11-26) · Loader form of
+ * `resolveUngovernedZoneIds`: the zone ids the deliverable's project-level
+ * target picks up because no dated zone target of that deliverable
+ * governs them. An unresolvable project yields none (zone-less tasks
+ * only, the pre-follow-up behaviour).
+ */
+export async function loadUngovernedZoneIds(
+  client: TargetScopeClient,
+  args: { projectId: number | null | undefined; projectDeliverableId: number; withinZoneId?: number | null },
+  memo?: TargetScopeMemo,
+): Promise<number[]> {
+  if (args.projectId == null) return [];
+  const [zones, targetZoneIds] = await Promise.all([
+    loadZoneTree(client, args.projectId, memo),
+    loadDatedTargetZoneIds(client, args.projectDeliverableId, memo),
+  ]);
+  return resolveUngovernedZoneIds(zones, targetZoneIds, args.withinZoneId);
 }

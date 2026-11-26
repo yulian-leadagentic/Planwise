@@ -97,6 +97,13 @@ export class SchedulingController {
   // one: the closest ancestor target carries the run, the scope is the
   // requested zone's sub-tree. See `scheduleProjectDeliverableDryRun`.
   //
+  // PR-077 follow-up (2026-11-26) · A zone with no target of the
+  // deliverable on it or above it falls back to the SAME deliverable's
+  // project-level target (`ProjectDeliverable.targetDate`, or
+  // `anchorDate`), scoped to the zone's sub-tree. 'no-target-row' is left
+  // for a zone whose deliverable has neither a project-level target nor
+  // an `anchorDate` in the request.
+  //
   // §14 (2026-11-15) · Optional `releaseOverrideTaskIds`: manual tasks
   // (`dueDateOverridden`) to schedule as if they were not overridden.
   // Every `scheduled[]` row carries `manual` (the stored flag) and

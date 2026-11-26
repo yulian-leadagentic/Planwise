@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ExecutionPlanningService } from '../execution-planning/execution-planning.service';
 import {
   createTargetScopeMemo,
   loadTargetScopeZoneIds,
+  loadUngovernedZoneIds,
   loadZoneTree,
   resolveGoverningTargetZoneId,
   type TargetScopeMemo,
@@ -27,6 +29,9 @@ import {
  *      PR-077 (2026-11-25) · or under a Root-level target
  *      (rootProjectDeliverableId → ProjectDeliverable.targetDate): the
  *      deliverable's tasks with no zone. See `ScheduleInputs`.
+ *      PR-077 follow-up (2026-11-26) · the Root-level target also takes
+ *      the deliverable's zoned tasks that no dated zone target of the
+ *      same deliverable governs.
  *      §12 (2026-11-14) · "under" = the target's zone AND its sub-zones,
  *      minus sub-trees that carry their own dated target for the same
  *      deliverable (closest ancestor-or-self target wins — see
@@ -100,9 +105,16 @@ import {
  *     `ZoneDeliverableTarget.zoneId` is NOT NULL, so a target saved on the
  *     Deliverable Planning "Project Root" row lives on
  *     `ProjectDeliverable.targetDate` instead. It schedules the
- *     deliverable's tasks with NO zone (`zoneId: null`, exact match) and
- *     nothing else — a zoned task always belongs to a zone target, so the
- *     two kinds never share a task.
+ *     deliverable's tasks with NO zone (`zoneId: null`, exact match).
+ *     PR-077 follow-up (2026-11-26, owner's decision 3) · …and the
+ *     deliverable's zoned tasks that NO dated zone target of the SAME
+ *     deliverable governs (`resolveUngovernedZoneIds`): a zone without a
+ *     target for a task's deliverable falls back to that deliverable's
+ *     project-level target (its role per the schema comment), never to
+ *     another deliverable's. The fallback zones are the exact complement
+ *     of the zone targets' scopes, so the two kinds never share a task.
+ *     `scopeZoneId` limits a run to one zone's sub-tree (the DP zone-row
+ *     dry-run of a zone with no target row on it or above it).
  *
  * Both run through the same engine (`scheduleDeliverable`): same PERT /
  * lag / working-day / leveling / manual-due-date rules.
@@ -119,6 +131,7 @@ export interface ZoneTargetScheduleInputs {
 export interface RootTargetScheduleInputs {
   rootProjectDeliverableId: number; // ProjectDeliverable id — its own targetDate is the anchor
   anchorDate?: Date;                // optional override for targetDate (used when simulating)
+  scopeZoneId?: number;             // PR-077 follow-up · only the ungoverned zones of this zone's sub-tree (no zone-less tasks)
   deliverableId?: never;
   zoneId?: never;
 }
@@ -460,6 +473,14 @@ export class SchedulerService {
    * and the scope root is the requested zone — the zone + its sub-zones,
    * minus sub-trees with their own dated target. The exact-match path is
    * unchanged.
+   *
+   * PR-077 follow-up (2026-11-26, owner's decision 3) · A zone with no
+   * carrier (no target row of the deliverable on it or above it, or only
+   * date-less ones and no `anchorDate`) is governed by the deliverable's
+   * project-level target: the run is the Root-level target of the SAME
+   * deliverable restricted to the zone's sub-tree (`scopeZoneId`), anchored
+   * on `anchorDate` ?? `ProjectDeliverable.targetDate`. With neither date
+   * (or a deliverable that is gone) the answer stays 'no-target-row'.
    */
   async scheduleProjectDeliverableDryRun(args: {
     projectDeliverableId: number;
@@ -482,9 +503,15 @@ export class SchedulerService {
           projectDeliverableId: args.projectDeliverableId,
         },
       },
-      select: { id: true },
+      select: { id: true, targetDate: true },
     });
-    if (zdt) {
+    // PR-077 follow-up (2026-11-26) · A row of its own that has no date
+    // (duration-only) is not a target (`target-scope.util.ts`): without
+    // an `anchorDate` it can anchor nothing, so the zone is previewed the
+    // way the project-wide loops schedule it (dated ancestor, else the
+    // deliverable's project-level target) instead of answering
+    // 'no-anchor'. With an `anchorDate` the row is used as before.
+    if (zdt && (zdt.targetDate != null || args.anchorDate != null)) {
       inputs = { deliverableId: zdt.id, anchorDate: args.anchorDate };
     } else {
       // §16 (2026-11-18) · No row of its own → an ancestor's row carries
@@ -494,10 +521,25 @@ export class SchedulerService {
         args.zoneId,
         args.anchorDate != null,
       );
-      if (!carrier) {
-        return this.emptyResult('no-target-row');
+      if (carrier) {
+        inputs = { deliverableId: carrier.id, zoneId: args.zoneId, anchorDate: args.anchorDate };
+      } else {
+        // PR-077 follow-up (2026-11-26) · No zone target governs the
+        // zone → the same deliverable's project-level target, on this
+        // zone's sub-tree only.
+        const pd = await this.prisma.projectDeliverable.findFirst({
+          where: { id: args.projectDeliverableId, deletedAt: null },
+          select: { targetDate: true },
+        });
+        if (!pd || (pd.targetDate == null && args.anchorDate == null)) {
+          return this.emptyResult('no-target-row');
+        }
+        inputs = {
+          rootProjectDeliverableId: args.projectDeliverableId,
+          scopeZoneId: args.zoneId,
+          anchorDate: args.anchorDate,
+        };
       }
-      inputs = { deliverableId: carrier.id, zoneId: args.zoneId, anchorDate: args.anchorDate };
     }
     return this.dryRunWithOptionalRelease(inputs, args.releaseOverrideTaskIds);
   }
@@ -613,10 +655,16 @@ export class SchedulerService {
    * `ProjectDeliverable.targetDate`.
    *
    * Precedence: a zone target's scope is zone ids only (`zoneId IN …`), a
-   * Root-level target's is `zoneId IS NULL` only — so every task is
-   * scheduled by at most one target and the loop order cannot change
-   * which dates it gets. A zoned task is never scheduled from the Root
-   * date, also when no zone target governs it.
+   * Root-level target's is `zoneId IS NULL` plus the zones no dated zone
+   * target of the same deliverable governs — so every task is scheduled
+   * by at most one target and the loop order cannot change which dates it
+   * gets.
+   * PR-077 follow-up (2026-11-26, owner's decision 3) · Before, a zoned
+   * task that no zone target governed was never scheduled ("never from
+   * the Root date"). It now takes its OWN deliverable's
+   * `ProjectDeliverable.targetDate`; a task is still never scheduled from
+   * another deliverable's target (every run filters on its own
+   * `projectDeliverableId`).
    */
   private async loadProjectScheduleTargets(projectId: number): Promise<ProjectScheduleTarget[]> {
     const [zoneTargets, rootTargets] = await Promise.all([
@@ -661,9 +709,10 @@ export class SchedulerService {
 
   /** Log label of a target, for the project-wide loops' warnings. */
   private targetLabel(inputs: ScheduleInputs): string {
-    return isRootTarget(inputs)
+    if (!isRootTarget(inputs)) return `deliverableId=${inputs.deliverableId}`;
+    return inputs.scopeZoneId == null
       ? `rootProjectDeliverableId=${inputs.rootProjectDeliverableId}`
-      : `deliverableId=${inputs.deliverableId}`;
+      : `rootProjectDeliverableId=${inputs.rootProjectDeliverableId} scopeZoneId=${inputs.scopeZoneId}`;
   }
 
   // ─── D3 · Overload scan ────────────────────────────────────────────
@@ -1525,24 +1574,58 @@ export class SchedulerService {
     //    exact match: tasks with no zone have no tree to walk.
     //    PR-077 (2026-11-25) · That null zone is the Root-level target:
     //    `zoneId IS NULL`, disjoint from every zone target's scope.
-    const zoneId = target.zoneId;
+    //    PR-077 follow-up (2026-11-26, owner's decision 3) · The
+    //    Root-level target also owns the deliverable's zones that no
+    //    dated zone target of THIS deliverable governs — the complement of
+    //    the zone targets' scopes, so still disjoint. With `scopeZoneId`
+    //    (DP zone-row dry-run) only those zones of that sub-tree, and no
+    //    zone-less tasks. Every branch keeps `projectDeliverableId`: a
+    //    task is never scheduled from another deliverable's target.
     const projectDeliverableId = target.projectDeliverableId;
-    const scopeZoneIds =
-      zoneId == null
-        ? null
-        : await loadTargetScopeZoneIds(
-            this.prisma,
-            {
-              projectId: target.projectId,
-              projectDeliverableId,
-              rootZoneId: zoneId,
-            },
-            opts.scopeMemo,
-          );
+    let zoneWhere: Prisma.TaskWhereInput;
+    if (target.kind === 'zone') {
+      // Defensive: a zone-less ZDT row (schema forbids it) stays the
+      // exact `zoneId IS NULL` match it always was, with no fallback zones.
+      zoneWhere =
+        target.zoneId == null
+          ? { zoneId: null }
+          : {
+              zoneId: {
+                in: await loadTargetScopeZoneIds(
+                  this.prisma,
+                  {
+                    projectId: target.projectId,
+                    projectDeliverableId,
+                    rootZoneId: target.zoneId,
+                  },
+                  opts.scopeMemo,
+                ),
+              },
+            };
+    } else {
+      const fallbackZoneIds = await loadUngovernedZoneIds(
+        this.prisma,
+        {
+          projectId: target.projectId,
+          projectDeliverableId,
+          withinZoneId: target.scopeZoneId,
+        },
+        opts.scopeMemo,
+      );
+      if (target.scopeZoneId != null) {
+        if (fallbackZoneIds.length === 0) return this.emptyResult('no-tasks');
+        zoneWhere = { zoneId: { in: fallbackZoneIds } };
+      } else {
+        zoneWhere =
+          fallbackZoneIds.length === 0
+            ? { zoneId: null }
+            : { OR: [{ zoneId: null }, { zoneId: { in: fallbackZoneIds } }] };
+      }
+    }
     const tasks = (await this.prisma.task.findMany({
       where: {
         projectDeliverableId,
-        zoneId: scopeZoneIds == null ? null : { in: scopeZoneIds },
+        ...zoneWhere,
         deletedAt: null,
         isArchived: false,
       },
@@ -1924,14 +2007,22 @@ export class SchedulerService {
    *     ProjectDeliverable's own `targetDate`, `zoneId` null (scope =
    *     the deliverable's zone-less tasks). A missing / soft-deleted
    *     deliverable is a 404, like a missing target row.
+   *     PR-077 follow-up (2026-11-26) · plus the zones no dated zone
+   *     target of the deliverable governs; `scopeZoneId` passes through.
    */
-  private async resolveScheduleTarget(inputs: ScheduleInputs): Promise<{
-    projectDeliverableId: number;
-    projectId: number | null;
-    projectStartDate: Date | null;
-    targetDate: Date | null;
-    zoneId: number | null;
-  }> {
+  private async resolveScheduleTarget(inputs: ScheduleInputs): Promise<
+    {
+      projectDeliverableId: number;
+      projectId: number | null;
+      projectStartDate: Date | null;
+      targetDate: Date | null;
+    } & (
+      // `zoneId` null only for a zone-less ZDT row, which the schema
+      // forbids; kept as the pre-§12 exact `zoneId IS NULL` match.
+      | { kind: 'zone'; zoneId: number | null }
+      | { kind: 'deliverable'; zoneId: null; scopeZoneId: number | null }
+    )
+  > {
     if (isRootTarget(inputs)) {
       const pd = await this.prisma.projectDeliverable.findFirst({
         where: { id: inputs.rootProjectDeliverableId, deletedAt: null },
@@ -1945,11 +2036,13 @@ export class SchedulerService {
         throw new NotFoundException(`ProjectDeliverable ${inputs.rootProjectDeliverableId} not found`);
       }
       return {
+        kind: 'deliverable',
         projectDeliverableId: pd.id,
         projectId: pd.project?.id ?? null,
         projectStartDate: pd.project?.startDate ?? null,
         targetDate: pd.targetDate ?? null,
         zoneId: null,
+        scopeZoneId: inputs.scopeZoneId ?? null,
       };
     }
     const zdt = await this.prisma.zoneDeliverableTarget.findUnique({
@@ -1963,6 +2056,7 @@ export class SchedulerService {
       throw new NotFoundException(`ZoneDeliverableTarget ${inputs.deliverableId} not found`);
     }
     return {
+      kind: 'zone',
       projectDeliverableId: zdt.projectDeliverableId,
       projectId: zdt.projectDeliverable?.project?.id ?? zdt.zone?.projectId ?? null,
       projectStartDate: zdt.projectDeliverable?.project?.startDate ?? null,
