@@ -229,3 +229,21 @@ describe('MISSING_REQUIRED_FIELDS', () => {
     expect(apiMissingFields(axiosError(400, env))).toBeNull();
   });
 });
+
+// QA6 P4 (PR-063): the Workload move toast carries an Undo button.
+describe('notify.success: action button', () => {
+  it('passes the action to the card; without one, no button', () => {
+    const onClick = vi.fn();
+    notify.success('CRD-040 moved to Yair Goldfryd', { description: 'x', action: { label: 'Undo', onClick }, duration: 10000 });
+    const { props, options } = lastCard();
+    expect(props).toMatchObject({ variant: 'success', title: 'CRD-040 moved to Yair Goldfryd', description: 'x' });
+    expect(props.action.label).toBe('Undo');
+    props.action.onClick();
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(options.duration).toBe(10000);
+
+    notify.success('Saved');
+    expect(lastCard().props.action).toBeUndefined();
+    expect(lastCard().options.duration).toBe(3000);
+  });
+});

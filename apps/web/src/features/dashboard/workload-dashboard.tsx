@@ -1,15 +1,42 @@
-import { useState, useMemo, Fragment } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useState, useMemo, useEffect, useCallback, Fragment } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type Announcements,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { cn } from '@/lib/utils';
+import { notify } from '@/lib/notify';
 import client from '@/api/client';
-import { useNavigateWithReturn } from '@/components/nav/return-route';
 import { useDrawerRoute } from '@/components/nav/use-drawer-route';
-import { OverloadTasksPanel } from './parts/overload-tasks-panel';
 import { OpsErrorBanner, opsErrorMessage } from './parts/ops-shared';
 import { WorkloadDayHeaders } from './parts/workload-day-headers';
+import { TaskChip, chipTitle } from './parts/workload-chip';
+import { DraggableChip, DropTd, workloadCollision, workloadKeyboardCoordinates, type DragData, type DropTarget } from './parts/workload-dnd';
+import { WorkloadTray } from './parts/workload-tray';
+import {
+  canDragChip,
+  dayLabel,
+  dropCheck,
+  dropReasonText,
+  overloadCausing,
+  previewPct,
+  reassignBody,
+  trayLandingDays,
+  type DragSource,
+  type DropCheck,
+} from './workload-assign';
+import { EMPTY_ASSIGN, normalizeTeamWorkload, normalizeTray, type WorkloadTaskEntry, type WorkloadTray as Tray } from './workload-contract';
+import { useWorkloadAssign } from './use-workload-assign';
 import {
   dayTasksTitle,
   formatWorkRange,
@@ -47,6 +74,23 @@ export function WorkloadDashboardPage() {
 }
 
 const LOGGED_HIDDEN_TITLE = 'Logged hours are visible only for people you manage';
+const YMD = /^\d{4}-\d{2}-\d{2}$/;
+
+const personName = (p: TeamWorkloadPerson | undefined | null) =>
+  p ? p.name || [p.firstName, p.lastName].filter(Boolean).join(' ') : '';
+
+/** Unique tasks in a person's lane (masked chips counted apart). */
+function laneCounts(p: TeamWorkloadPerson): { tasks: number; hidden: number } {
+  const ids = new Set<number>();
+  let hidden = 0;
+  for (const d of p.days) {
+    for (const c of d.tasks) {
+      if (c.taskId != null && !c.masked) ids.add(c.taskId);
+      else hidden++;
+    }
+  }
+  return { tasks: ids.size, hidden };
+}
 
 /**
  * WorkloadPanel — the daily-per-user utilization table. Rendered by
@@ -58,32 +102,163 @@ const LOGGED_HIDDEN_TITLE = 'Logged hours are visible only for people you manage
  * swallowed). The days are the API's: the org work week, Sunday first.
  * Department filter + group-by come from the org tree the same call
  * returns; "My department only" on the page narrows it server-side.
+ *
+ * QA6 P4 (PR-063) — drag-and-drop assignment. A chevron opens a person's
+ * lane: his task chips in their day columns. A manager drags a chip to
+ * another person's day (reassign), to another day in the same row
+ * (reschedule), from the tray (assign) or onto the tray (unassign).
+ * While dragging, every day cell previews before→after %, and rows the
+ * task may not go to are dimmed with the reason. A cross-department move
+ * waits for approval. Rules: workload-assign.ts; writes:
+ * use-workload-assign.ts; wire contract: workload-contract.ts.
  */
 export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) {
-  const [weekOf, setWeekOf] = useState<string | null>(null); // null = this week
+  // A task-move notification opens this tab on the week of the move.
+  const [searchParams] = useSearchParams();
+  const urlWeekOf = searchParams.get('weekOf');
+  const focusApprovals = searchParams.get('approvals') === '1';
+  const [weekOf, setWeekOf] = useState<string | null>(urlWeekOf && YMD.test(urlWeekOf) ? urlWeekOf : null); // null = this week
+  useEffect(() => {
+    if (urlWeekOf && YMD.test(urlWeekOf)) setWeekOf(urlWeekOf);
+  }, [urlWeekOf]);
   const [viewMode, setViewMode] = useState<'utilization' | 'hours'>('utilization');
   const [orgUnitId, setOrgUnitId] = useState<string>('');
   const [groupByDept, setGroupByDept] = useState(false);
-  const navWithReturn = useNavigateWithReturn();
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const [active, setActive] = useState<DragData | null>(null);
   const { openDrawer: setDrawerTaskId } = useDrawerRoute('task');
 
-  const params: Record<string, string> = {};
-  if (weekOf) params.weekOf = weekOf;
-  if (myDeptOnly) params.myDeptOnly = 'true';
-  else if (orgUnitId) params.orgUnitId = orgUnitId;
+  const params = useMemo(() => {
+    const p: Record<string, string> = {};
+    if (weekOf) p.weekOf = weekOf;
+    if (myDeptOnly) p.myDeptOnly = 'true';
+    else if (orgUnitId) p.orgUnitId = orgUnitId;
+    return p;
+  }, [weekOf, myDeptOnly, orgUnitId]);
+  const teamKey = useMemo(() => ['workload', 'team', params] as const, [params]);
+  const trayKey = useMemo(() => ['workload', 'tray', params] as const, [params]);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TeamWorkload>({
-    queryKey: ['workload', 'team', params],
+    queryKey: teamKey,
     staleTime: 2 * 60 * 1000,
     retry: 1,
     placeholderData: (prev) => prev,
-    queryFn: () => client.get('/workload/team', { params }).then((r) => r.data?.data ?? r.data),
+    queryFn: () => client.get('/workload/team', { params }).then((r) => normalizeTeamWorkload(r.data?.data ?? r.data)),
+  });
+
+  // PR-063 tray: Unassigned + Overdue + the moves waiting for my approval.
+  const trayQuery = useQuery<Tray>({
+    queryKey: trayKey,
+    staleTime: 60 * 1000,
+    retry: 1,
+    placeholderData: (prev) => prev,
+    queryFn: () => client.get('/workload/tray', { params }).then((r) => normalizeTray(r.data?.data ?? r.data)),
   });
 
   const people: TeamWorkloadPerson[] = data?.people ?? [];
   const days = data?.days ?? [];
+  const tasks = data?.tasks ?? {};
+  const assign = data?.assign ?? EMPTY_ASSIGN;
+  const restDays = data?.workWeek?.restDays ?? [];
   const rangeLabel = formatWorkRange(days.map((d) => d.date));
   const groups = useMemo(() => (groupByDept ? groupByDepartment(people) : null), [groupByDept, people]);
+  const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p])), [people]);
+  const dayByDate = useMemo(() => new Map(days.map((d) => [d.date, d])), [days]);
+  const overload = useMemo(() => overloadCausing(people, tasks), [people, tasks]);
+  const view = data ? { from: data.range.from, to: data.range.to } : null;
+  const { move, decide } = useWorkloadAssign({ view, teamKey });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: workloadKeyboardCoordinates }),
+  );
+
+  const canDragFor = useCallback(
+    (task: WorkloadTaskEntry | null, fromUserId: number | null) =>
+      canDragChip(task, fromUserId == null ? null : peopleById.get(fromUserId) ?? null, assign),
+    [peopleById, assign],
+  );
+
+  const checkFor = useCallback(
+    (a: DragData, p: TeamWorkloadPerson, toDay: string | null): DropCheck =>
+      dropCheck(p, a.task, {
+        source: a.source,
+        toDay,
+        assign,
+        fromPerson: a.source.fromUserId != null ? peopleById.get(a.source.fromUserId) ?? null : null,
+        day: toDay ? dayByDate.get(toDay) ?? null : null,
+      }),
+    [assign, peopleById, dayByDate],
+  );
+
+  /** Hours the dragged chip would add to `date` (a tray chip lands by the D6 rule). */
+  const dragHoursOn = useCallback(
+    (a: DragData, date: string) => {
+      if (a.source.fromDay != null) return a.source.hours;
+      return trayLandingDays(a.task, date, restDays).find((l) => l.date === date)?.hours ?? a.source.hours;
+    },
+    [restDays],
+  );
+
+  const submit = (a: DragData, target: { userId: number; day: string } | null, check: DropCheck | null) => {
+    if (!view) return;
+    const fromUserId = a.source.fromUserId;
+    const fromPerson = fromUserId != null ? peopleById.get(fromUserId) : undefined;
+    const overdueName = (a.task as WorkloadTaskEntry & { assigneeName?: string | null }).assigneeName ?? null;
+    const fromName = fromUserId != null ? personName(fromPerson) || overdueName || 'the current person' : null;
+    const toName = target ? personName(peopleById.get(target.userId)) || 'the new person' : null;
+    const otherAssigneeNames = a.task.assigneeIds
+      .filter((uid) => uid !== fromUserId && uid !== target?.userId)
+      .map((uid) => personName(peopleById.get(uid)) || 'another assignee');
+    move.mutate({
+      body: reassignBody(a.source, target, view),
+      move: { task: a.task, fromUserId, toUserId: target?.userId ?? null, fromDay: a.source.fromDay, toDay: target?.day ?? null },
+      origin: a.source.origin,
+      predictPending: check?.needsApproval ?? false,
+      teamKey,
+      trayKey,
+      names: { taskLabel: a.task.code ?? a.task.name, fromName, toName, otherAssigneeNames },
+    });
+    if (target && !check?.needsApproval) setExpanded((prev) => new Set(prev).add(target.userId));
+  };
+
+  const onDragStart = (e: DragStartEvent) => setActive((e.active.data.current as DragData | undefined) ?? null);
+  const onDragEnd = (e: DragEndEvent) => {
+    const a = (e.active.data.current as DragData | undefined) ?? active;
+    setActive(null);
+    const target = (e.over?.data.current as { target?: DropTarget } | undefined)?.target;
+    if (!a || !target) return;
+    if (target.kind === 'tray') {
+      if (a.source.fromUserId != null) submit(a, null, null);
+      return;
+    }
+    const person = peopleById.get(target.userId);
+    if (!person) return;
+    const check = checkFor(a, person, target.day);
+    if (!check.ok) {
+      if (check.reason && check.reason !== 'same-cell') notify.warning(dropReasonText(check.reason, a.task), { description: `${personName(person)} can't take ${a.task.code ?? a.task.name}.`, duration: 5000 });
+      return;
+    }
+    submit(a, { userId: target.userId, day: target.day }, check);
+  };
+
+  const announcements: Announcements = useMemo(() => {
+    const label = (a: unknown) => {
+      const d = (a as { data?: { current?: DragData } })?.data?.current;
+      return d ? d.task.code ?? d.task.name : 'task';
+    };
+    const where = (over: unknown) => {
+      const t = (over as { data?: { current?: { target?: DropTarget } } })?.data?.current?.target;
+      if (!t) return null;
+      return t.kind === 'tray' ? 'the tray (unassign)' : `${personName(peopleById.get(t.userId))}, ${dayLabel(t.day)}`;
+    };
+    return {
+      onDragStart: ({ active: a }) => `Picked up ${label(a)}. Use the arrow keys to choose a person and day, Space to drop, Escape to cancel.`,
+      onDragOver: ({ active: a, over }) => (where(over) ? `${label(a)} over ${where(over)}.` : `${label(a)} is not over a drop target.`),
+      onDragEnd: ({ active: a, over }) => (where(over) ? `${label(a)} dropped on ${where(over)}.` : `${label(a)} was not moved.`),
+      onDragCancel: ({ active: a }) => `Moving ${label(a)} was cancelled.`,
+    };
+  }, [peopleById]);
 
   if (isLoading && !data) return <PageSkeleton />;
 
@@ -96,87 +271,246 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
   const avgUtil = data?.totals.utilizationPct ?? 0;
   const overloaded = people.filter((p) => p.totals.utilizationPct > 100).length;
   const underutil = people.filter((p) => p.totals.utilizationPct < 50 && p.totals.utilizationPct > 0).length;
+  const allOpen = people.length > 0 && people.every((p) => expanded.has(p.id));
+  const firstOpenId = (groups ? groups.flatMap((g) => g.people) : people).find((p) => expanded.has(p.id))?.id ?? null;
+  const toggle = (id: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const renderRow = (p: TeamWorkloadPerson) => {
     const util = p.totals.utilizationPct;
-    return (
-      <tr key={p.id} className="border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
-        <td className="px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-semibold flex items-center justify-center shrink-0">
-              {(p.firstName?.[0] ?? '') + (p.lastName?.[0] ?? '')}
-            </div>
-            <div className="min-w-0">
-              <p className="font-medium text-slate-700 dark:text-slate-200 truncate">{p.firstName} {p.lastName}</p>
-              {(p.position || (!groupByDept && p.orgUnit)) && (
-                <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
-                  {[p.position, groupByDept ? null : p.orgUnit?.name].filter(Boolean).join(' · ')}
-                </p>
-              )}
-            </div>
+    const open = expanded.has(p.id);
+    const name = personName(p);
+    const rowCheck = active ? checkFor(active, p, null) : null;
+    const isSource = active?.source.fromUserId === p.id;
+    const counts = open ? laneCounts(p) : null;
+
+    const preview = (date: string, d: TeamWorkloadPerson['days'][number], isOver: boolean) => {
+      if (!active) return null;
+      const check = checkFor(active, p, date);
+      if (check.reason === 'same-cell') {
+        return (
+          <div className="pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-[7px] border-[1.5px] border-dashed border-slate-300 dark:border-slate-600 bg-white/90 dark:bg-slate-900/90 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+            Now
           </div>
-        </td>
-        {p.days.map((d) => {
-          const dayUtil = utilizationPct(d.planned, d.capacity);
-          const title = dayTasksTitle(d.tasks);
-          return (
-            <td key={d.date} className="px-2 py-2.5 text-center" title={title || undefined}>
-              {d.capacity === 0 ? (
-                d.planned > 0 ? (
-                  <span className="text-[10px] font-semibold text-red-600" title={`Not working this day, ${d.planned}h planned${title ? `\n${title}` : ''}`}>
-                    Off · <span className="font-mono tabular-nums">{d.planned.toFixed(1)}h</span>
-                  </span>
-                ) : (
-                  <span className="text-[10px] text-slate-300 dark:text-slate-600">Off</span>
-                )
-              ) : viewMode === 'utilization' ? (
-                <div className="space-y-1">
-                  <div className={cn('rounded px-1.5 py-0.5 text-[11px] font-semibold font-mono tabular-nums', getUtilColor(dayUtil))}>
-                    {dayUtil}%
-                  </div>
-                  <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                    <div className={cn('h-full rounded-full', dayUtil > 100 ? 'bg-red-500' : dayUtil > 80 ? 'bg-amber-500' : 'bg-blue-500')} style={{ width: getBarWidth(dayUtil) }} />
-                  </div>
-                </div>
-              ) : (
-                <div className="text-[11px] font-mono tabular-nums">
-                  <span className="font-medium text-slate-700 dark:text-slate-200">{d.planned.toFixed(1)}h</span>
-                  <span className="text-slate-400 dark:text-slate-500">/{d.capacity.toFixed(0)}h</span>
-                </div>
+        );
+      }
+      const sameTaskHours = d.tasks.filter((c) => c.taskId === active.task.id).reduce((s, c) => s + c.hours, 0);
+      const pv = previewPct({ planned: d.planned, capacity: d.capacity, sameTaskHours }, dragHoursOn(active, date));
+      const bad = !check.ok || pv.over;
+      return (
+        <div
+          className={cn(
+            'pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-[7px] border-[1.5px] px-0.5 text-center font-mono text-[10px] font-semibold leading-tight',
+            isOver
+              ? bad
+                ? 'border-solid border-red-600 bg-red-600 text-white'
+                : 'border-solid border-blue-600 bg-blue-600 text-white'
+              : cn('border-dashed bg-white/90 dark:bg-slate-900/90', bad ? 'border-red-400 text-red-600 dark:text-red-400' : 'border-blue-400 text-blue-600 dark:text-blue-400'),
+          )}
+        >
+          {!check.ok && isOver && check.reason ? (
+            <span className="font-sans text-[9px]">{dropReasonText(check.reason, active.task)}</span>
+          ) : pv.off ? (
+            `Off +${Math.round(dragHoursOn(active, date) * 10) / 10}h`
+          ) : (
+            `${pv.before}→${pv.after}%`
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <Fragment key={p.id}>
+        <tr
+          className={cn(
+            'border-t border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-opacity duration-150',
+            rowCheck && !rowCheck.ok && 'opacity-40',
+          )}
+        >
+          <td className="w-8 py-2.5 pl-2 pr-0 text-center">
+            <button
+              type="button"
+              onClick={() => toggle(p.id)}
+              aria-expanded={open}
+              aria-label={open ? `Hide the tasks of ${name}` : `Show the tasks of ${name}`}
+              title={open ? 'Hide tasks' : 'Show tasks'}
+              className="rounded-[7px] p-1 text-slate-400 dark:text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              <ChevronRight className={cn('h-3.5 w-3.5 transition-transform duration-150', open && 'rotate-90 text-blue-600 dark:text-blue-400')} aria-hidden="true" />
+            </button>
+          </td>
+          <td className="px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-semibold flex items-center justify-center shrink-0">
+                {(p.firstName?.[0] ?? '') + (p.lastName?.[0] ?? '')}
+              </div>
+              <div className="min-w-0">
+                <p className="font-medium text-slate-700 dark:text-slate-200 truncate">{p.firstName} {p.lastName}</p>
+                {(p.position || (!groupByDept && p.orgUnit)) && (
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
+                    {[p.position, groupByDept ? null : p.orgUnit?.name].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                {active && rowCheck && !isSource && (
+                  rowCheck.ok ? (
+                    rowCheck.needsApproval ? (
+                      <p className="text-[10px] font-semibold text-violet-600 dark:text-violet-400">Needs approval</p>
+                    ) : rowCheck.addsToTeam ? (
+                      <p className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">Joins the project team</p>
+                    ) : null
+                  ) : rowCheck.reason ? (
+                    <p className="text-[10px] font-semibold text-red-600 dark:text-red-400">{dropReasonText(rowCheck.reason, active.task)}</p>
+                  ) : null
+                )}
+              </div>
+            </div>
+          </td>
+          {p.days.map((d) => {
+            const dayUtil = utilizationPct(d.planned, d.capacity);
+            const title = dayTasksTitle(d.tasks);
+            return (
+              <DropTd
+                key={d.date}
+                id={`cell:${p.id}:${d.date}`}
+                target={{ kind: 'cell', userId: p.id, day: d.date }}
+                className="relative px-2 py-2.5 text-center"
+                title={active ? undefined : title || undefined}
+              >
+                {(isOver) => (
+                  <>
+                    {d.capacity === 0 ? (
+                      d.planned > 0 ? (
+                        <span className="text-[10px] font-semibold text-red-600" title={`Not working this day, ${d.planned}h planned${title ? `\n${title}` : ''}`}>
+                          Off · <span className="font-mono tabular-nums">{d.planned.toFixed(1)}h</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-300 dark:text-slate-600">Off</span>
+                      )
+                    ) : viewMode === 'utilization' ? (
+                      <div className="space-y-1">
+                        <div className={cn('rounded px-1.5 py-0.5 text-[11px] font-semibold font-mono tabular-nums', getUtilColor(dayUtil))}>
+                          {dayUtil}%
+                        </div>
+                        <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                          <div className={cn('h-full rounded-full', dayUtil > 100 ? 'bg-red-500' : dayUtil > 80 ? 'bg-amber-500' : 'bg-blue-500')} style={{ width: getBarWidth(dayUtil) }} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] font-mono tabular-nums">
+                        <span className="font-medium text-slate-700 dark:text-slate-200">{d.planned.toFixed(1)}h</span>
+                        <span className="text-slate-400 dark:text-slate-500">/{d.capacity.toFixed(0)}h</span>
+                      </div>
+                    )}
+                    {preview(d.date, d, isOver)}
+                  </>
+                )}
+              </DropTd>
+            );
+          })}
+          <td className="px-3 py-2.5 text-center font-medium text-slate-700 dark:text-slate-200">
+            <span className="font-mono tabular-nums">{p.totals.planned.toFixed(1)}h</span>
+            {p.totals.undatedHours > 0 && (
+              <p className="text-[10px] font-normal text-slate-400 dark:text-slate-500" title="Hours of tasks with no due date. They are not on any day.">
+                +<span className="font-mono tabular-nums">{p.totals.undatedHours.toFixed(1)}h</span> no date
+              </p>
+            )}
+          </td>
+          <td className="px-3 py-2.5 text-center text-slate-500 dark:text-slate-400 font-mono tabular-nums">{p.totals.capacity.toFixed(0)}h</td>
+          <td className="px-3 py-2.5 text-center text-slate-500 dark:text-slate-400 font-mono tabular-nums" title={p.totals.logged == null ? LOGGED_HIDDEN_TITLE : undefined}>
+            {p.totals.logged == null ? <span className="font-sans text-[11px] text-slate-300 dark:text-slate-600">Hidden</span> : `${p.totals.logged.toFixed(1)}h`}
+          </td>
+          <td className="px-3 py-2.5 text-center">
+            <div className="flex items-center gap-2 justify-center">
+              <div className="w-16 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                <div className={cn('h-full rounded-full', util > 100 ? 'bg-red-500' : util > 80 ? 'bg-amber-500' : 'bg-blue-500')}
+                  style={{ width: getBarWidth(util) }} />
+              </div>
+              <span className={cn('text-[11px] font-bold font-mono tabular-nums', util > 100 ? 'text-red-600' : 'text-slate-700 dark:text-slate-200')}>
+                {util}%
+              </span>
+            </div>
+          </td>
+        </tr>
+
+        {/* PR-063 lane: the person's task chips in their day columns. */}
+        {open && (
+          <tr className={cn('border-t border-slate-100 dark:border-slate-800 bg-[#FAFBFC] dark:bg-slate-800/30', rowCheck && !rowCheck.ok && 'opacity-40')} data-testid={`workload-lane-${p.id}`}>
+            <td />
+            <td className="px-3 py-2 align-top text-[11px] text-slate-400 dark:text-slate-500">
+              <span className="font-mono">{counts?.tasks ?? 0}</span> {counts?.tasks === 1 ? 'task' : 'tasks'}
+              {(counts?.hidden ?? 0) > 0 && (
+                <span title="Tasks on projects you can't open, or personal tasks"> · <span className="font-mono">{counts?.hidden}</span> hidden</span>
               )}
             </td>
-          );
-        })}
-        <td className="px-3 py-2.5 text-center font-medium text-slate-700 dark:text-slate-200">
-          <span className="font-mono tabular-nums">{p.totals.planned.toFixed(1)}h</span>
-          {p.totals.undatedHours > 0 && (
-            <p className="text-[10px] font-normal text-slate-400 dark:text-slate-500" title="Hours of tasks with no due date. They are not on any day.">
-              +<span className="font-mono tabular-nums">{p.totals.undatedHours.toFixed(1)}h</span> no date
-            </p>
-          )}
-        </td>
-        <td className="px-3 py-2.5 text-center text-slate-500 dark:text-slate-400 font-mono tabular-nums">{p.totals.capacity.toFixed(0)}h</td>
-        <td className="px-3 py-2.5 text-center text-slate-500 dark:text-slate-400 font-mono tabular-nums" title={p.totals.logged == null ? LOGGED_HIDDEN_TITLE : undefined}>
-          {p.totals.logged == null ? '—' : `${p.totals.logged.toFixed(1)}h`}
-        </td>
-        <td className="px-3 py-2.5 text-center">
-          <div className="flex items-center gap-2 justify-center">
-            <div className="w-16 h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-              <div className={cn('h-full rounded-full', util > 100 ? 'bg-red-500' : util > 80 ? 'bg-amber-500' : 'bg-blue-500')}
-                style={{ width: getBarWidth(util) }} />
-            </div>
-            <span className={cn('text-[11px] font-bold font-mono tabular-nums', util > 100 ? 'text-red-600' : 'text-slate-700 dark:text-slate-200')}>
-              {util}%
-            </span>
-          </div>
-        </td>
-      </tr>
+            {p.days.map((d) => {
+              const cellCheck = active ? checkFor(active, p, d.date) : null;
+              return (
+                <DropTd
+                  key={d.date}
+                  id={`lane:${p.id}:${d.date}`}
+                  target={{ kind: 'cell', userId: p.id, day: d.date }}
+                  className="border-l border-dashed border-slate-200 dark:border-slate-700 px-1.5 py-1.5 align-top transition-all duration-150"
+                  overClassName={cellCheck && !cellCheck.ok ? 'bg-red-50 dark:bg-red-500/10' : 'bg-blue-50 dark:bg-blue-500/10'}
+                >
+                  <div className="flex min-h-[34px] min-w-0 flex-col gap-1">
+                    {d.tasks.map((c, i) => {
+                      const entry = c.taskId != null && !c.masked ? tasks[String(c.taskId)] ?? null : null;
+                      const source: DragSource = { taskId: c.taskId ?? -(i + 1), fromUserId: p.id, fromDay: d.date, hours: c.hours, origin: 'lane' };
+                      return (
+                        <DraggableChip
+                          key={`${c.taskId ?? 'm'}-${i}`}
+                          layout="stack"
+                          source={source}
+                          task={entry}
+                          view={{
+                            code: c.code,
+                            name: c.name,
+                            hours: c.hours,
+                            masked: !!c.masked,
+                            pending: !!entry?.pending,
+                            overdue: !!entry?.overdue,
+                            logged: (entry?.loggedUserIds.length ?? 0) > 0,
+                          }}
+                          canDrag={canDragFor(entry, p.id)}
+                          sibling={!!active && c.taskId != null && active.task.id === c.taskId && !(active.source.fromUserId === p.id && active.source.fromDay === d.date)}
+                          title={entry ? chipTitle(entry, { personId: p.id }) : c.masked ? `${c.name} · ${c.hours}h` : `${c.code ? `${c.code} ` : ''}${c.name}`}
+                          onOpen={c.taskId != null && !c.masked ? () => setDrawerTaskId(c.taskId as number) : undefined}
+                        />
+                      );
+                    })}
+                  </div>
+                </DropTd>
+              );
+            })}
+            <td colSpan={4} className="px-3 py-2 align-top text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+              {/* The hint once, on the first open lane. */}
+              {p.id === firstOpenId &&
+                (assign.canAssign
+                  ? 'Drag a chip to another person\'s day to reassign it, or to another day in this row to move it. ⏱ Hours already logged stay with the current person.'
+                  : 'View only. Moving tasks needs Admin, project leader or manager rights.')}
+            </td>
+          </tr>
+        )}
+      </Fragment>
     );
   };
 
-  const colSpan = days.length + 5;
+  const colSpan = days.length + 6;
 
   return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={workloadCollision}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragCancel={() => setActive(null)}
+      accessibility={{ announcements }}
+    >
     <div className="space-y-4">
       {isError && (
         <OpsErrorBanner title="Could not load the team workload" message={opsErrorMessage(error)} onRetry={() => refetch()} />
@@ -240,7 +574,7 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
           >
             <option value="">{myDeptOnly && data?.scope.deptName ? data.scope.deptName : 'All departments'}</option>
             {(data?.orgUnits ?? []).map((u) => (
-              <option key={u.id} value={String(u.id)}>{`${'  '.repeat(u.depth ?? 0)}${u.name}`}</option>
+              <option key={u.id} value={String(u.id)}>{`${'  '.repeat(u.depth ?? 0)}${u.name}`}</option>
             ))}
           </select>
           <label className="flex items-center gap-1.5 text-[12px] text-slate-600 dark:text-slate-300 cursor-pointer">
@@ -252,6 +586,14 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
             />
             <span className="font-medium">Group by department</span>
           </label>
+          <button
+            type="button"
+            onClick={() => setExpanded(allOpen ? new Set() : new Set(people.map((p) => p.id)))}
+            disabled={people.length === 0}
+            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-[12px] font-semibold text-slate-700 dark:text-slate-200 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-50"
+          >
+            {allOpen ? 'Hide all tasks' : 'Show all tasks'}
+          </button>
           <div className="flex items-center gap-1 rounded-lg bg-slate-100 dark:bg-slate-800 p-0.5">
             <button onClick={() => setViewMode('utilization')} className={cn('px-3 py-1 rounded-md text-[12px] font-semibold', viewMode === 'utilization' ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400')}>Utilization %</button>
             <button onClick={() => setViewMode('hours')} className={cn('px-3 py-1 rounded-md text-[12px] font-semibold', viewMode === 'hours' ? 'bg-white dark:bg-slate-900 shadow-sm text-slate-900 dark:text-slate-100' : 'text-slate-500 dark:text-slate-400')}>Hours</button>
@@ -260,26 +602,41 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
       </div>
       <p className="text-[11px] text-slate-500 dark:text-slate-400 -mt-2">
         Planned hours (remaining task hours spread over each task's dates) against capacity from work schedules, holidays and absences. Logged hours show only for people you manage.
+        {assign.canAssign && ' Open a row with the arrow to see its tasks, then drag a task to another person or day.'}
       </p>
 
-      {/* D3 · Overload Tasks — scheduler-flagged infeasibilities across
-          every active project. Sits above the utilization table so a PM
-          sees "who is stuck right now" before scanning the week grid. */}
-      <OverloadTasksPanel
+      {/* PR-063 · the tray replaces the "Overload Tasks" panel on this tab
+          (D13). The scheduler list stays on Risk & Review and on the
+          project workload panel. */}
+      <WorkloadTray
+        tray={trayQuery.data}
+        trayLoading={trayQuery.isLoading}
+        trayError={trayQuery.isError}
+        onRetry={() => trayQuery.refetch()}
+        overload={overload}
+        tasks={tasks}
+        peopleById={peopleById}
+        canDrag={canDragFor}
+        active={active}
+        approvalsCount={trayQuery.data ? trayQuery.data.approvals.length : assign.approvalsWaitingForMe}
         onOpenTask={(taskId) => setDrawerTaskId(taskId)}
-        onOpenProject={(projectId) => navWithReturn(`/projects/${projectId}`, 'Workload')}
+        onApprove={(r) => decide.mutate({ r, decision: 'approve' })}
+        onReject={(r) => decide.mutate({ r, decision: 'reject' })}
+        deciding={decide.isPending ? decide.variables?.r.id ?? null : null}
+        focusApprovals={focusApprovals}
       />
 
       {/* Utilization Table */}
       <div className="rounded-[14px] border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-x-auto">
-        <table className="w-full text-[12px]">
+        <table className="w-full min-w-[1040px] table-fixed text-[12px]">
           <thead>
             <tr className="bg-slate-50 dark:bg-slate-800/50 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-700">
-              <th className="px-4 py-3 text-left font-semibold w-48">User</th>
+              <th className="w-8 py-3 pl-2 pr-0" aria-label="Show tasks" />
+              <th className="px-3 py-3 text-left font-semibold w-48">User</th>
               <WorkloadDayHeaders days={days} />
-              <th className="px-3 py-3 text-center font-semibold">Planned</th>
-              <th className="px-3 py-3 text-center font-semibold">Capacity</th>
-              <th className="px-3 py-3 text-center font-semibold">Logged</th>
+              <th className="w-[84px] px-3 py-3 text-center font-semibold">Planned</th>
+              <th className="w-[76px] px-3 py-3 text-center font-semibold">Capacity</th>
+              <th className="w-[72px] px-3 py-3 text-center font-semibold">Logged</th>
               <th className="px-3 py-3 text-center font-semibold w-28">Avg Util.</th>
             </tr>
           </thead>
@@ -315,5 +672,19 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
         </table>
       </div>
     </div>
+    <DragOverlay dropAnimation={null}>
+      {active ? (
+        <TaskChip
+          overlay
+          code={active.task.code}
+          name={active.task.name}
+          hours={active.source.hours}
+          logged={active.task.loggedUserIds.length > 0}
+          overdue={active.task.overdue}
+          className="w-[220px]"
+        />
+      ) : null}
+    </DragOverlay>
+    </DndContext>
   );
 }

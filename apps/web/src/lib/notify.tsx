@@ -46,6 +46,11 @@ interface BaseOptions {
   duration?: number;
 }
 
+/** success / info with an optional action button (e.g. Undo). Same button as businessRule's. */
+interface ActionOptions extends BaseOptions {
+  action?: { label: string; onClick: () => void };
+}
+
 interface ValidationOptions extends BaseOptions {
   /** Bullet-list of field issues displayed under the description. */
   issues?: string[];
@@ -395,8 +400,10 @@ export function getErrorMessage(error: any, fallback = 'An unexpected error occu
 
 export const notify = {
   // ─ Simple toasts ────────────────────────────────────────────────────
-  success: (title: string, options?: BaseOptions) => render('success', title, options),
-  info:    (title: string, options?: BaseOptions) => render('info',    title, options),
+  // An `action` adds a button (QA6 P4: the Workload move's Undo); a click
+  // runs it and closes the toast, as businessRule's action does.
+  success: (title: string, options?: ActionOptions) => render('success', title, options),
+  info:    (title: string, options?: ActionOptions) => render('info',    title, options),
   warning: (title: string, options?: BaseOptions) => render('warning', title, options),
 
   // ─ Error — kept as a public method for back-compat (483 call sites)
