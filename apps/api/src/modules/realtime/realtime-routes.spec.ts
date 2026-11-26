@@ -14,6 +14,7 @@ import { ProjectDeliverablesController } from '../project-deliverables/project-d
 import { SchedulingController } from '../scheduling/scheduling.controller';
 import { ExecutionPlanningController } from '../execution-planning/execution-planning.controller';
 import { ProjectStatusBoardController } from '../project-status-board/project-status-board.controller';
+import { WorkloadAssignController } from '../workload-assign/workload-assign.controller';
 
 const CONTROLLERS = [
   TasksController,
@@ -23,6 +24,7 @@ const CONTROLLERS = [
   SchedulingController,
   ExecutionPlanningController,
   ProjectStatusBoardController,
+  WorkloadAssignController,
 ];
 
 function declaredRoutes(): Set<string> {

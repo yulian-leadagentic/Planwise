@@ -27,6 +27,8 @@ import { TaskAssigneePolicyService } from './task-assignee-policy.service';
   imports: [AuthorizationModule, NotificationsModule, ProjectDeliverablesModule, ProjectPartnerRolesModule],
   controllers: [TasksController],
   providers: [TasksService, TaskChecklistService, TaskAssigneePolicyService],
-  exports: [TasksService, TaskChecklistService],
+  // TaskAssigneePolicyService (QA6 PR-063) — the Workload drag-and-drop
+  // (WorkloadAssignModule) plans B through the same assignee policy.
+  exports: [TasksService, TaskChecklistService, TaskAssigneePolicyService],
 })
 export class TasksModule {}

@@ -73,6 +73,10 @@ export const REALTIME_ROUTES: Readonly<Record<string, RealtimeRouteRule>> = {
   'POST tasks/:id/review': TASK_UPDATED(task()),
   'POST tasks/:id/assignees': TASK_UPDATED(task()),
   'DELETE tasks/:id/assignees/:userId': TASK_UPDATED(task()),
+  // QA6 PR-063 — Workload drag-and-drop (WorkloadAssignController). The
+  // /workload/reassignments/:id/* routes have no task param: the service
+  // emits REALTIME_INVALIDATE itself after approve / reject / undo.
+  'POST tasks/:id/reassign': TASK_UPDATED(task()),
   'POST tasks/:id/checklist': TASK_UPDATED(task()),
   'PATCH tasks/checklist/:itemId': TASK_UPDATED({ kind: 'checklistItem', param: 'itemId' }),
   'DELETE tasks/checklist/:itemId': DELETED_ROW(TASK_UPDATED({ kind: 'checklistItem', param: 'itemId' })),

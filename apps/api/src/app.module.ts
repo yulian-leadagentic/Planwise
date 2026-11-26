@@ -52,6 +52,7 @@ import { DriveModule } from './modules/drive/drive.module';
 import { UserPreferencesModule } from './modules/user-preferences/user-preferences.module';
 import { HrModule } from './modules/hr/hr.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
+import { WorkloadAssignModule } from './modules/workload-assign/workload-assign.module';
 
 @Module({
   imports: [
@@ -139,6 +140,8 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
     UserPreferencesModule,
     HrModule,
     RealtimeModule,
+    // QA6 PR-063 — Operations › Workload drag-and-drop (POST /tasks/:id/reassign, /workload/reassignments).
+    WorkloadAssignModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

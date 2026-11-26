@@ -302,6 +302,29 @@ export class ActivityLogService {
     });
   }
 
+  /**
+   * QA6 PR-063 — one line per Workload drag-and-drop action (the
+   * description is composed by TaskReassignService). Category `task`,
+   * entity the task, so the project's Activity tab lists it.
+   */
+  async logTaskReassignment(
+    input: LogCommonInput & {
+      action: 'reassign' | 'reassign_request' | 'reassign_approve' | 'reassign_reject' | 'reassign_cancel' | 'reassign_undo';
+      taskName: string;
+      description: string;
+    },
+  ): Promise<void> {
+    const { action, taskName, description, ...common } = input;
+    await this.write({
+      ...common,
+      category: 'task',
+      action,
+      entityType: 'task',
+      entityName: taskName,
+      description,
+    });
+  }
+
   async logTaskAttachmentAdded(input: LogCommonInput & { taskCode: string | null; fileName: string }): Promise<void> {
     const label = input.taskCode ?? 'task';
     await this.write({
