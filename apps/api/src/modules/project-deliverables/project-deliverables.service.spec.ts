@@ -18,6 +18,7 @@
  * tri-state `durationWeeks: undefined = keep` contract).
  */
 import { ProjectDeliverablesService } from './project-deliverables.service';
+import { resolveUngovernedZoneIds } from '../scheduling/target-scope.util';
 
 type MockPrisma = {
   zoneDeliverableTarget: {
@@ -252,9 +253,14 @@ function makeScopedService(fx: { zdts?: ZdtRow[]; tasks: TaskRow[]; pdTargetDate
       }),
     },
     task: {
+      // PR-077 follow-up · a Root item asks for `OR: [{ zoneId: null }, { zoneId: { in } }]`.
       findMany: jest.fn().mockImplementation(async ({ where }: any) =>
         fx.tasks.filter(
-          (t) => t.projectDeliverableId === where.projectDeliverableId && zoneMatches(t.zoneId, where.zoneId),
+          (t) =>
+            t.projectDeliverableId === where.projectDeliverableId &&
+            (Array.isArray(where.OR)
+              ? where.OR.some((c: any) => zoneMatches(t.zoneId, c.zoneId))
+              : zoneMatches(t.zoneId, where.zoneId)),
         ),
       ),
       findFirst: jest.fn().mockImplementation(async ({ where }: any) => fx.tasks.find((t) => t.id === where.id) ?? null),
@@ -368,14 +374,110 @@ describe('ProjectDeliverablesService.batchSetTargets — §12 · propagation cov
     expect(isoDay(updates.get(23).endDate)).toBe('2026-12-13');
   });
 
-  it('a deliverable-level item (no zone) is unchanged: every task of the deliverable, no tree lookup', async () => {
-    const { service, prisma, updates } = makeScopedService({ tasks: TASKS() });
+  // PR-077 follow-up (2026-11-26, owner's decision 3) · A deliverable-level
+  // (Root) item used to overwrite EVERY task of the deliverable, zone
+  // targets included. It now writes the zone-less tasks and the tasks of
+  // zones with no dated target of their own for the deliverable: the
+  // scheduler's fallback set (`resolveUngovernedZoneIds`).
+  describe('a deliverable-level (Root) item', () => {
+    const ROOT_TASKS = () => [
+      ...TASKS(),
+      task(50, null),
+      task(51, null, { dueDateOverridden: true, endDate: day('2026-12-27') }),
+    ];
 
-    await service.batchSetTargets([{ id: PD_ID, months: 1 }], '2026-10-01', true, 7);
+    it('without any zone target: every zone is uncovered, so every task of the deliverable (manual dates kept)', async () => {
+      const { service, prisma, updates } = makeScopedService({ tasks: ROOT_TASKS() });
 
-    expect('zoneId' in prisma.task.findMany.mock.calls[0][0].where).toBe(false);
-    expect(prisma.zone.findMany).not.toHaveBeenCalled();
-    expect([...updates.keys()].sort((a, b) => a - b)).toEqual([1, 21, 22, 23, 99]);
+      const res = await service.batchSetTargets([{ id: PD_ID, months: 1 }], '2026-10-01', true, 7);
+
+      expect(prisma.task.findMany.mock.calls[0][0].where).toMatchObject({
+        projectDeliverableId: PD_ID,
+        OR: [{ zoneId: null }, { zoneId: { in: [693, 695, 696, 697, 700] } }],
+      });
+      expect([...updates.keys()].sort((a, b) => a - b)).toEqual([1, 21, 22, 23, 50, 99]);
+      for (const id of updates.keys()) expect(isoDay(updates.get(id).endDate)).toBe('2026-11-01');
+      expect(res.overriddenTasks.map((o) => o.taskId).sort((a, b) => a - b)).toEqual([24, 51]);
+    });
+
+    it('a zone covered by its own dated target keeps its tasks\' dates; zone-less and uncovered-zone tasks get the Root date', async () => {
+      const { service, prisma, updates } = makeScopedService({
+        // Building A (and so its whole sub-tree) has its own target; a
+        // date-less row on Building B is not a target.
+        zdts: [
+          { zoneId: 693, projectDeliverableId: PD_ID, targetDate: day('2026-12-06') },
+          { zoneId: 700, projectDeliverableId: PD_ID, targetDate: null },
+        ],
+        tasks: ROOT_TASKS(),
+      });
+
+      const res = await service.batchSetTargets([{ id: PD_ID, months: 1 }], '2026-10-01', true, 7);
+
+      // The very set the scheduler's Root-level run takes.
+      expect(resolveUngovernedZoneIds(ZONES, [693])).toEqual([700]);
+      expect(prisma.task.findMany.mock.calls[0][0].where).toMatchObject({
+        projectDeliverableId: PD_ID,
+        OR: [{ zoneId: null }, { zoneId: { in: [700] } }],
+      });
+      expect([...updates.keys()].sort((a, b) => a - b)).toEqual([50, 99]);
+      for (const id of [50, 99]) expect(isoDay(updates.get(id).endDate)).toBe('2026-11-01');
+      // 24 is inside Building A: not in scope, not even reported.
+      expect(res.overriddenTasks.map((o) => o.taskId)).toEqual([51]);
+    });
+
+    it('every zone covered: only the zone-less tasks', async () => {
+      const { service, prisma, updates } = makeScopedService({
+        zdts: [
+          { zoneId: 693, projectDeliverableId: PD_ID, targetDate: day('2026-12-06') },
+          { zoneId: 700, projectDeliverableId: PD_ID, targetDate: day('2026-12-13') },
+        ],
+        tasks: ROOT_TASKS(),
+      });
+
+      await service.batchSetTargets([{ id: PD_ID, months: 1 }], '2026-10-01', true, 7);
+
+      expect(prisma.task.findMany.mock.calls[0][0].where).toEqual({
+        projectDeliverableId: PD_ID,
+        zoneId: null,
+        deletedAt: null,
+        isArchived: false,
+      });
+      expect([...updates.keys()]).toEqual([50]);
+    });
+
+    const ROOT = { id: PD_ID, months: null, targetDate: '2026-11-01' };
+    const ZONE_A = { id: PD_ID, zoneId: 693, months: null, targetDate: '2026-12-06' };
+
+    it.each([
+      ['Root first', [ROOT, ZONE_A]],
+      ['zone first', [ZONE_A, ROOT]],
+    ])('Root + a new zone target in one batch (%s): same end state', async (_label, items) => {
+      const { service, updates } = makeScopedService({ tasks: ROOT_TASKS() });
+
+      await service.batchSetTargets(items, undefined, true, 7);
+
+      const ends = Object.fromEntries([...updates.entries()].map(([id, d]) => [id, isoDay(d.endDate)]));
+      expect(ends).toEqual({
+        1: '2026-12-06', 21: '2026-12-06', 22: '2026-12-06', 23: '2026-12-06', // Building A's own target
+        50: '2026-11-01', 99: '2026-11-01', // zone-less + Building B: the Root target
+      });
+    });
+
+    it('a zone target cleared in the same batch hands its tasks back to the Root date, whatever the order', async () => {
+      for (const order of ['root-first', 'zone-first']) {
+        const clearA = { id: PD_ID, zoneId: 693, months: null, targetDate: null };
+        const items = order === 'root-first' ? [ROOT, clearA] : [clearA, ROOT];
+        const { service, updates, zdts } = makeScopedService({
+          zdts: [{ zoneId: 693, projectDeliverableId: PD_ID, targetDate: day('2026-12-06') }],
+          tasks: ROOT_TASKS(),
+        });
+
+        await service.batchSetTargets(items as any, undefined, true, 7);
+
+        expect(zdts).toEqual([]);
+        for (const id of [1, 21, 22, 23, 50, 99]) expect(isoDay(updates.get(id).endDate)).toBe('2026-11-01');
+      }
+    });
   });
 
   it('applyToTasks=false (what the DP tab sends) touches no task and resolves no scope', async () => {

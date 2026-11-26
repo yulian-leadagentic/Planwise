@@ -7,6 +7,7 @@ import { extractServiceMarker } from '../planning/marker-phase-resolver';
 import {
   createGoverningTargetDateLookup,
   loadTargetScopeZoneIds,
+  loadUngovernedZoneIds,
   loadZoneTree,
 } from '../scheduling/target-scope.util';
 import { CreateProjectDeliverableDto } from './dto/create-project-deliverable.dto';
@@ -632,7 +633,10 @@ export class ProjectDeliverablesService {
    *  Planning UI. When `applyToTasks` is true, propagates the target
    *  date onto every task in that (zone, deliverable) that hasn't
    *  been manually overridden. Returns the list of tasks that WERE
-   *  overridden so the UI can prompt the PM. */
+   *  overridden so the UI can prompt the PM.
+   *  PR-077 follow-up (2026-11-26) · A deliverable-level (Root) item
+   *  reaches only the zone-less tasks and the zones with no dated
+   *  target of their own (see the end of the method). */
   // TODO(D6 · scheduling auto-reschedule) — same note as `setTarget`:
   // batching N target changes still invalidates N downstream task
   // schedules. The Deliverable Planning tab's "Save & update due
@@ -662,6 +666,8 @@ export class ProjectDeliverablesService {
   ) {
     let updated = 0;
     const overriddenTasks: { taskId: number; taskName: string; currentDue: string | null; targetDate: string | null }[] = [];
+    // PR-077 follow-up · deliverable-level items, propagated after the loop.
+    const rootPropagations: { projectDeliverableId: number; targetDate: Date | null }[] = [];
 
     // Today midnight UTC — for detecting past-date targets that must
     // be recorded in the activity log (client feedback 2026-08-02).
@@ -778,68 +784,116 @@ export class ProjectDeliverablesService {
       // (projectDeliverableId + optional zoneId). Skip tasks with
       // manual overrides — those get reported back so the PM can
       // choose to keep or overwrite in a follow-up call.
-      if (applyToTasks) {
-        const taskFilter: any = { projectDeliverableId: it.id, deletedAt: null, isArchived: false };
-        if (zoneId != null) {
-          // §12 (2026-11-14) · Same scope as the scheduler (one rule,
-          // `target-scope.util.ts`): the zone AND its sub-zones, minus
-          // sub-trees that keep their own dated target for this
-          // deliverable. The exact `zoneId` match that stood here left
-          // sub-zone tasks — which the DP row for a top zone lists —
-          // without the propagated date. Resolved AFTER the upsert
-          // above, so the scope reflects this batch's own writes; a
-          // sub-tree that keeps its own dated target (§16 — no longer
-          // cleared) is excluded and keeps following that target.
-          // A deliverable-level item (no zoneId) is unchanged: it still
-          // matches every task of the deliverable.
-          const pd = await this.prisma.projectDeliverable.findUnique({
-            where: { id: it.id },
-            select: { projectId: true },
-          });
-          taskFilter.zoneId = {
-            in: await loadTargetScopeZoneIds(this.prisma, {
-              projectId: pd?.projectId ?? null,
-              projectDeliverableId: it.id,
-              rootZoneId: zoneId,
-            }),
-          };
-        }
-
-        const affectedTasks = await this.prisma.task.findMany({
-          where: taskFilter,
-          select: { id: true, name: true, endDate: true, budgetHours: true, dueDateOverridden: true },
+      if (applyToTasks && zoneId == null) {
+        // PR-077 follow-up (2026-11-26) · A deliverable-level (Root)
+        // target is propagated after every item of the batch is written
+        // (below), so its scope sees this batch's own zone targets.
+        rootPropagations.push({ projectDeliverableId: it.id, targetDate });
+      } else if (applyToTasks && zoneId != null) {
+        // §12 (2026-11-14) · Same scope as the scheduler (one rule,
+        // `target-scope.util.ts`): the zone AND its sub-zones, minus
+        // sub-trees that keep their own dated target for this
+        // deliverable. The exact `zoneId` match that stood here left
+        // sub-zone tasks — which the DP row for a top zone lists —
+        // without the propagated date. Resolved AFTER the upsert
+        // above, so the scope reflects this batch's own writes; a
+        // sub-tree that keeps its own dated target (§16 — no longer
+        // cleared) is excluded and keeps following that target.
+        const projectId = await this.projectIdOf(it.id);
+        const scopeZoneIds = await loadTargetScopeZoneIds(this.prisma, {
+          projectId,
+          projectDeliverableId: it.id,
+          rootZoneId: zoneId,
         });
-
-        for (const t of affectedTasks) {
-          if (t.dueDateOverridden) {
-            overriddenTasks.push({
-              taskId: t.id,
-              taskName: t.name,
-              currentDue: t.endDate ? t.endDate.toISOString().slice(0, 10) : null,
-              targetDate: targetDate ? targetDate.toISOString().slice(0, 10) : null,
-            });
-            continue; // don't clobber user's manual date
-          }
-
-          // Est. start = due date − ceil(budgetHours / 40) weeks.
-          // 40h ≈ one full working week per the client's brief.
-          // (§12 · formula moved to `common/task-dates.ts`, unchanged.)
-          const estStart: Date | null = targetDate
-            ? budgetBasedEstimatedStart(targetDate, t.budgetHours)
-            : null;
-
-          await this.prisma.task.update({
-            where: { id: t.id },
-            data: {
-              endDate: targetDate,
-              estimatedStartDate: estStart,
-            },
-          });
-        }
+        await this.propagateTargetToTasks(
+          { projectDeliverableId: it.id, zoneId: { in: scopeZoneIds } },
+          targetDate,
+          overriddenTasks,
+        );
       }
     }
 
+    // PR-077 follow-up (2026-11-26, owner's decision 3) · A
+    // deliverable-level (Root) target is the fallback of the zones that
+    // have no dated target of their own for the deliverable — the same
+    // "uncovered zones" the scheduler's Root-level run takes
+    // (`loadUngovernedZoneIds`, one helper so the two cannot drift). It
+    // is written to the deliverable's zone-less tasks and to its tasks in
+    // those zones only; a zoned task covered by its own zone target keeps
+    // its dates. (It used to overwrite every task of the deliverable.)
+    // Run after the loop so a zone target set or cleared in the same
+    // batch is already in place, whatever the item order.
+    for (const r of rootPropagations) {
+      const fallbackZoneIds = await loadUngovernedZoneIds(this.prisma, {
+        projectId: await this.projectIdOf(r.projectDeliverableId),
+        projectDeliverableId: r.projectDeliverableId,
+      });
+      await this.propagateTargetToTasks(
+        fallbackZoneIds.length === 0
+          ? { projectDeliverableId: r.projectDeliverableId, zoneId: null }
+          : {
+              projectDeliverableId: r.projectDeliverableId,
+              OR: [{ zoneId: null }, { zoneId: { in: fallbackZoneIds } }],
+            },
+        r.targetDate,
+        overriddenTasks,
+      );
+    }
+
     return { updated, overriddenTasks };
+  }
+
+  private async projectIdOf(projectDeliverableId: number): Promise<number | null> {
+    const pd = await this.prisma.projectDeliverable.findUnique({
+      where: { id: projectDeliverableId },
+      select: { projectId: true },
+    });
+    return pd?.projectId ?? null;
+  }
+
+  /**
+   * `batchSetTargets` › apply to tasks: write `targetDate` (and the
+   * budget-based est. start) to the live tasks `where` selects. A task
+   * with a manual due date (`dueDateOverridden`) is never written; it is
+   * reported in `overriddenTasks` so the PM can choose to keep or
+   * overwrite it in a follow-up call.
+   */
+  private async propagateTargetToTasks(
+    where: Prisma.TaskWhereInput,
+    targetDate: Date | null,
+    overriddenTasks: { taskId: number; taskName: string; currentDue: string | null; targetDate: string | null }[],
+  ): Promise<void> {
+    const affectedTasks = await this.prisma.task.findMany({
+      where: { ...where, deletedAt: null, isArchived: false },
+      select: { id: true, name: true, endDate: true, budgetHours: true, dueDateOverridden: true },
+    });
+
+    for (const t of affectedTasks) {
+      if (t.dueDateOverridden) {
+        overriddenTasks.push({
+          taskId: t.id,
+          taskName: t.name,
+          currentDue: t.endDate ? t.endDate.toISOString().slice(0, 10) : null,
+          targetDate: targetDate ? targetDate.toISOString().slice(0, 10) : null,
+        });
+        continue; // don't clobber user's manual date
+      }
+
+      // Est. start = due date − ceil(budgetHours / 40) weeks.
+      // 40h ≈ one full working week per the client's brief.
+      // (§12 · formula moved to `common/task-dates.ts`, unchanged.)
+      const estStart: Date | null = targetDate
+        ? budgetBasedEstimatedStart(targetDate, t.budgetHours)
+        : null;
+
+      await this.prisma.task.update({
+        where: { id: t.id },
+        data: {
+          endDate: targetDate,
+          estimatedStartDate: estStart,
+        },
+      });
+    }
   }
 
   /** Force-overwrite a specific task's endDate + estimatedStartDate
