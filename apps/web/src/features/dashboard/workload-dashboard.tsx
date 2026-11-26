@@ -22,6 +22,7 @@ import { OpsErrorBanner, opsErrorMessage } from './parts/ops-shared';
 import { WorkloadDayHeaders } from './parts/workload-day-headers';
 import { TaskChip, chipTitle } from './parts/workload-chip';
 import { DraggableChip, DropTd, workloadCollision, workloadKeyboardCoordinates, type DragData, type DropTarget } from './parts/workload-dnd';
+import { CellPreview, WorkloadPersonCell, type RowReason } from './parts/workload-drag-feedback';
 import { WorkloadTray } from './parts/workload-tray';
 import {
   canDragChip,
@@ -297,31 +298,29 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
     const rowCheck = active ? checkFor(active, p, null) : null;
     const isSource = active?.source.fromUserId === p.id;
     const counts = open ? laneCounts(p) : null;
+    // Round 2 (26.11): the reason is a badge over the person's fixed second
+    // line, never a new line (that made rows grow when a drag started).
+    const rowReason: RowReason | null =
+      active && rowCheck && !isSource
+        ? rowCheck.ok
+          ? rowCheck.needsApproval
+            ? { tone: 'approval', text: 'Needs approval' }
+            : rowCheck.addsToTeam
+              ? { tone: 'team', text: 'Joins the project team' }
+              : null
+          : rowCheck.reason
+            ? { tone: 'blocked', text: dropReasonText(rowCheck.reason, active.task) }
+            : null
+        : null;
 
     const preview = (date: string, d: TeamWorkloadPerson['days'][number], isOver: boolean) => {
       if (!active) return null;
       const check = checkFor(active, p, date);
-      if (check.reason === 'same-cell') {
-        return (
-          <div className="pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-[7px] border-[1.5px] border-dashed border-slate-300 dark:border-slate-600 bg-white/90 dark:bg-slate-900/90 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-            Now
-          </div>
-        );
-      }
+      if (check.reason === 'same-cell') return <CellPreview variant="now" />;
       const sameTaskHours = d.tasks.filter((c) => c.taskId === active.task.id).reduce((s, c) => s + c.hours, 0);
       const pv = previewPct({ planned: d.planned, capacity: d.capacity, sameTaskHours }, dragHoursOn(active, date));
-      const bad = !check.ok || pv.over;
       return (
-        <div
-          className={cn(
-            'pointer-events-none absolute inset-1 z-10 flex items-center justify-center rounded-[7px] border-[1.5px] px-0.5 text-center font-mono text-[10px] font-semibold leading-tight',
-            isOver
-              ? bad
-                ? 'border-solid border-red-600 bg-red-600 text-white'
-                : 'border-solid border-blue-600 bg-blue-600 text-white'
-              : cn('border-dashed bg-white/90 dark:bg-slate-900/90', bad ? 'border-red-400 text-red-600 dark:text-red-400' : 'border-blue-400 text-blue-600 dark:text-blue-400'),
-          )}
-        >
+        <CellPreview variant="preview" isOver={isOver} bad={!check.ok || pv.over}>
           {!check.ok && isOver && check.reason ? (
             <span className="font-sans text-[9px]">{dropReasonText(check.reason, active.task)}</span>
           ) : pv.off ? (
@@ -329,7 +328,7 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
           ) : (
             `${pv.before}→${pv.after}%`
           )}
-        </div>
+        </CellPreview>
       );
     };
 
@@ -354,30 +353,12 @@ export function WorkloadPanel({ myDeptOnly = false }: { myDeptOnly?: boolean }) 
             </button>
           </td>
           <td className="px-3 py-2.5">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-600 text-[10px] font-semibold flex items-center justify-center shrink-0">
-                {(p.firstName?.[0] ?? '') + (p.lastName?.[0] ?? '')}
-              </div>
-              <div className="min-w-0">
-                <p className="font-medium text-slate-700 dark:text-slate-200 truncate">{p.firstName} {p.lastName}</p>
-                {(p.position || (!groupByDept && p.orgUnit)) && (
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate">
-                    {[p.position, groupByDept ? null : p.orgUnit?.name].filter(Boolean).join(' · ')}
-                  </p>
-                )}
-                {active && rowCheck && !isSource && (
-                  rowCheck.ok ? (
-                    rowCheck.needsApproval ? (
-                      <p className="text-[10px] font-semibold text-violet-600 dark:text-violet-400">Needs approval</p>
-                    ) : rowCheck.addsToTeam ? (
-                      <p className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">Joins the project team</p>
-                    ) : null
-                  ) : rowCheck.reason ? (
-                    <p className="text-[10px] font-semibold text-red-600 dark:text-red-400">{dropReasonText(rowCheck.reason, active.task)}</p>
-                  ) : null
-                )}
-              </div>
-            </div>
+            <WorkloadPersonCell
+              initials={(p.firstName?.[0] ?? '') + (p.lastName?.[0] ?? '')}
+              name={`${p.firstName ?? ''} ${p.lastName ?? ''}`.trim()}
+              subtitle={[p.position, groupByDept ? null : p.orgUnit?.name].filter(Boolean).join(' · ') || null}
+              reason={rowReason}
+            />
           </td>
           {p.days.map((d) => {
             const dayUtil = utilizationPct(d.planned, d.capacity);
