@@ -1,4 +1,5 @@
 import { format, parseISO } from 'date-fns';
+import type { WorkloadAssign, WorkloadTaskEntry } from './workload-contract';
 
 /**
  * QA6 P3 (PR-073 / PR-074) — labels for the workload range. The days come
@@ -62,6 +63,13 @@ export type TeamWorkloadPerson = {
   name: string;
   position: string | null;
   orgUnit: { id: number; name: string } | null;
+  /** PR-063 (D1): the top-level org unit; null = "No department". */
+  departmentId?: number | null;
+  departmentName?: string | null;
+  /** PR-063: the person's qualification (profession) ids, for the service gate. */
+  qualificationIds?: number[];
+  /** PR-063: the caller is Admin or in this person's manager chain. */
+  canDragFrom?: boolean;
   loggedVisible: boolean;
   days: Array<{ date: string; capacity: number; planned: number; logged: number | null; tasks: TeamWorkloadChip[] }>;
   totals: {
@@ -83,6 +91,10 @@ export type TeamWorkload = {
   totals: { people: number; capacity: number; planned: number; logged: number | null; undatedHours: number; utilizationPct: number };
   orgUnits: Array<{ id: number; name: string; parentId: number | null; depth: number }>;
   scope: { myDeptOnly: boolean; orgUnitId: number | null; deptName: string | null };
+  /** PR-063: non-masked tasks on the board, keyed by id (see workload-contract.ts). */
+  tasks?: Record<string, WorkloadTaskEntry>;
+  /** PR-063: drag rights, project Teams and service requirements. */
+  assign?: WorkloadAssign;
 };
 
 /** People grouped by home unit, in first-seen order ("No department" last). */
