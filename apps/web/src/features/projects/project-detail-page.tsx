@@ -36,7 +36,7 @@ import { getInitials } from './project-detail/utils';
 import { formatProjectTimeline } from './project-end-date';
 import type { Tab } from './project-detail/types';
 import { ProjectCloseControl } from './project-detail/project-close-control';
-import { projectManageActions } from './project-detail/project-manage-actions';
+import { canManageProject, projectManageActions } from './project-detail/project-manage-actions';
 import { ProjectPrevNext } from './project-detail/project-prev-next';
 import { ProjectInfoTab } from './project-detail/project-info-tab';
 import { ProjectUnavailable } from './project-detail/project-unavailable';
@@ -128,6 +128,8 @@ export function ProjectDetailPage() {
 
   // QA6 round 2 (26.11): edit, status, categories, close / reopen and
   // delete are leader or Admin only (`canManage`); others get no control.
+  // Round 3: the Project Info fields (`editInfo`) and the Team tab's
+  // roles (`editTeam`) follow the same answer.
   const manage = projectManageActions(project as { canManage?: unknown }, { isAdmin, can });
   const leader = members?.find((m) => m.role?.toLowerCase() === 'leader' || m.role?.toLowerCase() === 'project leader');
   const memberCount = members?.length ?? 0;
@@ -384,7 +386,7 @@ export function ProjectDetailPage() {
 
       {/* Tab content */}
       <div className="px-5 py-6">
-        {tab === 'info' && <ProjectInfoTab projectId={projectId} project={project} />}
+        {tab === 'info' && <ProjectInfoTab projectId={projectId} project={project} canEdit={manage.editInfo} />}
         {tab === 'planning' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading planning...</div>}><PlanningTab projectId={projectId} /></Suspense>}
         {tab === 'schedule' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading schedule...</div>}><DeliverablePlanningTab key={projectId} projectId={projectId} /></Suspense>}
         {tab === 'kanban' && <Suspense fallback={<div className="py-12 text-center text-sm text-slate-400 dark:text-slate-500">Loading board...</div>}><KanbanBoard projectId={projectId} /></Suspense>}
@@ -401,6 +403,8 @@ export function ProjectDetailPage() {
             members={members ?? []}
             showAddMember={showAddMember}
             onToggleAddMember={setShowAddMember}
+            canEditTeam={manage.editTeam}
+            canManage={canManageProject(project as { canManage?: unknown })}
           />
         )}
       </div>

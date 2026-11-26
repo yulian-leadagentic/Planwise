@@ -226,6 +226,52 @@ describe('Projects controller — managing the project is leader-or-Admin (round
     expect(projectsService[method]).not.toHaveBeenCalled();
   });
 
+  // QA6 round 3 (26.11) · the Project Info tab and the edit page are
+  // read-only for him on the web; every field behind them is refused here.
+  it.each([
+    ['Weekly Meeting Day (Project Info tab)', { weeklyMeetingDay: 'Tuesdays 10:00' }],
+    ['Authoring Tool Version (Project Info tab)', { authoringToolVersion: 'Revit 2025' }],
+    ['Services Per Contract (Project Info tab)', { servicesPerContract: 'BIM coordination' }],
+    ['clearing a Project Info field', { weeklyMeetingDay: null }],
+    ['name and description (edit page)', { name: 'Tower B', description: 'x' }],
+    ['start and end dates (edit page)', { startDate: '2026-12-01', endDate: '9999-12-31' }],
+    ['org unit (edit page)', { orgUnitId: ORG_UNIT }],
+    ['budget (edit page)', { budget: 1000 }],
+    ['file system link', { fileSystemLink: 'https://drive.example.com/x' }],
+    ['leader id (edit page)', { leaderId: ORG_VIEWER.id }],
+  ])('QA6 round 3 · PATCH /:id with %s refuses a project-access-only user with 403 NOT_PROJECT_LEADER', async (_field, dto) => {
+    const { ctrl, projectsService } = makeController();
+    const err = await ctrl.update(ORG_VIEWER, ORG_PROJECT, dto as any).catch((e: any) => e);
+    expect(err).toBeInstanceOf(PermissionDeniedException);
+    expect(err.getStatus()).toBe(403);
+    expect(reasonOf(err)).toBe('NOT_PROJECT_LEADER');
+    expect(projectsService.update).not.toHaveBeenCalled();
+    // Refused before anything else is looked at.
+    expect(projectsService.getOrgUnitId).not.toHaveBeenCalled();
+    expect(projectsService.getMoneySnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['POST /:id/members', (c: ProjectsController) => c.addMember(ORG_VIEWER, ORG_PROJECT, ORG_VIEWER.id), 'addMember'],
+    ['DELETE /:id/members/:userId', (c: ProjectsController) => c.removeMember(ORG_VIEWER, ORG_PROJECT, 7), 'removeMember'],
+  ])('QA6 round 3 · %s (Team tab) refuses a project-access-only user with 403 NOT_PROJECT_LEADER', async (_route, call, method) => {
+    const { ctrl, projectsService } = makeController();
+    const err = await call(ctrl).catch((e: any) => e);
+    expect(err).toBeInstanceOf(PermissionDeniedException);
+    expect(reasonOf(err)).toBe('NOT_PROJECT_LEADER');
+    expect(projectsService[method]).not.toHaveBeenCalled();
+  });
+
+  it('QA6 round 3 · the leader saves the Project Info fields', async () => {
+    const { ctrl, projectsService } = makeController();
+    await ctrl.update(LEADER, ORG_PROJECT, { weeklyMeetingDay: 'Sundays', authoringToolVersion: 'Revit 2025', servicesPerContract: null } as any);
+    expect(projectsService.update).toHaveBeenCalledWith(
+      ORG_PROJECT,
+      { weeklyMeetingDay: 'Sundays', authoringToolVersion: 'Revit 2025', servicesPerContract: null },
+      LEADER.id,
+    );
+  });
+
   it('QA6 round 2 · delete needs projects:delete on top of leader-or-Admin; close / reopen need projects:write', () => {
     const reflector = new Reflector();
     expect(reflector.get(ROLES_KEY, ProjectsController.prototype.remove)).toEqual([{ module: 'projects', action: 'delete' }]);

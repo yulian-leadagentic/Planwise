@@ -146,24 +146,40 @@ export function TeamTab({
   members,
   showAddMember,
   onToggleAddMember,
+  canEditTeam,
+  canManage,
 }: {
   projectId: number;
   members: ProjectMember[];
   showAddMember: boolean;
   onToggleAddMember: (v: boolean) => void;
+  /**
+   * QA6 round 3 (26.11) · `projectManageActions(...).editTeam`: leader or
+   * Admin, with partners:write. Gates "Add person", the Project Role
+   * cell, the "not assigned +" coverage chips and "Remove from project"
+   * (POST / DELETE /project-partner-roles and /projects/:id/members run
+   * assertProjectManage). Without it they are read-only text.
+   */
+  canEditTeam: boolean;
+  /** Leader or Admin (`canManageProject`); the contacts import attaches people to this project. */
+  canManage: boolean;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const removeMember = useRemoveProjectMember();
   const confirm = useConfirm();
   const { isAdmin, can: canPerm } = usePermissions();
+  // Discipline / email / phone of a person: PATCH /business-partners/:id,
+  // the partner's own record (partners:write), not a project setting.
   const canWritePartners = isAdmin || canPerm('partners', 'write');
   // QA4 D9 (2026-09-28) — separate gate from `partners:write`: importing
   // stakeholders in bulk is a distinct authority even for a PM who can
   // add people one at a time. Mirrors the wizard's own permission check
   // on /admin/data-import. BM2-28: no Admin bypass (the API has none for
-  // data-import), shared rule in contacts-import-entry.ts.
-  const canImportContacts = canImportContactsFor(canPerm);
+  // data-import), shared rule in contacts-import-entry.ts. QA6 round 3:
+  // attaching them to this project is leader or Admin only (the import
+  // runs assertProjectManage on attachToProjectId).
+  const canImportContacts = canManage && canImportContactsFor(canPerm);
 
   // ─── Data ──────────────────────────────────────────────────────────
   const {
@@ -912,7 +928,7 @@ export function TeamTab({
               Import contacts (Excel)
             </button>
           )}
-          {canWritePartners && (
+          {canEditTeam && (
             <button
               type="button"
               onClick={() => setAddPickerOpen(true)}
@@ -1154,7 +1170,7 @@ export function TeamTab({
                   customer={customer}
                   onAdd={() => openAddForRole(role)}
                   onOpenProfile={openDrawer}
-                  canWrite={canWritePartners}
+                  canWrite={canEditTeam}
                   teamLeaderBpIds={teamLeaderBpIds}
                 />
               ))}
@@ -1198,6 +1214,7 @@ export function TeamTab({
             toggleGroup={toggleGroup}
             openDrawer={openDrawer}
             canWrite={canWritePartners}
+            canEditTeam={canEditTeam}
             projectId={projectId}
             roleAssignments={team.roleAssignments}
             addableRoles={addableRoles}
@@ -1220,7 +1237,9 @@ export function TeamTab({
               description={
                 activeFilterCount > 0
                   ? 'Clear filters or search terms to see everyone on this project.'
-                  : "Click + Add person to bring someone onto the project."
+                  : canEditTeam
+                    ? 'Click + Add person to bring someone onto the project.'
+                    : 'The project leader or an administrator adds people to the project.'
               }
             />
           </div>
@@ -1495,6 +1514,24 @@ function FilterGroup({ label, children }: { label: string; children: React.React
 
 /* ─── CoverageChip ─────────────────────────────────────────────────── */
 
+const UNASSIGNED_CHIP =
+  'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300';
+
+/**
+ * QA6 round 3 (26.11) · a required role nobody holds, for a viewer who
+ * cannot change the team (not the leader or an Admin): the same amber
+ * status, as text. No "+", no button.
+ */
+export function UnassignedRoleChip({ roleName }: { roleName: string }) {
+  return (
+    <span className={UNASSIGNED_CHIP}>
+      <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+      <span>{roleName}</span>
+      <span>· not assigned</span>
+    </span>
+  );
+}
+
 function CoverageChip({
   role,
   filled,
@@ -1540,18 +1577,14 @@ function CoverageChip({
         </button>
       );
     }
+    if (!canWrite) return <UnassignedRoleChip roleName={role.name} />;
     return (
       <button
         type="button"
-        onClick={canWrite ? onAdd : undefined}
-        disabled={!canWrite}
+        onClick={onAdd}
         aria-label={`Assign ${role.name}`}
         title="Assign the customer on Project Info / Edit"
-        className={cn(
-          'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold',
-          'border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300',
-          canWrite ? 'hover:border-amber-500' : 'opacity-60 cursor-not-allowed',
-        )}
+        className={cn(UNASSIGNED_CHIP, 'hover:border-amber-500')}
       >
         <AlertTriangle className="h-3 w-3" aria-hidden="true" />
         <span>{role.name}</span>
@@ -1562,17 +1595,13 @@ function CoverageChip({
   }
 
   if (filled.length === 0) {
+    if (!canWrite) return <UnassignedRoleChip roleName={role.name} />;
     return (
       <button
         type="button"
-        onClick={canWrite ? onAdd : undefined}
-        disabled={!canWrite}
+        onClick={onAdd}
         aria-label={`Add ${role.name}`}
-        className={cn(
-          'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold',
-          'border border-dashed border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300',
-          canWrite ? 'hover:border-amber-500' : 'opacity-60 cursor-not-allowed',
-        )}
+        className={cn(UNASSIGNED_CHIP, 'hover:border-amber-500')}
       >
         <AlertTriangle className="h-3 w-3" aria-hidden="true" />
         <span>{role.name}</span>
@@ -1655,6 +1684,7 @@ function TableBody({
   toggleGroup,
   openDrawer,
   canWrite,
+  canEditTeam,
   projectId,
   roleAssignments,
   addableRoles,
@@ -1671,7 +1701,10 @@ function TableBody({
   collapsedGroups: Set<string>;
   toggleGroup: (k: string) => void;
   openDrawer: (bpId: number) => void;
+  /** partners:write: the person's own Discipline / Email / Phone. */
   canWrite: boolean;
+  /** Leader or Admin with partners:write: the Project Role cell and "Remove from project". */
+  canEditTeam: boolean;
   /** QA4 D7 — inline-edit context. `projectId` scopes the
    *  eligible-parties query the Project Role cell fires when opened.
    *  `roleAssignments` maps party -> held PPRs so the cell knows which
@@ -1868,7 +1901,7 @@ function TableBody({
                           projectId={projectId}
                           roleAssignments={roleAssignments}
                           addableRoles={addableRoles}
-                          canEdit={canWrite && r.rowType === 'employee'}
+                          canEdit={canEditTeam && r.rowType === 'employee'}
                           pending={reassignRolePending}
                           onReassign={onReassignRole}
                         />
@@ -1920,7 +1953,7 @@ function TableBody({
                         >
                           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>
-                        {r.onRemove && canWrite && (
+                        {r.onRemove && canEditTeam && (
                           <button
                             type="button"
                             onClick={r.onRemove}

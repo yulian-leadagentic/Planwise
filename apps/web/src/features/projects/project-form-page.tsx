@@ -9,11 +9,14 @@ import client from '@/api/client';
 import { PageSkeleton } from '@/components/shared/loading-skeleton';
 import { useProject, useCreateProject, useUpdateProject, useProjectTypes } from '@/hooks/use-projects';
 import { usePermissions } from '@/hooks/use-permissions';
-import { notify } from '@/lib/notify';
+import { notify, isPermissionDenied } from '@/lib/notify';
 import { cn } from '@/lib/utils';
 import { PeopleMultiSelect, type Person } from '@/components/shared/people-multi-select';
 import { Field, SelectField } from '@/components/shared/field';
 import { buildTree } from '@/features/admin/organization-page/build-tree';
+import { projectManageActions } from './project-detail/project-manage-actions';
+import { ProjectUnavailable } from './project-detail/project-unavailable';
+import { ProjectEditReadOnly } from './project-edit-read-only';
 import {
   OPEN_ENDED_END_DATE,
   isOpenEnded,
@@ -120,7 +123,7 @@ export function ProjectFormPage() {
   // API rejects it otherwise); a finance reader sees it read-only.
   const canEditFinance = can('finance', 'write');
 
-  const { data: project, isLoading: projectLoading } = useProject(isEdit ? projectId : 0);
+  const { data: project, isLoading: projectLoading, error: projectError } = useProject(isEdit ? projectId : 0);
   const { data: projectTypes } = useProjectTypes();
   const { data: departments = [] } = useQuery({
     queryKey: ['departments'],
@@ -365,6 +368,14 @@ export function ProjectFormPage() {
   }, [project, isEdit, reset, existingCustomerRel]);
 
   if (isEdit && projectLoading) return <PageSkeleton />;
+  // QA6 round 3 (26.11): no project (403 No access / 404) is the project
+  // page's card; a project the caller cannot manage (not the leader, not
+  // an Admin) gets a read-only notice instead of a form that fails on
+  // Save. Same helper as the project page header's Edit pencil.
+  if (isEdit && (!project || isPermissionDenied(projectError))) return <ProjectUnavailable error={projectError} />;
+  if (isEdit && project && !projectManageActions(project as { canManage?: unknown }, { isAdmin, can }).edit) {
+    return <ProjectEditReadOnly projectId={projectId} projectName={project.name} />;
+  }
 
   // PR-061: wrapped below so Start can drive End on a new project.
   const startDateField = register('startDate');

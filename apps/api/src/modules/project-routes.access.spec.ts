@@ -35,12 +35,20 @@ const LEADER = { id: 7, isAdmin: false, roleModules: ALL };
 const MEMBER = { id: 3, isAdmin: false, roleModules: ALL };
 const STRANGER = { id: 50, isAdmin: false, roleModules: ALL };
 const ADMIN = { id: 1, isAdmin: true, roleModules: [] as any[] };
+// QA6 round 3 · opens project 43 through its org unit 9 only; every module grant.
+const ORG_VIEWER = { id: 70, isAdmin: false, roleModules: ALL };
+const ORG_PROJECT = 43;
+const ORG_UNIT = 9;
 
 function realAccess(): ProjectAccessService {
   const prisma: any = {
     project: {
       findFirst: jest.fn(async ({ where }: any) =>
-        where.id === 42 ? { id: 42, leaderId: 7, createdBy: 7, orgUnitId: null } : null,
+        where.id === 42
+          ? { id: 42, leaderId: 7, createdBy: 7, orgUnitId: null }
+          : where.id === ORG_PROJECT
+            ? { id: ORG_PROJECT, leaderId: 7, createdBy: 7, orgUnitId: ORG_UNIT }
+            : null,
       ),
       // getAccessibleProjectIds: project 42 is led by 7.
       findMany: jest.fn(async ({ where }: any) =>
@@ -58,7 +66,10 @@ function realAccess(): ProjectAccessService {
       findMany: jest.fn(async () => []),
     },
     zone: { findFirst: jest.fn(async () => ({ projectId: 42 })) },
-    user: { findUnique: jest.fn(async () => ({ orgUnitId: null })), findMany: jest.fn(async () => []) },
+    user: {
+      findUnique: jest.fn(async ({ where }: any) => ({ orgUnitId: where?.id === ORG_VIEWER.id ? ORG_UNIT : null })),
+      findMany: jest.fn(async () => []),
+    },
     orgUnit: { findMany: jest.fn(async () => []) },
   };
   return new ProjectAccessService(prisma);
@@ -169,6 +180,35 @@ describe('ProjectPartnerRolesController (round 4)', () => {
   it('create without a projectId is a 400', async () => {
     const { ctrl } = make();
     await expect(ctrl.create(LEADER, { partyId: 9 })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  // QA6 round 3 (26.11) · the Team tab is read-only on the web for a user
+  // who opens the project through its org unit (project 43, unit 9) but
+  // is not its leader. Customer (edit page), Team Leader and BIM Leader
+  // are partner roles; every write is refused here too.
+  it('QA6 round 3 · an org-unit viewer reads the roles but cannot add, change or end one (customer, leader, BIM Leader)', async () => {
+    const { ctrl, service } = make();
+    service.getProjectId.mockResolvedValue(ORG_PROJECT);
+    await ctrl.list(ORG_VIEWER, String(ORG_PROJECT));
+    expect(service.list).toHaveBeenCalledWith(expect.objectContaining({ projectId: ORG_PROJECT }));
+
+    for (const body of [
+      { projectId: ORG_PROJECT, partyId: 9, roleId: 1, isPrimary: true }, // customer (edit page swap)
+      { projectId: ORG_PROJECT, partyId: 12, roleId: 2 }, // team leader
+      { projectId: String(ORG_PROJECT), partyId: 12, roleId: 3 }, // BIM Leader
+    ]) {
+      const err = await ctrl.create(ORG_VIEWER, body).catch((e) => e);
+      expect(err).toBeInstanceOf(PermissionDeniedException);
+      expect(err.getStatus()).toBe(403);
+      expect(reasonOf(err)).toBe('NOT_PROJECT_LEADER');
+    }
+    for (const call of [() => ctrl.update(ORG_VIEWER, 8, { titleInProject: 'x' }), () => ctrl.remove(ORG_VIEWER, 8)]) {
+      const err = await call().catch((e) => e);
+      expect(reasonOf(err)).toBe('NOT_PROJECT_LEADER');
+    }
+    expect(service.create).not.toHaveBeenCalled();
+    expect(service.update).not.toHaveBeenCalled();
+    expect(service.remove).not.toHaveBeenCalled();
   });
 });
 
